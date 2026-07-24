@@ -1,0 +1,14 @@
+services:
+  upstream:
+    build: .
+    container_name: upstream
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      TZ: Asia/Shanghai
+      APP_TIMEZONE: Asia/Shanghai
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data

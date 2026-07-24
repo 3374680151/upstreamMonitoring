@@ -11,3 +11,7 @@ coverage/
 .idea/
 .vscode/
 *.local
+data/*.db
+data/*.db-*
+!data/.gitkeep
+apps/web/tsconfig.tsbuildinfo

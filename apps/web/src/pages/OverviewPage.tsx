@@ -1,84 +1,69 @@
-import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { Panel } from "@/components/Panel";
-import { Badge } from "@/components/Badge";
-import { channels } from "@/lib/mock";
+import { SiteTable } from "@/components/SiteTable";
+import { ChangeTable } from "@/components/ChangeTable";
+import type { Change, Site } from "@/lib/types";
 
-export function OverviewPage() {
-  const totalSamples = channels.reduce((s, c) => s + c.samples, 0);
-  const failish = channels.filter((c) => c.status !== "available").length;
+export function OverviewPage({
+  sites,
+  changes,
+  selectedId,
+  onView,
+  onRatios,
+  onCheck,
+  onEdit,
+  onDelete,
+}: {
+  sites: Site[];
+  changes: Change[];
+  selectedId: number | null;
+  onView: (site: Site) => void;
+  onRatios: (site: Site) => void;
+  onCheck: (site: Site) => void;
+  onEdit: (site: Site) => void;
+  onDelete: (site: Site) => void;
+}) {
+  const enabled = sites.filter((s) => s.enabled).length;
+  const ok = sites.filter((s) => s.status === "ok").length;
+  const failed = sites.filter((s) =>
+    ["warning", "failed"].includes(String(s.status)),
+  ).length;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-extrabold text-[var(--color-text-primary)] md:text-3xl">
-          上游控制台
+        <h1 className="font-serif text-2xl font-extrabold text-[var(--color-text-primary)] md:text-3xl">
+          上游分组倍率监控
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-[var(--color-text-muted)]">
-          管理 AI 中转上游、观测可用率，并记录包含 503 在内的失败请求。UI
-          风格对齐 PriceAI 中转详情页。
+          定时采集 NewAPI / sub2api 上游分组倍率，发现分组、倍率、描述变化，并支持邮件与企业微信推送。
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="渠道数" value={channels.length} hint="当前 mock 数据" />
-        <StatCard label="监测样本" value={totalSamples} hint="累计探测" />
-        <StatCard
-          label="需关注"
-          value={failish}
-          hint="降级 / 不可用"
-          accent={failish > 0}
-        />
-        <StatCard label="日志策略" value="全量" hint="成功 + 失败均入库" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <StatCard label="监控站点" value={sites.length} />
+        <StatCard label="启用中" value={enabled} />
+        <StatCard label="正常" value={ok} />
+        <StatCard label="异常" value={failed} accent={failed > 0} />
+        <StatCard label="最近变化" value={changes.length} hint="最近 50 条" />
       </div>
 
-      <Panel
-        title="渠道速览"
-        subtitle="点击进入详情（PriceAI 风格 KPI + 日志表）"
-      >
-        <div className="space-y-3">
-          {channels.map((c) => (
-            <Link
-              key={c.id}
-              to={`/channels/${c.id}`}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] px-4 py-3 transition hover:bg-[var(--color-surface-hover)]"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-bold text-[var(--color-text-primary)]">
-                    {c.name}
-                  </span>
-                  <Badge
-                    tone={
-                      c.status === "available"
-                        ? "success"
-                        : c.status === "degraded"
-                          ? "warning"
-                          : "danger"
-                    }
-                    dot
-                  >
-                    {c.status === "available"
-                      ? "可用"
-                      : c.status === "degraded"
-                        ? "降级"
-                        : "不可用"}
-                  </Badge>
-                  {c.verified ? <Badge tone="info">已核验</Badge> : null}
-                </div>
-                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                  可用率 {c.availability} · 样本 {c.samples} · 最近检查{" "}
-                  {c.lastCheck}
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-text-muted)]">
-                查看详情 <ArrowRight size={14} />
-              </span>
-            </Link>
-          ))}
-        </div>
-      </Panel>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="站点概览" subtitle="最近检测状态和分组数量">
+          <SiteTable
+            sites={sites.slice(0, 6)}
+            selectedId={selectedId}
+            onView={onView}
+            onRatios={onRatios}
+            onCheck={onCheck}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
+        </Panel>
+        <Panel title="最近变化" subtitle="最新倍率和分组变化">
+          <ChangeTable changes={changes.slice(0, 8)} sites={sites} />
+        </Panel>
+      </div>
     </div>
   );
 }

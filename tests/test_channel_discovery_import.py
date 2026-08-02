@@ -501,6 +501,94 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
         )
         self.assertEqual(link_params[4], "主渠道")
 
+    def test_auto_sync_imports_pending_candidates_only(self):
+        admin_site = {"id": 3, "platform": "newapi", "base_url": "https://upstream.example"}
+        fetched_channels = [
+            {"id": 11, "name": "A", "base_url": "https://provider.example"},
+            {"id": 12, "name": "B", "base_url": "https://already-imported.example"},
+        ]
+        existing_urls = [{"base_url": "https://already-imported.example"}]
+
+        captured: dict = {}
+
+        def fake_import(admin, body):
+            captured["body"] = body
+            return [
+                {
+                    "status": "created",
+                    "base_url": "https://provider.example",
+                    "name": "A",
+                    "channel_ids": [11],
+                }
+            ]
+
+        with patch.object(app, "db_query_all", side_effect=[[admin_site], existing_urls]), \
+             patch.object(
+                 app, "fetch_admin_site_channels",
+                 return_value=(True, fetched_channels, {"total": 2}, None),
+             ), patch.object(
+                 app, "reconcile_site_discovery_links", return_value=0
+             ), patch.object(
+                 app, "import_discovered_sites", side_effect=fake_import
+             ):
+            results = app.auto_sync_admin_site_channels_to_sites()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status"], "imported")
+        self.assertEqual(results[0]["imported"], 1)
+        # Only the pending candidate should have been sent to import.
+        items = captured["body"]["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["base_url"], "https://provider.example")
+
+    def test_auto_sync_marks_already_synced_when_no_pending_candidates(self):
+        admin_site = {"id": 4, "platform": "newapi", "base_url": "https://upstream.example"}
+        fetched_channels = [
+            {"id": 21, "name": "X", "base_url": "https://already-imported.example"},
+        ]
+        existing_urls = [{"base_url": "https://already-imported.example"}]
+
+        with patch.object(app, "db_query_all", side_effect=[[admin_site], existing_urls]), \
+             patch.object(
+                 app, "fetch_admin_site_channels",
+                 return_value=(True, fetched_channels, {"total": 1}, None),
+             ), patch.object(
+                 app, "reconcile_site_discovery_links", return_value=0
+             ):
+            results = app.auto_sync_admin_site_channels_to_sites()
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status"], "already_synced")
+        self.assertEqual(results[0]["imported"], 0)
+
+    def test_auto_sync_isolates_failures_per_admin_site(self):
+        admin_a = {"id": 5, "platform": "newapi", "base_url": "https://a.example"}
+        admin_b = {"id": 6, "platform": "newapi", "base_url": "https://b.example"}
+
+        def fake_fetch(admin, keyword):
+            if int(admin["id"]) == 5:
+                return False, [], {}, "upstream 502"
+            return True, [], {"total": 0}, None
+
+        with patch.object(app, "db_query_all", return_value=[admin_a, admin_b]), \
+             patch.object(app, "fetch_admin_site_channels", side_effect=fake_fetch), \
+             patch.object(app, "reconcile_site_discovery_links", return_value=0):
+            results = app.auto_sync_admin_site_channels_to_sites()
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["status"], "fetch_failed")
+        self.assertEqual(results[1]["status"], "no_channels")
+
+    def test_auto_sync_skips_sub2api_admin_sites(self):
+        sub2api_admin = {"id": 7, "platform": "sub2api", "base_url": "https://sub.example"}
+
+        with patch.object(app, "db_query_all", return_value=[sub2api_admin]), \
+             patch.object(app, "fetch_admin_site_channels") as fetch:
+            results = app.auto_sync_admin_site_channels_to_sites()
+
+        self.assertEqual(results, [])
+        fetch.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

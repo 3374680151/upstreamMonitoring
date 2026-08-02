@@ -8878,12 +8878,159 @@ def overview_payload() -> Dict[str, Any]:
         }
 
 
-def list_sites_payload() -> List[Dict[str, Any]]:
+def list_sites_payload(
+    with_auto_sync: bool = True,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    # Auto-sync: when the user opens the "渠道监控" page (or any view that
+    # reads /api/sites), pull the channel list from every enabled NewAPI
+    # admin site and import any upstream base_url that does not yet have a
+    # local monitoring site.  This is the missing piece that makes the user's
+    # channel list "完整地从主站同步过来" without requiring them to open the
+    # discovery panel manually.  Failures are isolated per admin site so a
+    # single broken upstream cannot hide the others.
+    auto_sync_results: List[Dict[str, Any]] = (
+        auto_sync_admin_site_channels_to_sites() if with_auto_sync else []
+    )
     with db_connection() as connection:
         sites = db_query_all(
             "SELECT * FROM sites ORDER BY id DESC", connection=connection
         )
-        return [site_summary(site, connection=connection) for site in sites]
+        summaries = [
+            site_summary(site, connection=connection) for site in sites
+        ]
+    return summaries, auto_sync_results
+
+
+def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
+    """Pull channels from each NewAPI admin site and import any new upstream URL.
+
+    Behaviour:
+    * Only NewAPI admin sites are considered; sub2api sites have no upstream
+      "discover from admin" concept (their channels ARE the monitoring sites).
+    * Per-site errors are swallowed — they must never break the page that
+      triggered the auto-sync.  Each site contributes its own summary row.
+    * Reuses the existing ``import_discovered_sites`` path so the local
+      ``sites`` row and the ``site_discovery_links`` rows are written in one
+      transaction per import, identical to the manual flow.
+    * Runs without blocking: the surrounding request returns immediately
+      after the synchronous fetch + import loop.  The discovery panel's
+      keyword filter still applies, so users who want a manual re-discovery
+      keep that path.
+    """
+    results: List[Dict[str, Any]] = []
+    try:
+        admin_sites = db_query_all("SELECT * FROM admin_sites")
+    except Exception:
+        return results
+    for admin in admin_sites or []:
+        if not isinstance(admin, dict):
+            continue
+        if str(admin.get("platform") or "newapi").strip().lower() != "newapi":
+            continue
+        admin_site_id = int(admin.get("id") or 0)
+        if admin_site_id <= 0:
+            continue
+        try:
+            ok, channels, _meta, error = fetch_admin_site_channels(admin, "")
+            if not ok:
+                results.append(
+                    {
+                        "admin_site_id": admin_site_id,
+                        "status": "fetch_failed",
+                        "message": error or "读取主站渠道失败",
+                        "imported": 0,
+                    }
+                )
+                continue
+            source_channels = channels if isinstance(channels, list) else []
+            if not source_channels:
+                results.append(
+                    {
+                        "admin_site_id": admin_site_id,
+                        "status": "no_channels",
+                        "imported": 0,
+                    }
+                )
+                continue
+            candidates = aggregate_newapi_channel_candidates(source_channels)
+            # Reconcile provenance first so channels removed upstream stop
+            # leaving dangling discovery rows.
+            try:
+                reconcile_site_discovery_links(admin_site_id, candidates)
+            except Exception:
+                pass
+
+            # Find which candidates still need a local site.
+            existing_urls: set = set()
+            try:
+                existing_rows = db_query_all(
+                    "SELECT base_url FROM sites WHERE platform = 'newapi'"
+                )
+                for row in existing_rows or []:
+                    if not isinstance(row, dict):
+                        continue
+                    normalized, _err = _normalize_discovery_base_url(
+                        row.get("base_url")
+                    )
+                    if normalized:
+                        existing_urls.add(normalized)
+            except Exception:
+                pass
+
+            pending: List[Dict[str, Any]] = []
+            for candidate in candidates:
+                base_url = str(candidate.get("base_url") or "").strip()
+                if not base_url or base_url in existing_urls:
+                    continue
+                pending.append(candidate)
+                existing_urls.add(base_url)
+
+            if not pending:
+                results.append(
+                    {
+                        "admin_site_id": admin_site_id,
+                        "status": "already_synced",
+                        "imported": 0,
+                    }
+                )
+                continue
+
+            import_body = {"items": pending}
+            imported = 0
+            import_error: Optional[str] = None
+            try:
+                import_result = import_discovered_sites(admin, import_body)
+                if isinstance(import_result, list):
+                    imported = sum(
+                        1
+                        for item in import_result
+                        if isinstance(item, dict)
+                        and item.get("status") in {"created", "existing"}
+                    )
+                elif isinstance(import_result, dict) and import_result.get("error"):
+                    import_error = import_result.get("message") or "导入失败"
+            except Exception as exc:  # noqa: BLE001
+                import_error = str(exc) or "导入失败"
+
+            results.append(
+                {
+                    "admin_site_id": admin_site_id,
+                    "status": "imported" if imported else "skipped",
+                    "imported": imported,
+                    "message": import_error,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            # A single bad admin site must never abort the whole auto-sync.
+            results.append(
+                {
+                    "admin_site_id": admin_site_id,
+                    "status": "error",
+                    "message": str(exc) or "auto-sync 失败",
+                    "imported": 0,
+                }
+            )
+    return results
 
 
 def list_snapshots(site_id: int) -> List[Dict[str, Any]]:
@@ -9265,7 +9412,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/overview":
             return json_response(self, overview_payload())
         if path == "/api/sites":
-            return json_response(self, {"data": list_sites_payload()})
+            sites_data, auto_sync_results = list_sites_payload()
+            return json_response(
+                self,
+                {"data": sites_data, "auto_sync": auto_sync_results},
+            )
         admin_sync_status_match = re.fullmatch(
             r"/api/admin/sites/([0-9]+)/session-sync/requests/([A-Za-z0-9_-]{1,64})",
             path,

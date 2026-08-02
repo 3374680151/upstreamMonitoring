@@ -201,8 +201,13 @@ class DatabasePerformanceTests(unittest.TestCase):
         }
         with patch.object(app, "db_connection", fake_db_connection), \
              patch.object(app, "db_query_all", return_value=[site]) as query_all, \
-             patch.object(app, "db_query_one", return_value=None) as query_one:
-            payload = app.list_sites_payload()
+             patch.object(app, "db_query_one", return_value=None) as query_one, \
+             patch.object(
+                 app,
+                 "auto_sync_admin_site_channels_to_sites",
+                 return_value=[],
+             ):
+            payload, _auto_sync = app.list_sites_payload()
 
         self.assertEqual(payload[0]["id"], 1)
         self.assertIs(query_all.call_args.kwargs.get("connection"), leased)

@@ -180,14 +180,14 @@ export function NotificationsPage({
   }
 
   return (
-    <div className="upstream-rise space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         title="消息推送"
         subtitle="支持企业微信和邮箱推送，检测到倍率或分组变化后自动发送提醒。"
       />
 
       <Panel title="企业微信" subtitle="群机器人 Webhook，无需服务器回调">
-        <div className="space-y-3">
+        <div className="flex flex-col gap-4">
           <SwitchRow
             label="启用企业微信推送"
             checked={form.wecom_enabled}
@@ -204,7 +204,7 @@ export function NotificationsPage({
           </Field>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div
-              className={`text-xs ${wecomError ? "text-[var(--color-danger-text)]" : "text-[var(--color-text-muted)]"}`}
+              className={`text-[12.5px] ${wecomError ? "text-danger-fg" : "text-ink-muted"}`}
             >
               {wecomStatus}
             </div>
@@ -221,7 +221,7 @@ export function NotificationsPage({
       </Panel>
 
       <Panel title="邮箱" subtitle="SMTP 变化提醒">
-        <div className="space-y-3">
+        <div className="flex flex-col gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <SwitchRow
               label="启用邮箱推送"
@@ -234,7 +234,7 @@ export function NotificationsPage({
               onChange={(v) => updateForm((f) => ({ ...f, smtp_use_ssl: v }))}
             />
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label="SMTP 服务器">
               <Input
                 value={form.smtp_host}
@@ -294,7 +294,7 @@ export function NotificationsPage({
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div
-              className={`text-xs ${emailError ? "text-[var(--color-danger-text)]" : "text-[var(--color-text-muted)]"}`}
+              className={`text-[12.5px] ${emailError ? "text-danger-fg" : "text-ink-muted"}`}
             >
               {emailStatus}
             </div>

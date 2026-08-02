@@ -29,11 +29,16 @@ export function BalancePage({ sites }: { sites: Site[] }) {
 
   if (!sites.length) {
     return (
-      <div className="upstream-rise space-y-6">
+      <div className="upstream-rise flex flex-col gap-6 md:gap-8">
         <PageHeader title="余额" subtitle="按你配置的渠道站点，用各自登录态查询账户余额" />
         <Panel title="余额" subtitle="暂无渠道">
-          <div className="py-10 text-center text-sm text-[var(--color-text-muted)]">
-            还没有配置渠道。请先在「渠道监控」添加站点并填写登录信息（NewAPI 系统访问令牌 / sub2api 账号或登录态）。
+          <div className="flex flex-col items-center gap-1 py-10 text-center">
+            <div className="font-serif text-[15px] font-semibold text-ink-strong">
+              还没有配置渠道
+            </div>
+            <p className="max-w-sm text-[12.5px] leading-relaxed text-ink-muted">
+              先在「渠道监控」添加站点并填写登录信息（NewAPI 系统访问令牌 / sub2api 账号或登录态）。
+            </p>
           </div>
         </Panel>
       </div>
@@ -41,7 +46,7 @@ export function BalancePage({ sites }: { sites: Site[] }) {
   }
 
   return (
-    <div className="upstream-rise space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         title="余额"
         subtitle="按你配置的渠道站点，用各自登录态查询：NewAPI /api/user/self · sub2api /api/v1/auth/me"
@@ -53,14 +58,14 @@ export function BalancePage({ sites }: { sites: Site[] }) {
           value={summary.okCount ? usd(summary.total) : "—"}
           hint={summary.okCount ? `${summary.okCount} 个站点已查询` : "点下方「一键查询」"}
           tone="brand"
-          icon={<Wallet size={18} />}
+          icon={<Wallet size={17} />}
         />
         <StatCard
           label="已查询 / 渠道总数"
           value={`${summary.okCount} / ${sites.length}`}
           hint="仅成功读取的计入合计"
           tone="info"
-          icon={<Coins size={18} />}
+          icon={<Coins size={17} />}
         />
         <StatCard
           label="读取失败"
@@ -68,7 +73,7 @@ export function BalancePage({ sites }: { sites: Site[] }) {
           hint="未配置登录或上游返回异常"
           tone={summary.errCount ? "warning" : "neutral"}
           accent={!!summary.errCount}
-          icon={<ServerCrash size={18} />}
+          icon={<ServerCrash size={17} />}
         />
       </div>
 
@@ -77,22 +82,26 @@ export function BalancePage({ sites }: { sites: Site[] }) {
         subtitle="点「查询」单独刷新某个渠道，或点右侧「一键查询」拉取全部"
         action={
           <Button onClick={queryAll} loading={busy}>
-            {busy ? null : <RefreshCw size={14} />}
-            {busy ? "查询中…" : "一键查询"}
+            {busy ? "查询中…" : (
+              <>
+                <RefreshCw size={13} />
+                一键查询
+              </>
+            )}
           </Button>
         }
       >
         <div className="priceai-scrollbar overflow-x-auto pb-1">
-          <table className="w-full min-w-max table-auto text-left text-sm">
+          <table className="w-full min-w-max table-auto text-left text-[13px]">
             <thead>
-              <tr className="border-b border-[var(--color-border-subtle)] text-xs font-semibold text-[var(--color-text-muted)]">
-                <th className="pb-2">渠道</th>
-                <th className="pb-2">平台</th>
-                <th className="pb-2 text-right">余额</th>
-                <th className="pb-2 text-right">已用</th>
-                <th className="pb-2">补充信息</th>
-                <th className="pb-2">更新时间</th>
-                <th className="pb-2"></th>
+              <tr className="border-b border-line text-[11.5px] font-semibold tracking-[0.04em] text-ink-soft uppercase">
+                <th className="pb-2.5 pr-3">渠道</th>
+                <th className="pb-2.5 pr-3">平台</th>
+                <th className="pb-2.5 pr-3 text-right">余额</th>
+                <th className="pb-2.5 pr-3 text-right">已用</th>
+                <th className="pb-2.5 pr-3">补充信息</th>
+                <th className="pb-2.5 pr-3">更新时间</th>
+                <th className="pb-2.5"></th>
               </tr>
             </thead>
             <tbody>
@@ -101,11 +110,11 @@ export function BalancePage({ sites }: { sites: Site[] }) {
                 return (
                   <tr
                     key={site.id}
-                    className="border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-surface-hover)]"
+                    className="border-b border-line-soft transition-colors duration-[var(--motion-fast)] last:border-0 hover:bg-sunken-hover"
                   >
                     <td className="py-3 pr-3">
-                      <div className="font-bold text-[var(--color-text-primary)]">{site.name}</div>
-                      <div className="font-mono text-[11px] text-[var(--color-text-soft)]">
+                      <div className="font-semibold text-ink-strong">{site.name}</div>
+                      <div className="mt-0.5 font-mono text-[11px] text-ink-soft">
                         {site.base_url}
                       </div>
                     </td>
@@ -114,35 +123,36 @@ export function BalancePage({ sites }: { sites: Site[] }) {
                     </td>
                     <td className="py-3 pr-3 text-right">
                       {row.state === "ok" ? (
-                        <span className="font-bold tabular-nums text-[var(--color-text-primary)]">
+                        <span className="font-serif text-[14.5px] font-semibold tabular text-ink-strong">
                           {usd(row.account.balance_usd)}
                         </span>
                       ) : row.state === "loading" ? (
-                        <span className="text-xs text-[var(--color-text-muted)]">查询中…</span>
+                        <span className="skeleton inline-block h-3 w-16 rounded-full" />
                       ) : row.state === "error" ? (
                         <Badge tone="warning">失败</Badge>
                       ) : (
-                        <span className="text-xs text-[var(--color-text-soft)]">未查询</span>
+                        <span className="text-[11.5px] text-ink-faint">未查询</span>
                       )}
                     </td>
-                    <td className="py-3 pr-3 text-right tabular-nums text-[var(--color-text-muted)]">
+                    <td className="py-3 pr-3 text-right tabular text-ink-muted">
                       {row.state === "ok" ? usd(row.account.used_usd) : "—"}
                     </td>
-                    <td className="py-3 pr-3 text-xs text-[var(--color-text-muted)]">
+                    <td className="py-3 pr-3 text-[12px] text-ink-muted">
                       {row.state === "ok" ? (
                         extraText(site, row.account)
                       ) : row.state === "error" ? (
-                        <span className="text-[var(--color-warning-text)]">{row.message}</span>
+                        <span className="text-warning-fg">{row.message}</span>
                       ) : (
                         "—"
                       )}
                     </td>
-                    <td className="py-3 pr-3 text-[11px] text-[var(--color-text-soft)]">
+                    <td className="py-3 pr-3 text-[11.5px] text-ink-soft">
                       {row.state === "ok" && row.fetchedAt ? fmtTime(row.fetchedAt) : "—"}
                     </td>
-                    <td className="py-3">
+                    <td className="py-3 text-right">
                       <Button
                         variant="secondary"
+                        size="sm"
                         onClick={() => queryOne(site)}
                         loading={row.state === "loading"}
                         disabled={busy}
@@ -163,29 +173,29 @@ export function BalancePage({ sites }: { sites: Site[] }) {
           return row?.state === "ok" && row.account.subscriptions?.length;
         }) ? (
           <div className="mt-4 space-y-2">
-            <div className="text-xs font-semibold text-[var(--color-text-muted)]">订阅用量</div>
+            <div className="t-micro">订阅用量</div>
             {sites.map((site) => {
               const row = rows[site.id];
               if (row?.state !== "ok" || !row.account.subscriptions?.length) return null;
               return row.account.subscriptions.map((sub, index) => (
                 <div
                   key={`${site.id}-${sub.name}-${index}`}
-                  className="rounded-xl border border-[var(--color-border)] px-3 py-2.5"
+                  className="rounded-[var(--radius-md)] border border-line px-3 py-2.5"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-bold text-[var(--color-text-primary)]">
+                    <div className="font-semibold text-ink-strong">
                       {site.name} · {sub.name || "订阅"}
                     </div>
                     <div className="flex items-center gap-2">
                       {sub.status ? <Badge tone="neutral">{sub.status}</Badge> : null}
                       {sub.expires_at ? (
-                        <span className="text-xs text-[var(--color-text-soft)]">
+                        <span className="text-[11.5px] text-ink-soft">
                           到期 {fmtTime(String(sub.expires_at))}
                         </span>
                       ) : null}
                     </div>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-[var(--color-text-muted)]">
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] tabular text-ink-muted">
                     <span>
                       日 {usd(sub.daily_usage_usd)}
                       {sub.daily_limit_usd ? ` / ${usd(sub.daily_limit_usd)}` : ""}

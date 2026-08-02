@@ -7,6 +7,7 @@ import type {
 } from "react";
 import { createPortal } from "react-dom";
 
+/* 按钮：所有 variant 用同一种「按下 → 抬起」节奏，焦点环统一交给 base layer。 */
 export function Button({
   variant = "primary",
   size = "md",
@@ -20,28 +21,27 @@ export function Button({
   /** 请求进行中：显示转圈并锁住自己，让「点了没反应」变成可见的进行中状态 */
   loading?: boolean;
 }) {
-  // 每个 variant 都带可见边框：按钮边界始终清晰，不依赖背景色差
   const styles = {
     primary:
-      "bg-[var(--color-primary)] text-[var(--color-text-on-primary)] border border-[var(--color-primary-strong)] shadow-[var(--shadow-control)] hover:bg-[var(--color-primary-hover)]",
+      "bg-ink-strong text-ink-on-accent border border-ink-strong hover:bg-ink-strong/90",
     brand:
-      "text-white border border-[#2f9d63] shadow-[0_6px_16px_#45bf7855] hover:brightness-[1.06] [background-image:linear-gradient(135deg,#52cc86_0%,#2f9d63_100%)]",
+      "bg-accent text-ink-on-accent border border-accent hover:bg-accent-hover shadow-[var(--shadow-pop)]",
     secondary:
-      "bg-[var(--color-panel)] text-[var(--color-text-body)] border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] hover:border-[var(--color-border-muted)]",
+      "bg-panel text-ink border border-line hover:bg-sunken-hover hover:border-line-strong",
     danger:
-      "bg-[var(--color-danger-bg)] text-[var(--color-danger-text)] border border-[var(--color-danger-text)]/35 hover:brightness-95 hover:border-[var(--color-danger-text)]/55",
+      "bg-danger-bg text-danger-fg border border-danger-fg/30 hover:bg-danger-bg/70 hover:border-danger-fg/55",
     ghost:
-      "bg-transparent text-[var(--color-text-muted)] border border-[var(--color-border)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-surface)] hover:border-[var(--color-border-muted)]",
+      "bg-transparent text-ink-muted border border-transparent hover:bg-sunken hover:text-ink-strong",
   }[variant];
   const sizing = {
-    sm: "px-2.5 py-1 text-xs",
-    md: "px-3 py-1.5 text-sm",
+    sm: "h-7 px-2.5 text-[12.5px]",
+    md: "h-8 px-3 text-[13px]",
   }[size];
   return (
     <button
       type="button"
       aria-busy={loading || undefined}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--color-panel)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:opacity-50 ${sizing} ${styles} ${className}`}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-sm)] font-medium tracking-[0.01em] transition-[background-color,border-color,transform,box-shadow] duration-[var(--motion-base)] ease-[var(--ease-out-quart)] active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:opacity-50 ${sizing} ${styles} ${className}`}
       {...props}
       disabled={props.disabled || loading}
     >
@@ -67,7 +67,7 @@ export function Input({
 }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm text-[var(--color-text-body)] outline-none transition duration-200 placeholder:text-[var(--color-text-placeholder)] hover:border-[var(--color-border-muted)] focus:border-[var(--color-brand)] focus:ring-4 focus:ring-[var(--color-brand)]/15 ${className}`}
+      className={`h-8 w-full rounded-[var(--radius-sm)] border border-line bg-panel px-2.5 text-[13px] text-ink outline-none transition-[border-color,box-shadow] duration-[var(--motion-base)] placeholder:text-ink-faint hover:border-line-strong focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-ring)] ${className}`}
       {...props}
     />
   );
@@ -79,7 +79,7 @@ export function Textarea({
 }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <textarea
-      className={`w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 font-mono text-xs leading-relaxed text-[var(--color-text-body)] outline-none transition duration-200 placeholder:text-[var(--color-text-placeholder)] hover:border-[var(--color-border-muted)] focus:border-[var(--color-brand)] focus:ring-4 focus:ring-[var(--color-brand)]/15 ${className}`}
+      className={`w-full rounded-[var(--radius-sm)] border border-line bg-panel px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink outline-none transition-[border-color,box-shadow] duration-[var(--motion-base)] placeholder:text-ink-faint hover:border-line-strong focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-ring)] ${className}`}
       {...props}
     />
   );
@@ -92,7 +92,10 @@ export function Select({
 }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`w-full cursor-pointer rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-2 text-sm text-[var(--color-text-body)] outline-none transition duration-200 hover:border-[var(--color-border-muted)] focus:border-[var(--color-brand)] focus:ring-4 focus:ring-[var(--color-brand)]/15 ${className}`}
+      className={`h-8 w-full cursor-pointer appearance-none rounded-[var(--radius-sm)] border border-line bg-panel px-2.5 pr-7 text-[13px] text-ink outline-none transition-[border-color,box-shadow] duration-[var(--motion-base)] [background-image:var(--select-chevron)] [background-position:right_8px_center] [background-repeat:no-repeat] [background-size:12px_12px] hover:border-line-strong focus:border-accent focus:shadow-[0_0_0_3px_var(--color-accent-ring)] ${className}`}
+      style={{
+        ...(props.style || {}),
+      }}
       {...props}
     >
       {children}
@@ -115,7 +118,7 @@ export function Tabs<T extends string>({
     <div
       role="tablist"
       aria-label={label}
-      className="flex min-h-10 gap-1 overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1"
+      className="inline-flex min-h-9 gap-0.5 rounded-[var(--radius-sm)] border border-line bg-sunken p-0.5"
     >
       {items.map((item) => {
         const selected = item.id === value;
@@ -127,10 +130,10 @@ export function Tabs<T extends string>({
             aria-selected={selected}
             aria-controls={`tab-panel-${item.id}`}
             onClick={() => onChange(item.id)}
-            className={`min-h-8 shrink-0 rounded-md px-3 text-xs font-semibold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
+            className={`min-h-7 shrink-0 rounded-[5px] px-3 text-[12.5px] font-medium transition-[background-color,color] duration-[var(--motion-base)] ${
               selected
-                ? "bg-[var(--color-panel)] text-[var(--color-text-primary)] shadow-[var(--shadow-control)]"
-                : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-body)]"
+                ? "bg-panel text-ink-strong shadow-[var(--shadow-hairline)]"
+                : "text-ink-muted hover:text-ink-strong"
             }`}
           >
             {item.label}
@@ -151,13 +154,11 @@ export function Field({
   help?: string;
 }) {
   return (
-    <label className="block space-y-1.5">
-      <span className="text-xs font-semibold text-[var(--color-text-muted)]">
-        {label}
-      </span>
+    <label className="flex flex-col gap-1.5">
+      <span className="t-small font-medium text-ink-muted">{label}</span>
       {children}
       {help ? (
-        <span className="block text-[11px] leading-relaxed text-[var(--color-text-soft)]">
+        <span className="text-[11.5px] leading-relaxed text-ink-soft">
           {help}
         </span>
       ) : null}
@@ -180,23 +181,21 @@ export function SwitchRow({
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition duration-200 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
+      className={`flex w-full items-center justify-between gap-3 rounded-[var(--radius-md)] border px-3 py-2.5 text-left transition-[border-color,background-color] duration-[var(--motion-base)] ${
         checked
-          ? "border-[var(--color-brand)]/40 bg-[var(--color-success-bg)]"
-          : "border-[var(--color-border)] bg-[var(--color-panel-soft)] hover:border-[var(--color-border-muted)]"
+          ? "border-accent/40 bg-accent-soft/60"
+          : "border-line bg-panel-soft hover:border-line-strong"
       }`}
     >
-      <span className="text-sm font-semibold text-[var(--color-text-body)]">
-        {label}
-      </span>
+      <span className="text-[13.5px] font-medium text-ink">{label}</span>
       <span
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 ${
-          checked ? "bg-[var(--color-brand)]" : "bg-[var(--color-surface-muted)]"
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-[var(--motion-base)] ${
+          checked ? "bg-accent" : "bg-sunken-active"
         }`}
         aria-hidden
       >
         <span
-          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+          className={`inline-block h-4 w-4 transform rounded-full bg-paper shadow-[var(--shadow-pop)] transition-transform duration-[var(--motion-base)] ${
             checked ? "translate-x-4" : "translate-x-0.5"
           }`}
         />
@@ -222,22 +221,20 @@ export function Modal({
 }) {
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[var(--color-overlay)] p-4 md:p-8">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-overlay px-4 py-6 backdrop-blur-[3px] md:px-8 md:py-10">
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`my-4 w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] shadow-[var(--shadow-floating)] ${
+        className={`my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-line bg-panel shadow-[var(--shadow-floating)] ${
           wide ? "max-w-5xl" : "max-w-xl"
         }`}
       >
-        <div className="flex items-start justify-between gap-3 rounded-t-2xl border-b border-[var(--color-border-subtle)] bg-[var(--color-panel-soft)] px-5 py-4">
-          <div>
-            <h3 className="text-base font-extrabold text-[var(--color-text-primary)]">
-              {title}
-            </h3>
+        <div className="flex items-start justify-between gap-4 border-b border-line bg-panel-soft px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="t-title font-serif tracking-[-0.01em]">{title}</h3>
             {subtitle ? (
-              <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+              <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
                 {subtitle}
               </p>
             ) : null}
@@ -245,13 +242,13 @@ export function Modal({
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[15px] leading-none text-ink-muted transition-colors duration-[var(--motion-fast)] hover:bg-sunken hover:text-ink-strong"
             aria-label="关闭"
           >
             ×
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="px-5 py-5">{children}</div>
       </div>
     </div>,
     document.body,
@@ -288,12 +285,10 @@ export function ConfirmDialog({
 }) {
   return (
     <Modal open={open} title={title} onClose={busy ? () => {} : onCancel}>
-      <div className="space-y-4">
-        <div className="text-sm leading-relaxed text-[var(--color-text-body)]">
-          {message}
-        </div>
+      <div className="flex flex-col gap-4">
+        <div className="text-[13.5px] leading-relaxed text-ink">{message}</div>
         {error ? (
-          <div className="rounded-lg bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
+          <div className="rounded-[var(--radius-sm)] border border-danger-fg/25 bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
             {error}
           </div>
         ) : null}
@@ -313,3 +308,40 @@ export function ConfirmDialog({
     </Modal>
   );
 }
+
+/* 把颜色变体收敛到 token，避免组件分散在各处拼 var(--color-…)。 */
+export const colorTokens = {
+  page: "var(--color-page)",
+  paper: "var(--color-paper)",
+  panel: "var(--color-panel)",
+  panelSoft: "var(--color-panel-soft)",
+  sunken: "var(--color-sunken)",
+  sunkenHover: "var(--color-sunken-hover)",
+  sunkenActive: "var(--color-sunken-active)",
+  overlay: "var(--color-overlay)",
+
+  ink: "var(--color-ink)",
+  inkStrong: "var(--color-ink-strong)",
+  inkMuted: "var(--color-ink-muted)",
+  inkSoft: "var(--color-ink-soft)",
+  inkFaint: "var(--color-ink-faint)",
+  inkOnAccent: "var(--color-ink-on-accent)",
+
+  line: "var(--color-line)",
+  lineSoft: "var(--color-line-soft)",
+  lineStrong: "var(--color-line-strong)",
+
+  accent: "var(--color-accent)",
+  accentHover: "var(--color-accent-hover)",
+  accentSoft: "var(--color-accent-soft)",
+  accentRing: "var(--color-accent-ring)",
+
+  successFg: "var(--color-success-fg)",
+  successBg: "var(--color-success-bg)",
+  warningFg: "var(--color-warning-fg)",
+  warningBg: "var(--color-warning-bg)",
+  infoFg: "var(--color-info-fg)",
+  infoBg: "var(--color-info-bg)",
+  dangerFg: "var(--color-danger-fg)",
+  dangerBg: "var(--color-danger-bg)",
+};

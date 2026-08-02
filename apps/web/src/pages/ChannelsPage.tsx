@@ -558,12 +558,12 @@ export function ChannelsPage() {
       <>
         <Panel title="主站监控" subtitle="需要先添加 NewAPI 或 sub2api 主站连接">
           {error ? (
-            <div className="mb-3 rounded-md bg-[var(--color-danger-bg)] px-3 py-2 text-sm text-[var(--color-danger-text)]">
+            <div className="mb-3 rounded-[var(--radius-sm)] bg-danger-bg px-3 py-2 text-sm text-danger-fg">
               {error}
             </div>
           ) : null}
-          <div className="space-y-4 py-8 text-center">
-            <p className="text-sm text-[var(--color-text-muted)]">
+          <div className="flex flex-col gap-4 py-8 text-center">
+            <p className="text-sm text-ink-muted">
               添加你的 NewAPI 或 sub2api 主站后，这里实时读取已有渠道。
               <br />
               NewAPI 可调整优先级；sub2api 可编辑渠道配置并启停渠道。
@@ -589,17 +589,17 @@ export function ChannelsPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <PageHeader
         title="主站监控"
         subtitle="统一读取 NewAPI / sub2api 主站渠道，并按平台能力提供安全的管理操作。"
       />
 
       {actionError ? (
-        <div className="sticky top-[68px] z-30 flex items-start justify-between gap-3 rounded-md border border-[var(--color-danger-text)]/30 bg-[var(--color-danger-bg)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[var(--shadow-floating)]">
+        <div className="sticky top-[68px] z-30 flex items-start justify-between gap-3 rounded-[var(--radius-sm)] border border-[var(--color-danger-fg)]/30 bg-danger-bg px-4 py-3 text-sm text-danger-fg shadow-[var(--shadow-floating)]">
           <span>{actionError}</span>
           <button
-            className="shrink-0 text-xs opacity-70 hover:opacity-100"
+            className="shrink-0 text-[12.5px] opacity-70 hover:opacity-100"
             onClick={() => setActionError("")}
           >
             关闭
@@ -653,7 +653,7 @@ export function ChannelsPage() {
             >
               添加主站
             </Button>
-            <span className="mx-1 h-5 w-px bg-[var(--color-border)]" aria-hidden />
+            <span className="mx-1 h-5 w-px bg-line-strong" aria-hidden />
             <Input
               className="w-full sm:w-auto sm:min-w-[170px]"
               placeholder={isSub2Api ? "搜索渠道名/模型" : "搜索渠道名/密钥/模型"}
@@ -670,13 +670,13 @@ export function ChannelsPage() {
         }
       >
         {error ? (
-          <div className="mb-3 rounded-md bg-[var(--color-danger-bg)] px-3 py-2 text-sm text-[var(--color-danger-text)]">
+          <div className="mb-3 rounded-[var(--radius-sm)] bg-danger-bg px-3 py-2 text-sm text-danger-fg">
             {error}
           </div>
         ) : null}
 
         {staleDataWarning ? (
-          <div className="mb-3 rounded-md border border-[var(--color-warning-text)]/25 bg-[var(--color-warning-bg)] px-3 py-2 text-sm text-[var(--color-warning-text)]">
+          <div className="mb-3 rounded-[var(--radius-sm)] border border-[var(--color-warning-fg)]/25 bg-warning-bg px-3 py-2 text-sm text-warning-fg">
             {staleDataWarning}，数据可能已过期。
           </div>
         ) : null}
@@ -684,12 +684,12 @@ export function ChannelsPage() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="space-y-2">
             <div className="flex items-center justify-between px-1">
-              <span className="text-xs font-bold text-[var(--color-text-muted)]">
+              <span className="text-[12.5px] font-bold text-ink-muted">
                 分组视角
               </span>
               {groupFilter ? (
                 <button
-                  className="text-[11px] text-[var(--color-brand)]"
+                  className="text-[11px] text-accent"
                   onClick={() => setGroupFilter(null)}
                 >
                   清除
@@ -697,17 +697,17 @@ export function ChannelsPage() {
               ) : null}
             </div>
             <button
-              className={`w-full rounded-md border px-3 py-2 text-left text-sm transition ${
+              className={`w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left text-sm transition ${
                 groupFilter === null
-                  ? "border-[var(--color-brand)] bg-[var(--color-surface)]"
-                  : "border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
+                  ? "border-[var(--color-accent)] bg-sunken"
+                  : "border-line hover:bg-sunken-hover"
               }`}
               onClick={() => setGroupFilter(null)}
             >
-              <span className="font-semibold text-[var(--color-text-primary)]">
+              <span className="font-semibold text-ink-strong">
                 全部渠道
               </span>
-              <span className="float-right tabular-nums text-[var(--color-text-muted)]">
+              <span className="float-right tabular-nums text-ink-muted">
                 {channels.length}
               </span>
             </button>
@@ -716,20 +716,20 @@ export function ChannelsPage() {
               return (
                 <button
                   key={name}
-                  className={`w-full rounded-md border px-3 py-2 text-left transition ${
+                  className={`w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left transition ${
                     groupFilter === name
-                      ? "border-[var(--color-brand)] bg-[var(--color-surface)]"
-                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-hover)]"
+                      ? "border-[var(--color-accent)] bg-sunken"
+                      : "border-line hover:bg-sunken-hover"
                   }`}
                   onClick={() =>
                     setGroupFilter(groupFilter === name ? null : name)
                   }
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-semibold text-[var(--color-text-primary)]">
+                    <span className="truncate font-semibold text-ink-strong">
                       {name}
                     </span>
-                    <span className="tabular-nums text-xs text-[var(--color-text-muted)]">
+                    <span className="tabular-nums text-[12.5px] text-ink-muted">
                       {groupChannelCount[name] || 0} 渠道
                     </span>
                   </div>
@@ -742,7 +742,7 @@ export function ChannelsPage() {
                     </Badge>
                   </div>
                   {info?.desc ? (
-                    <div className="mt-1 truncate text-[11px] text-[var(--color-text-soft)]">
+                    <div className="mt-1 truncate text-[11px] text-ink-soft">
                       {info.desc}
                     </div>
                   ) : null}
@@ -753,11 +753,11 @@ export function ChannelsPage() {
 
           <div className="min-w-0">
             {loading ? (
-              <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
+              <div className="py-16 text-center text-sm text-ink-muted">
                 加载中...
               </div>
             ) : !visibleChannels.length ? (
-              <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
+              <div className="py-16 text-center text-sm text-ink-muted">
                 {groupFilter
                   ? `分组「${groupFilter}」下暂无渠道`
                   : "主站当前没有可显示的渠道"}
@@ -773,7 +773,7 @@ export function ChannelsPage() {
                 onRefresh={(channel) => void refreshSub2ApiChannel(channel)}
               />
             ) : (
-              <div className="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-md">
+              <div className="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-[var(--radius-sm)]">
                 <table className="w-full min-w-[980px] table-fixed text-left text-sm">
                   <colgroup>
                     <col className="w-[170px]" />
@@ -785,8 +785,8 @@ export function ChannelsPage() {
                     <col className="w-[126px]" />
                     <col className="w-[190px]" />
                   </colgroup>
-                  <thead className="sticky top-0 z-10 bg-[var(--color-panel)]">
-                    <tr className="border-b border-[var(--color-border-subtle)] text-xs font-semibold text-[var(--color-text-muted)]">
+                  <thead className="sticky top-0 z-10 bg-panel">
+                    <tr className="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
                       <th className="pb-2">渠道</th>
                       <th className="pb-2">分组</th>
                       <th className="pb-2">当前 key 上游倍率</th>
@@ -813,8 +813,8 @@ export function ChannelsPage() {
                       return (
                         <tr
                           key={channel.id}
-                          className={`border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-surface-hover)] ${
-                            isSelected ? "bg-[var(--color-surface)]" : ""
+                          className={`border-b border-line-soft last:border-0 hover:bg-sunken-hover ${
+                            isSelected ? "bg-sunken" : ""
                           }`}
                         >
                           <td className="max-w-0 py-3 pr-3">
@@ -824,10 +824,10 @@ export function ChannelsPage() {
                                 setSelectedChannelId(isSelected ? null : channel.id)
                               }
                             >
-                              <div className="truncate font-bold text-[var(--color-text-primary)]">
+                              <div className="truncate font-bold text-ink-strong">
                                 {channel.name || `#${channel.id}`}
                               </div>
-                              <div className="truncate text-[11px] text-[var(--color-text-soft)]">
+                              <div className="truncate text-[11px] text-ink-soft">
                                 #{channel.id} · 类型 {channel.type ?? "—"}
                                 {channel.models
                                   ? ` · ${splitGroups(channel.models).length} 模型`
@@ -835,7 +835,7 @@ export function ChannelsPage() {
                               </div>
                             </button>
                             {isMatching ? (
-                              <div className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-[var(--color-brand)]">
+                              <div className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-accent">
                                 <Spinner />
                                 匹配中...
                               </div>
@@ -843,8 +843,8 @@ export function ChannelsPage() {
                               <div
                                 className={`mt-1 truncate text-[11px] ${
                                   note.ok
-                                    ? "text-[var(--color-text-muted)]"
-                                    : "text-[var(--color-danger-text)]"
+                                    ? "text-ink-muted"
+                                    : "text-danger-fg"
                                 }`}
                                 title={note.text}
                               >
@@ -860,7 +860,7 @@ export function ChannelsPage() {
                                 </Badge>
                               ))}
                               {!splitGroups(channel.group).length ? (
-                                <span className="text-xs text-[var(--color-text-soft)]">—</span>
+                                <span className="text-[12.5px] text-ink-soft">—</span>
                               ) : null}
                             </div>
                           </td>
@@ -892,7 +892,7 @@ export function ChannelsPage() {
                             )}
                             {staleMatch ? (
                               <div
-                                className="mt-1 truncate text-[10px] text-[var(--color-warning-text)]"
+                                className="mt-1 truncate text-[10px] text-warning-fg"
                                 title={bindingError.raw}
                               >
                                 {matchedGroups.length
@@ -902,24 +902,24 @@ export function ChannelsPage() {
                               </div>
                             ) : partialMatch ? (
                               <div
-                                className="mt-1 truncate text-[10px] text-[var(--color-warning-text)]"
+                                className="mt-1 truncate text-[10px] text-warning-fg"
                                 title={binding?.match_message || "部分分组数据不完整"}
                               >
                                 部分匹配：{binding?.match_message || "部分分组数据不完整"}
                               </div>
                             ) : binding?.matched_groups?.length ? (
                               <div
-                                className="mt-1 truncate text-[10px] text-[var(--color-text-soft)]"
+                                className="mt-1 truncate text-[10px] text-ink-soft"
                                 title={currentKeySummary(binding)}
                               >
                                 {currentKeySummary(binding)}
                               </div>
                             ) : null}
                           </td>
-                          <td className="py-3 pr-3 tabular-nums text-[var(--color-text-body)]">
+                          <td className="py-3 pr-3 tabular-nums text-ink">
                             {Number(channel.weight ?? 0)}
                           </td>
-                          <td className="py-3 pr-3 tabular-nums font-semibold text-[var(--color-text-primary)]">
+                          <td className="py-3 pr-3 tabular-nums font-semibold text-ink-strong">
                             {Number(channel.priority ?? 0)}
                           </td>
                           <td className="py-3 pr-3">
@@ -929,7 +929,7 @@ export function ChannelsPage() {
                           </td>
                           <td className="max-w-0 py-3 pr-3">
                             <code
-                              className="block max-w-28 truncate rounded-md bg-[var(--color-surface)] px-1.5 py-0.5 text-[11px]"
+                              className="block max-w-28 truncate rounded-[var(--radius-sm)] bg-sunken px-1.5 py-0.5 text-[11px]"
                               title={channel.key || "—"}
                             >
                               {channel.key || "—"}
@@ -976,7 +976,7 @@ export function ChannelsPage() {
             }
           action={
             <button
-              className="text-xs text-[var(--color-text-muted)]"
+              className="text-[12.5px] text-ink-muted"
               onClick={() => setSelectedChannelId(null)}
             >
               收起
@@ -985,7 +985,7 @@ export function ChannelsPage() {
           >
             {selectedBindingStale ? (
               <div
-                className="mb-3 rounded-md bg-[var(--color-warning-bg)] px-3 py-2 text-sm text-[var(--color-warning-text)]"
+                className="mb-3 rounded-[var(--radius-sm)] bg-warning-bg px-3 py-2 text-sm text-warning-fg"
                 title={selectedBindingError.raw}
               >
                 {staleMatchPrefix(selectedBinding)} · 错误原因：
@@ -995,7 +995,7 @@ export function ChannelsPage() {
             <div className="priceai-scrollbar overflow-x-auto pb-1">
             <table className="w-full min-w-max table-auto text-left text-sm">
               <thead>
-                <tr className="border-b border-[var(--color-border-subtle)] text-xs font-semibold text-[var(--color-text-muted)]">
+                <tr className="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
                   <th className="pb-2">分组</th>
                   <th className="pb-2">上游倍率</th>
                   <th className="pb-2">分组状态</th>
@@ -1006,9 +1006,9 @@ export function ChannelsPage() {
                 {(selectedBinding?.matched_groups || []).map((item) => (
                   <tr
                     key={item.name}
-                    className="border-b border-[var(--color-border-subtle)] last:border-0"
+                    className="border-b border-line-soft last:border-0"
                   >
-                    <td className="py-2 pr-3 font-semibold text-[var(--color-text-primary)]">
+                    <td className="py-2 pr-3 font-semibold text-ink-strong">
                       {item.name}
                     </td>
                     <td className="py-2 pr-3 tabular-nums">
@@ -1030,7 +1030,7 @@ export function ChannelsPage() {
                               : "上游已配置"}
                       </Badge>
                     </td>
-                    <td className="py-2 pr-3 text-[var(--color-text-muted)]">
+                    <td className="py-2 pr-3 text-ink-muted">
                       {item.desc || "—"}
                     </td>
                   </tr>
@@ -1039,7 +1039,7 @@ export function ChannelsPage() {
                   <tr>
                     <td
                       colSpan={4}
-                      className="py-3 text-center text-[var(--color-text-soft)]"
+                      className="py-3 text-center text-ink-soft"
                     >
                       {isStaleMatchStatus(selectedBinding?.match_status)
                         ? `错误原因：${bindingFailure(selectedBinding).summary}`

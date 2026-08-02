@@ -58,7 +58,7 @@ export function ChannelPriorityDialog({
         />
       </Field>
       {error ? (
-        <div className="mt-3 rounded-md bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
+        <div className="mt-3 rounded-[var(--radius-sm)] border border-danger-fg/25 bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
           {error}
         </div>
       ) : null}

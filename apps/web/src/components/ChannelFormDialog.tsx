@@ -280,16 +280,16 @@ export function ChannelFormDialog({
             placeholder="https://api.openai.com"
           />
         </Field>
-        <div className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-3 md:col-span-2">
+        <div className="space-y-3 rounded-2xl border border-line bg-panel-soft p-3 md:col-span-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-xs font-semibold text-[var(--color-text-muted)]">上游 key 匹配</div>
-              <div className="mt-0.5 text-[11px] text-[var(--color-text-soft)]">
+              <div className="text-[12.5px] font-semibold text-ink-muted">上游 key 匹配</div>
+              <div className="mt-0.5 text-[11px] text-ink-soft">
                 优先使用本渠道单独配置的登录态；未配置时自动复用同 Base URL 的「渠道监控」登录态，按当前 key 精确匹配分组和倍率
               </div>
             </div>
             {binding?.configured ? (
-              <span className="rounded-full bg-[var(--color-success-bg)] px-2.5 py-0.5 text-[10px] font-semibold text-[var(--color-success-text)]">
+              <span className="rounded-full bg-success-bg px-2.5 py-0.5 text-[10px] font-semibold text-success-fg">
                 已配置，密钥留空不修改
               </span>
             ) : null}
@@ -473,13 +473,13 @@ export function ChannelFormDialog({
       </div>
 
       {groupNames.length ? (
-        <p className="mt-3 text-[11px] text-[var(--color-text-soft)]">
+        <p className="mt-3 text-[11px] text-ink-soft">
           当前主站已知分组：{groupNames.join("、")}
         </p>
       ) : null}
 
       {error ? (
-        <div className="mt-3 rounded-lg bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
+        <div className="mt-3 rounded-[var(--radius-md)] bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
           {error}
         </div>
       ) : null}

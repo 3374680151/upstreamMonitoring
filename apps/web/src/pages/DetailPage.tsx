@@ -136,15 +136,20 @@ export function DetailPage({
 
   if (!sites.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-[var(--color-border)] p-10 text-center text-sm text-[var(--color-text-muted)]">
-        还没有渠道。请先在「渠道监控」中添加。
+      <div className="flex flex-col items-center gap-1.5 rounded-[var(--radius-lg)] border border-dashed border-line py-14 text-center">
+        <div className="font-serif text-[16px] font-semibold text-ink-strong">
+          还没有渠道
+        </div>
+        <p className="max-w-sm text-[12.5px] leading-relaxed text-ink-muted">
+          请先到「渠道监控」添加一个上游站点，再回来查看倍率详情。
+        </p>
       </div>
     );
   }
 
   if (!site) {
     return (
-      <div className="space-y-4">
+      <div className="flex flex-col gap-4">
         <Select
           value=""
           onChange={(e) => onSelect(Number(e.target.value))}
@@ -186,13 +191,13 @@ export function DetailPage({
         : "当前渠道只监控公开 /api/user/groups。若该站存在特殊分组，可在编辑渠道中开启认证增强监控。";
 
   return (
-    <div className="upstream-rise space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         title="渠道详情"
         subtitle="当前倍率、隐藏分组与历史变化"
         action={
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-[var(--color-text-muted)]">查看渠道</span>
+          <label className="flex items-center gap-2 text-[12.5px]">
+            <span className="text-ink-muted">查看渠道</span>
             <Select
               className="w-56"
               value={String(site.id)}
@@ -209,12 +214,12 @@ export function DetailPage({
       />
 
       <div className="flex flex-wrap items-start gap-4">
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--color-surface)] text-lg font-black text-[var(--color-text-primary)] ring-1 ring-[var(--color-border)]">
+        <div className="inline-flex h-12 w-12 items-center justify-center rounded-[var(--radius-md)] bg-sunken font-serif text-[18px] font-semibold text-ink-strong ring-1 ring-line">
           {site.name.slice(0, 1)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-xl font-extrabold text-[var(--color-text-primary)]">
+            <h2 className="font-serif text-[22px] font-semibold tracking-[-0.015em] text-ink-strong">
               {site.name}
             </h2>
             <Badge tone={statusTone(site.status)} dot>
@@ -227,16 +232,16 @@ export function DetailPage({
               <Badge tone="warning">已停用</Badge>
             )}
           </div>
-          <p className="mt-1 font-mono text-xs text-[var(--color-text-soft)]">
+          <p className="mt-1 font-mono text-[11.5px] text-ink-soft">
             {site.base_url}
           </p>
         </div>
       </div>
 
       {siteError ? (
-        <div className="rounded-lg bg-[var(--color-danger-bg)] px-4 py-3 text-sm text-[var(--color-danger-text)]">
+        <div className="rounded-[var(--radius-md)] border border-danger-fg/30 bg-danger-bg px-4 py-3 text-[13px] text-danger-fg">
           <div className="font-semibold">错误原因：{siteError.summary}</div>
-          <div className="mt-1 break-all font-mono text-xs opacity-80">
+          <div className="mt-1 break-all font-mono text-[11.5px] opacity-90">
             原始错误：{siteError.raw}
           </div>
         </div>
@@ -247,19 +252,19 @@ export function DetailPage({
           label="监控间隔"
           value={`${site.interval_minutes} 分`}
           tone="info"
-          icon={<Timer size={18} />}
+          icon={<Timer size={17} />}
         />
         <StatCard
           label="公开分组"
           value={site.current_groups_count || 0}
           tone="brand"
-          icon={<Layers size={18} />}
+          icon={<Layers size={17} />}
         />
         <StatCard
           label="认证分组"
           value={site.current_login_groups_count || 0}
           tone="warning"
-          icon={<ShieldCheck size={18} />}
+          icon={<ShieldCheck size={17} />}
         />
         <StatCard
           label="连续失败"
@@ -268,9 +273,9 @@ export function DetailPage({
           accent={Number(site.consecutive_failures || 0) > 0}
           icon={
             Number(site.consecutive_failures || 0) > 0 ? (
-              <XCircle size={18} />
+              <XCircle size={17} />
             ) : (
-              <TrendingDown size={18} />
+              <TrendingDown size={17} />
             )
           }
         />
@@ -278,17 +283,17 @@ export function DetailPage({
           label="上次检测"
           value={fmtTime(site.last_check_at)}
           tone="neutral"
-          icon={<Clock size={18} />}
+          icon={<Clock size={17} />}
         />
         <StatCard
           label="下次检测"
           value={fmtTime(site.next_check_at)}
           tone="neutral"
-          icon={<Clock size={18} />}
+          icon={<Clock size={17} />}
         />
       </div>
 
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-info-bg)] px-4 py-3 text-sm text-[var(--color-info-text)]">
+      <div className="rounded-[var(--radius-md)] border border-line bg-info-bg px-4 py-3 text-[13px] leading-relaxed text-info-fg">
         {modeNote}
       </div>
 
@@ -297,19 +302,19 @@ export function DetailPage({
           title="发现来源"
           subtitle={`${discoveryLinks.length} 条来源关联`}
         >
-          <div className="divide-y divide-[var(--color-border-subtle)]">
+          <div className="divide-y divide-line-soft">
             {discoveryLinks.map((link) => (
               <div
                 key={`${link.admin_site_id}-${link.channel_id}`}
                 className="grid gap-1 py-2.5 sm:grid-cols-[1fr_1fr_auto] sm:items-center"
               >
-                <span className="font-semibold text-[var(--color-text-primary)]">
+                <span className="font-semibold text-ink-strong">
                   {link.admin_site_name}
                 </span>
-                <span className="text-xs text-[var(--color-text-muted)]">
+                <span className="text-[12px] text-ink-muted">
                   {link.channel_name || `渠道 #${link.channel_id}`}
                 </span>
-                <code className="break-all text-[11px] text-[var(--color-text-soft)]">
+                <code className="break-all font-mono text-[11px] text-ink-soft">
                   {link.upstream_base_url}
                 </code>
               </div>
@@ -336,11 +341,11 @@ export function DetailPage({
         }
       >
         {accountError ? (
-          <div className="rounded-xl bg-[var(--color-warning-bg)] px-4 py-3 text-sm text-[var(--color-warning-text)]">
+          <div className="rounded-[var(--radius-md)] border border-warning-fg/30 bg-warning-bg px-4 py-3 text-[13px] text-warning-fg">
             {accountError}
           </div>
         ) : account ? (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label={site.platform === "sub2api" ? "账户余额" : "剩余额度"}
@@ -399,16 +404,14 @@ export function DetailPage({
 
             {account.subscriptions && account.subscriptions.length ? (
               <div className="space-y-2">
-                <div className="text-xs font-semibold text-[var(--color-text-muted)]">
-                  订阅用量
-                </div>
+                <div className="t-micro">订阅用量</div>
                 {account.subscriptions.map((sub, index) => (
                   <div
                     key={`${sub.name}-${index}`}
-                    className="rounded-xl border border-[var(--color-border)] px-3 py-2.5"
+                    className="rounded-[var(--radius-md)] border border-line bg-panel-soft px-3 py-2.5"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-bold text-[var(--color-text-primary)]">
+                      <div className="font-semibold text-ink-strong">
                         {sub.name || "订阅"}
                       </div>
                       <div className="flex items-center gap-2">
@@ -416,13 +419,13 @@ export function DetailPage({
                           <Badge tone="neutral">{sub.status}</Badge>
                         ) : null}
                         {sub.expires_at ? (
-                          <span className="text-xs text-[var(--color-text-soft)]">
+                          <span className="text-[11.5px] text-ink-soft">
                             到期 {fmtTime(String(sub.expires_at))}
                           </span>
                         ) : null}
                       </div>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)] tabular-nums">
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink-muted tabular">
                       <span>
                         日 {fmtUsd(sub.daily_usage_usd)}
                         {sub.daily_limit_usd ? ` / ${fmtUsd(sub.daily_limit_usd)}` : ""}
@@ -442,41 +445,42 @@ export function DetailPage({
             ) : null}
 
             {accountFetchedAt ? (
-              <div className="text-xs text-[var(--color-text-soft)]">
+              <div className="text-[11.5px] text-ink-soft">
                 更新于 {fmtTime(accountFetchedAt)}
               </div>
             ) : null}
           </div>
         ) : (
-          <div className="text-sm text-[var(--color-text-muted)]">
-            点击右上角「查询账户额度」，实时读取该渠道登录账号的余额 / 额度。
+          <div className="text-[13px] text-ink-muted">
+            右上角点击「查询账户额度」，实时读取该渠道登录账号的余额 / 额度。
           </div>
         )}
       </Panel>
 
       {site.login_last_error ? (
-        <div className="rounded-xl bg-[var(--color-warning-bg)] px-4 py-3 text-sm text-[var(--color-warning-text)]">
+        <div className="rounded-[var(--radius-md)] border border-warning-fg/30 bg-warning-bg px-4 py-3 text-[13px] text-warning-fg">
           认证错误：{site.login_last_error}
         </div>
       ) : null}
 
       {hiddenGroups.length ? (
-        <Panel title="认证后新增分组" subtitle={`${hiddenGroups.length} 个隐藏分组`}>
+        <Panel
+          title="认证后新增分组"
+          subtitle={`${hiddenGroups.length} 个隐藏分组`}
+        >
           <div className="space-y-2">
             {hiddenGroups.map(([name, item]) => (
               <div
                 key={name}
-                className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-line bg-panel-soft px-3 py-2"
               >
                 <div>
-                  <div className="font-semibold text-[var(--color-text-primary)]">
-                    {name}
-                  </div>
-                  <div className="text-xs text-[var(--color-text-muted)]">
+                  <div className="font-semibold text-ink-strong">{name}</div>
+                  <div className="text-[12px] text-ink-muted">
                     {item.desc || "-"}
                   </div>
                 </div>
-                <div className="font-extrabold tabular-nums">
+                <div className="font-serif text-[15.5px] font-semibold tabular">
                   {ratioLabel(item)}
                 </div>
               </div>
@@ -500,13 +504,11 @@ export function DetailPage({
             {groups.map(([name, item]) => (
               <div
                 key={name}
-                className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] px-3 py-2.5 hover:bg-[var(--color-surface-hover)]"
+                className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-line px-3 py-2.5 transition-colors duration-[var(--motion-fast)] hover:bg-sunken-hover"
               >
                 <div className="min-w-0">
-                  <div className="font-bold text-[var(--color-text-primary)]">
-                    {name}
-                  </div>
-                  <div className="truncate text-xs text-[var(--color-text-muted)]">
+                  <div className="font-semibold text-ink-strong">{name}</div>
+                  <div className="truncate text-[12px] text-ink-muted">
                     {[
                       item.platform,
                       item.status,
@@ -517,14 +519,14 @@ export function DetailPage({
                       .join(" · ")}
                   </div>
                 </div>
-                <div className="shrink-0 text-lg font-extrabold tabular-nums text-[var(--color-text-primary)]">
+                <div className="shrink-0 font-serif text-[16px] font-semibold tabular text-ink-strong">
                   {ratioLabel(item)}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-sm text-[var(--color-text-muted)]">暂无倍率数据</div>
+          <div className="text-[13px] text-ink-muted">暂无倍率数据</div>
         )}
       </Panel>
 
@@ -533,18 +535,20 @@ export function DetailPage({
           {siteChanges.slice(0, 10).map((change) => (
             <div
               key={change.id}
-              className="rounded-xl border border-[var(--color-border)] px-3 py-2"
+              className="rounded-[var(--radius-md)] border border-line px-3 py-2"
             >
               <div className="flex items-center justify-between gap-2">
                 <Badge tone={changeTone(change)}>
                   {changeTypeLabel(change.change_type)}
                 </Badge>
-                <time className="text-[11px] text-[var(--color-text-soft)]">
+                <time className="text-[11px] text-ink-soft">
                   {fmtTime(change.created_at)}
                 </time>
               </div>
-              <div className="mt-1 font-semibold">{change.group_name || "-"}</div>
-              <div className="text-xs text-[var(--color-text-muted)]">
+              <div className="mt-1 font-semibold">
+                {change.group_name || "-"}
+              </div>
+              <div className="text-[12px] text-ink-muted">
                 {changeDisplayMessage(change)}
               </div>
             </div>

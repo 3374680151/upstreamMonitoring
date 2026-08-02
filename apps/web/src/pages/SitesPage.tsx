@@ -41,7 +41,7 @@ export function SitesPage({
   }, [sites, keyword, status, platform]);
 
   return (
-    <div className="upstream-rise space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         title="渠道监控"
         subtitle="盯你的上游渠道站点，每个渠道单独设置平台类型、监控间隔和认证方式。"
@@ -60,7 +60,7 @@ export function SitesPage({
               onChange={(e) => setKeyword(e.target.value)}
             />
             <Select
-              className="w-36"
+              className="w-32"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
             >

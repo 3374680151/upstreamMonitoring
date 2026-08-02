@@ -4,7 +4,7 @@ import { normalizedChannelStatus } from "@/lib/sub2apiChannel";
 import type { Channel } from "@/lib/types";
 
 const iconButtonClass =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:border-[var(--color-border-muted)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition hover:border-line-strong hover:bg-sunken-hover hover:text-ink-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] disabled:pointer-events-none disabled:opacity-50";
 
 function statusMeta(channel: Channel) {
   const status = normalizedChannelStatus(channel);
@@ -63,7 +63,7 @@ export function Sub2ApiChannelTable({
   onRefresh: (channel: Channel) => void;
 }) {
   return (
-    <div className="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-md">
+    <div className="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-[var(--radius-sm)]">
       <table className="w-full min-w-[980px] table-fixed text-left text-sm">
         <colgroup>
           <col className="w-[185px]" />
@@ -74,8 +74,8 @@ export function Sub2ApiChannelTable({
           <col className="w-[140px]" />
           <col className="w-[125px]" />
         </colgroup>
-        <thead className="sticky top-0 z-10 bg-[var(--color-panel)]">
-          <tr className="border-b border-[var(--color-border-subtle)] text-xs font-semibold text-[var(--color-text-muted)]">
+        <thead className="sticky top-0 z-10 bg-panel">
+          <tr className="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
             <th className="pb-2">渠道</th>
             <th className="pb-2">状态</th>
             <th className="pb-2">分组</th>
@@ -94,13 +94,13 @@ export function Sub2ApiChannelTable({
             return (
               <tr
                 key={channel.id}
-                className="border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-surface-hover)]"
+                className="border-b border-line-soft last:border-0 hover:bg-sunken-hover"
               >
                 <td className="max-w-0 py-3 pr-3">
-                  <div className="truncate font-bold text-[var(--color-text-primary)]">
+                  <div className="truncate font-bold text-ink-strong">
                     {channel.name || `#${channel.id}`}
                   </div>
-                  <div className="truncate text-[11px] text-[var(--color-text-soft)]">
+                  <div className="truncate text-[11px] text-ink-soft">
                     #{channel.id}
                     {channel.description ? ` · ${channel.description}` : ""}
                   </div>
@@ -118,7 +118,7 @@ export function Sub2ApiChannelTable({
                       </Badge>
                     ))}
                     {!groups.length ? (
-                      <span className="text-xs text-[var(--color-text-soft)]">--</span>
+                      <span className="text-[12.5px] text-ink-soft">--</span>
                     ) : null}
                   </div>
                 </td>
@@ -130,24 +130,24 @@ export function Sub2ApiChannelTable({
                       </Badge>
                     ))}
                     {!groups.length ? (
-                      <span className="text-xs text-[var(--color-text-soft)]">--</span>
+                      <span className="text-[12.5px] text-ink-soft">--</span>
                     ) : null}
                   </div>
                 </td>
                 <td className="max-w-0 py-3 pr-3">
                   <div
-                    className="truncate text-xs text-[var(--color-text-body)]"
+                    className="truncate text-[12.5px] text-ink"
                     title={modelSummary(channel)}
                   >
                     {modelSummary(channel)}
                   </div>
-                  <div className="mt-0.5 text-[11px] tabular-nums text-[var(--color-text-soft)]">
+                  <div className="mt-0.5 text-[11px] tabular-nums text-ink-soft">
                     {(channel.model_pricing || []).length} 条定价规则
                   </div>
                 </td>
                 <td className="max-w-0 py-3 pr-3">
                   <div
-                    className="truncate text-xs text-[var(--color-text-body)]"
+                    className="truncate text-[12.5px] text-ink"
                     title={billingSummary(channel)}
                   >
                     {billingSummary(channel)}

@@ -34,7 +34,7 @@ const tabs: Array<{ id: EditorTab; label: string }> = [
 ];
 
 const iconButtonClass =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-danger-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]";
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition hover:bg-sunken-hover hover:text-danger-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]";
 
 function cloneChannel(channel: Channel): Channel {
   return JSON.parse(JSON.stringify(channel)) as Channel;
@@ -183,7 +183,7 @@ export function Sub2ApiChannelDialog({
       onClose={saving ? () => {} : onClose}
       wide
     >
-      <div className="space-y-4">
+      <div className="flex flex-col gap-4">
         <Tabs
           items={tabs}
           value={activeTab}
@@ -247,15 +247,15 @@ export function Sub2ApiChannelDialog({
             ) : null}
 
             {activeTab === "groups" ? (
-              <div className="overflow-hidden border border-[var(--color-border)]">
+              <div className="overflow-hidden border border-line">
                 {groups.length ? (
-                  <div className="divide-y divide-[var(--color-border-subtle)]">
+                  <div className="divide-y divide-line-soft">
                     {groups.map((group) => {
                       const selected = (draft.group_ids || []).includes(group.id);
                       return (
                         <label
                           key={group.id}
-                          className="flex cursor-pointer items-center gap-3 px-3 py-3 hover:bg-[var(--color-surface-hover)]"
+                          className="flex cursor-pointer items-center gap-3 px-3 py-3 hover:bg-sunken-hover"
                         >
                           <input
                             type="checkbox"
@@ -268,17 +268,17 @@ export function Sub2ApiChannelDialog({
                                   );
                               setDraft({ ...draft, group_ids: next });
                             }}
-                            className="h-4 w-4 accent-[var(--color-brand)]"
+                            className="h-4 w-4 accent-[var(--color-accent)]"
                           />
                           <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-semibold text-[var(--color-text-primary)]">
+                            <span className="block text-sm font-semibold text-ink-strong">
                               {group.name}
                             </span>
-                            <span className="block text-xs text-[var(--color-text-soft)]">
+                            <span className="block text-[12.5px] text-ink-soft">
                               {group.platform || "未标注平台"} · #{group.id}
                             </span>
                           </span>
-                          <span className="rounded-full bg-[var(--color-success-bg)] px-2 py-0.5 text-xs font-semibold tabular-nums text-[var(--color-success-text)]">
+                          <span className="rounded-full bg-success-bg px-2 py-0.5 text-[12.5px] font-semibold tabular-nums text-success-fg">
                             {formatMultiplier(group.rate_multiplier)}
                           </span>
                         </label>
@@ -286,7 +286,7 @@ export function Sub2ApiChannelDialog({
                     })}
                   </div>
                 ) : (
-                  <div className="px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="px-4 py-10 text-center text-sm text-ink-muted">
                     主站未返回可绑定分组
                   </div>
                 )}
@@ -305,7 +305,7 @@ export function Sub2ApiChannelDialog({
             {activeTab === "mapping" ? (
               <div className="space-y-3">
                 {mapping.length ? (
-                  <div className="divide-y divide-[var(--color-border-subtle)] border border-[var(--color-border)]">
+                  <div className="divide-y divide-line-soft border border-line">
                     {mapping.map((row, index) => (
                       <div
                         key={`mapping-${index}`}
@@ -372,7 +372,7 @@ export function Sub2ApiChannelDialog({
                     ))}
                   </div>
                 ) : (
-                  <div className="border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-sm text-[var(--color-text-muted)]">
+                  <div className="border border-dashed border-line px-4 py-10 text-center text-sm text-ink-muted">
                     暂无模型映射
                   </div>
                 )}
@@ -392,7 +392,7 @@ export function Sub2ApiChannelDialog({
             ) : null}
 
             {activeTab === "advanced" ? (
-              <div className="space-y-5">
+              <div className="flex flex-col gap-6 md:gap-8">
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="计费模型来源 billing_model_source">
                     <Select
@@ -448,14 +448,14 @@ export function Sub2ApiChannelDialog({
                   />
                 </Field>
                 {featuresConfigError ? (
-                  <div className="text-xs text-[var(--color-danger-text)]">
+                  <div className="text-[12.5px] text-danger-fg">
                     {featuresConfigError}
                   </div>
                 ) : null}
 
-                <div className="border-t border-[var(--color-border-subtle)] pt-4">
+                <div className="border-t border-line-soft pt-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                    <div className="text-sm font-semibold text-ink-strong">
                       账户统计计费规则
                     </div>
                     <Button
@@ -477,14 +477,14 @@ export function Sub2ApiChannelDialog({
                   </div>
 
                   {rules.length ? (
-                    <div className="space-y-4">
+                    <div className="flex flex-col gap-4">
                       {rules.map((rule, ruleIndex) => (
                         <section
                           key={rule.id ?? `rule-${ruleIndex}`}
-                          className="border border-[var(--color-border)]"
+                          className="border border-line"
                         >
-                          <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] bg-[var(--color-panel-soft)] px-3 py-2">
-                            <span className="text-xs font-semibold text-[var(--color-text-primary)]">
+                          <div className="flex items-center justify-between border-b border-line-soft bg-panel-soft px-3 py-2">
+                            <span className="text-[12.5px] font-semibold text-ink-strong">
                               统计规则 {ruleIndex + 1}
                             </span>
                             <button
@@ -560,7 +560,7 @@ export function Sub2ApiChannelDialog({
                               />
                             </Field>
                           </div>
-                          <div className="border-t border-[var(--color-border-subtle)] p-3">
+                          <div className="border-t border-line-soft p-3">
                             <Sub2ApiPricingEditor
                               value={rule.pricing || []}
                               onChange={(pricing) =>
@@ -580,7 +580,7 @@ export function Sub2ApiChannelDialog({
                       ))}
                     </div>
                   ) : (
-                    <div className="border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+                    <div className="border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
                       暂无账户统计计费规则
                     </div>
                   )}
@@ -591,11 +591,11 @@ export function Sub2ApiChannelDialog({
         ) : null}
 
         {error ? (
-          <div className="rounded-lg bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
+          <div className="rounded-[var(--radius-md)] bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
             {error}
           </div>
         ) : null}
-        <div className="flex justify-end gap-2 border-t border-[var(--color-border-subtle)] pt-4">
+        <div className="flex justify-end gap-2 border-t border-line-soft pt-4">
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             取消
           </Button>

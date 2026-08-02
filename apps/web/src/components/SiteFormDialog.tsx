@@ -378,7 +378,7 @@ export function SiteFormDialog({
         </Field>
 
         {!isSub2api ? (
-          <div className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-3">
+          <div className="space-y-3 rounded-2xl border border-line bg-panel-soft p-3">
             <SwitchRow
               label="认证增强监控"
               checked={form.login_enabled}
@@ -390,7 +390,7 @@ export function SiteFormDialog({
                 }))
               }
             />
-            <p className="text-[11px] text-[var(--color-text-soft)]">
+            <p className="text-[11px] text-ink-soft">
               填写<b>普通用户</b>的系统访问令牌和 NewAPI 用户 ID 后，可查看隐藏/专属分组与账户额度。
               这些接口（<code>/api/user/self</code>、<code>/api/user/self/groups</code>）只要普通用户权限，
               <b>不要填管理员令牌</b>——这是别人家的上游，令牌泄露会连带暴露渠道/用户/日志管理权限。
@@ -411,7 +411,7 @@ export function SiteFormDialog({
                   </Select>
                 </Field>
                 {browserMode ? (
-                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-success-bg)] px-3 py-2.5 text-xs text-[var(--color-success-text)]">
+                  <div className="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg">
                     扩展 0.1.2 加载时已统一申请站点和 NewAPI Cookie 权限。保存后会读取同一 Origin 中已登录的普通用户会话。
                     {site?.session_synced_at ? (
                       <span className="mt-1 block text-[11px] opacity-80">
@@ -446,8 +446,8 @@ export function SiteFormDialog({
             ) : null}
           </div>
         ) : (
-          <div className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-3">
-            <p className="text-[11px] text-[var(--color-text-soft)]">
+          <div className="space-y-3 rounded-2xl border border-line bg-panel-soft p-3">
+            <p className="text-[11px] text-ink-soft">
               sub2api 默认从当前 Chrome 同步已经验证过的人机验证登录态；也保留账号密码和手动 token 模式。
             </p>
             <Field label="认证方式">
@@ -462,7 +462,7 @@ export function SiteFormDialog({
             </Field>
             {browserMode ? (
               <>
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-success-bg)] px-3 py-2.5 text-xs text-[var(--color-success-text)]">
+                <div className="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg">
                   浏览器登录态 → refresh_token → 账号密码
                   {site?.session_synced_at ? (
                     <span className="mt-1 block text-[11px] opacity-80">
@@ -594,7 +594,7 @@ export function SiteFormDialog({
           </Button>
         </div>
         {browserMode && syncResult && syncResult.status !== "ready" ? (
-          <div className="flex flex-wrap gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-3">
+          <div className="flex flex-wrap gap-2 rounded-xl border border-line bg-panel-soft p-3">
             <Button
               type="button"
               variant="secondary"
@@ -630,7 +630,7 @@ export function SiteFormDialog({
           </div>
         ) : null}
         {msg ? (
-          <div className="rounded-xl bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          <div className="rounded-xl bg-sunken px-3 py-2 text-[12.5px] text-ink-muted">
             {msg}
           </div>
         ) : null}

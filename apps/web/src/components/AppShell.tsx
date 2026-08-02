@@ -94,42 +94,40 @@ export function AppShell({
   }, [location.pathname]);
 
   return (
-    <div className="min-h-full bg-[var(--color-page)] text-[var(--color-text-body)]">
+    <div className="min-h-full text-ink">
       <a
         href="#main-content"
-        className="sr-only z-[100] rounded-lg bg-[var(--color-panel)] px-3 py-2 text-sm font-semibold text-[var(--color-text-primary)] shadow-[var(--shadow-control)] focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+        className="sr-only z-[100] rounded-[var(--radius-sm)] bg-panel px-3 py-2 text-[13px] font-semibold text-ink-strong shadow-[var(--shadow-pop)] focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
       >
         跳转到主要内容
       </a>
-      <header className="relative sticky top-0 z-40 border-b border-[var(--color-border)] bg-[var(--color-page-translucent)] backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3 px-4 py-3 md:px-6">
+      <header className="sticky top-0 z-40 border-b border-line bg-page/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-4 px-4 py-3 md:flex-nowrap md:px-6">
           <Link
             to="/"
             className="group flex shrink-0 items-center gap-2.5"
             aria-label="返回总览"
           >
             <span
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black text-white shadow-[0_6px_16px_#45bf7855] transition duration-300 group-hover:scale-105"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] font-serif text-[15px] font-semibold text-ink-on-accent shadow-[var(--shadow-pop)] transition-transform duration-[var(--motion-base)] group-hover:rotate-[-3deg]"
               style={{
                 backgroundImage:
-                  "linear-gradient(135deg, #52cc86 0%, #2f9d63 100%)",
+                  "linear-gradient(135deg, #2c8a5a 0%, #1f6e47 100%)",
               }}
             >
               U
             </span>
             <div className="leading-tight">
-              <div className="text-sm font-extrabold tracking-tight text-[var(--color-text-primary)]">
+              <div className="font-serif text-[15px] font-semibold tracking-[-0.01em] text-ink-strong">
                 Upstream
               </div>
-              <div className="text-[10px] font-semibold text-[var(--color-text-muted)]">
-                上游倍率监控
-              </div>
+              <div className="t-micro mt-0.5">上游倍率监控</div>
             </div>
           </Link>
 
           <nav
             aria-label="主导航"
-            className="order-3 hidden min-w-0 items-center gap-1 md:order-none md:flex"
+            className="hidden min-w-0 items-center gap-0.5 md:flex"
           >
             {nav.map((item) => {
               const Icon = item.icon;
@@ -139,14 +137,14 @@ export function AppShell({
                   to={item.to}
                   end={item.end}
                   className={({ isActive }) =>
-                    `inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold outline-none transition duration-200 focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
+                    `inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 text-[13px] font-medium outline-none transition-[background-color,color] duration-[var(--motion-base)] ${
                       isActive
-                        ? "bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] shadow-[var(--shadow-control)] ring-1 ring-[var(--color-border-subtle)]"
-                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]"
+                        ? "bg-panel text-ink-strong shadow-[var(--shadow-hairline)]"
+                        : "text-ink-muted hover:bg-panel-soft hover:text-ink-strong"
                     }`
                   }
                 >
-                  <Icon size={15} strokeWidth={1.8} aria-hidden />
+                  <Icon size={14} strokeWidth={1.7} aria-hidden />
                   {item.label}
                 </NavLink>
               );
@@ -165,52 +163,53 @@ export function AppShell({
                     toast.error(`复制失败，微信号：${WECHAT_CONTACT}`);
                   }
                 }}
-                className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[var(--color-text-muted)] transition hover:text-[var(--color-text-primary)]"
+                className="ml-1 h-8 rounded-[var(--radius-sm)] px-2.5 text-[13px] font-medium text-ink-muted transition-colors duration-[var(--motion-fast)] hover:text-ink-strong"
                 title="点击复制微信号"
               >
-                {copied ? "已复制微信号" : `微信 ${WECHAT_CONTACT}`}
+                {copied ? "已复制" : `微信 ${WECHAT_CONTACT}`}
               </button>
             ) : null}
           </nav>
 
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:border-[var(--color-border-muted)] hover:text-[var(--color-text-primary)] md:hidden"
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition-[border-color,color] duration-[var(--motion-fast)] hover:border-line-strong hover:text-ink-strong md:hidden"
             aria-label={mobileNavOpen ? "关闭主导航" : "打开主导航"}
             aria-expanded={mobileNavOpen}
             onClick={() => setMobileNavOpen((open) => !open)}
           >
-            {mobileNavOpen ? <X size={17} /> : <Menu size={17} />}
+            {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
           </button>
 
-          <div className="ml-auto flex items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text-muted)] sm:flex">
+          <div className="ml-auto hidden items-center gap-2 md:flex">
+            <div className="flex h-8 items-center gap-2 rounded-[var(--radius-sm)] border border-line bg-panel px-2.5 text-[12.5px] font-medium text-ink-muted">
               <span
-                className="pulse-dot inline-block h-1.5 w-1.5 rounded-full text-[var(--color-brand)]"
-                style={{ backgroundColor: "var(--color-brand)" }}
+                className="pulse-dot inline-block h-1.5 w-1.5 rounded-full text-accent"
+                style={{ backgroundColor: "var(--color-accent)" }}
                 aria-hidden
               />
-              渠道 <span className="tabular-nums text-[var(--color-text-primary)]">{siteCount}</span>
+              <span>渠道</span>
+              <span className="tabular text-ink-strong">{siteCount}</span>
             </div>
             {actions}
             <button
               type="button"
               onClick={toggle}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:text-[var(--color-text-primary)]"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition-[border-color,color] duration-[var(--motion-fast)] hover:border-line-strong hover:text-ink-strong"
               aria-label="切换明暗主题"
               title="明暗"
             >
-              {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+              {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
             </button>
             {onLogout ? (
               <button
                 type="button"
                 onClick={onLogout}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:text-[var(--color-danger-text)]"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition-[border-color,color] duration-[var(--motion-fast)] hover:border-danger-fg/40 hover:text-danger-fg"
                 aria-label="退出登录"
                 title="退出登录"
               >
-                <LogOut size={16} />
+                <LogOut size={15} />
               </button>
             ) : null}
           </div>
@@ -218,7 +217,7 @@ export function AppShell({
           {mobileNavOpen ? (
             <nav
               aria-label="移动端主导航"
-              className="order-3 grid w-full grid-cols-2 gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-2 shadow-[var(--shadow-control)] md:hidden"
+              className="order-3 grid w-full grid-cols-2 gap-1 rounded-[var(--radius-md)] border border-line bg-panel-soft p-1.5 md:hidden"
             >
               {nav.map((item) => {
                 const Icon = item.icon;
@@ -228,14 +227,14 @@ export function AppShell({
                     to={item.to}
                     end={item.end}
                     className={({ isActive }) =>
-                      `inline-flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
+                      `inline-flex min-h-9 items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium outline-none transition-[background-color,color] duration-[var(--motion-base)] ${
                         isActive
-                          ? "bg-[var(--color-surface-raised)] text-[var(--color-text-primary)] shadow-[var(--shadow-control)]"
-                          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text-primary)]"
+                          ? "bg-panel text-ink-strong shadow-[var(--shadow-hairline)]"
+                          : "text-ink-muted hover:bg-panel hover:text-ink-strong"
                       }`
                     }
                   >
-                    <Icon size={16} strokeWidth={1.8} aria-hidden />
+                    <Icon size={15} strokeWidth={1.7} aria-hidden />
                     {item.label}
                   </NavLink>
                 );
@@ -247,7 +246,7 @@ export function AppShell({
 
       <main
         id="main-content"
-        className="mx-auto min-h-[calc(100dvh-4.5rem)] max-w-[1500px] px-4 py-6 md:px-6 md:py-8"
+        className="mx-auto min-h-[calc(100dvh-4rem)] max-w-[1500px] px-4 py-6 md:px-6 md:py-8"
       >
         {children}
       </main>

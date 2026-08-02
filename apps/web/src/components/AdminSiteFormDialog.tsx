@@ -255,7 +255,7 @@ export function AdminSiteFormDialog({
       subtitle="统一主站入口，后端按平台读取渠道配置"
       onClose={onClose}
     >
-      <div className="space-y-4">
+      <div className="flex flex-col gap-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="主站类型">
             <Select
@@ -301,7 +301,7 @@ export function AdminSiteFormDialog({
 
         {form.platform === "newapi" ? (
           <>
-            <div className="grid gap-3 border-t border-[var(--color-border-subtle)] pt-4 sm:grid-cols-2">
+            <div className="grid gap-3 border-t border-line-soft pt-4 sm:grid-cols-2">
               <Field
                 label="管理员系统访问令牌"
                 help={
@@ -327,7 +327,7 @@ export function AdminSiteFormDialog({
               </Field>
             </div>
 
-            <div className="grid gap-3 border-t border-[var(--color-border-subtle)] pt-4 sm:grid-cols-2">
+            <div className="grid gap-3 border-t border-line-soft pt-4 sm:grid-cols-2">
               <Field label="主站网页登录账号" help="用于读取受保护的渠道 key">
                 <Input
                   value={form.login_username}
@@ -348,21 +348,21 @@ export function AdminSiteFormDialog({
                 />
               </Field>
               {site?.has_browser_session ? (
-                <div className="text-xs text-[var(--color-success-text)] sm:col-span-2">
+                <div className="text-[12.5px] text-success-fg sm:col-span-2">
                   网页登录态可用
                 </div>
               ) : site?.browser_login_last_error ? (
-                <div className="text-xs text-[var(--color-danger-text)] sm:col-span-2">
+                <div className="text-[12.5px] text-danger-fg sm:col-span-2">
                   最近登录失败：{site.browser_login_last_error}
                 </div>
               ) : null}
             </div>
 
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-success-bg)] px-3 py-2.5 text-xs text-[var(--color-success-text)]">
+            <div className="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg">
               扩展 0.1.2 加载时已统一申请站点和 NewAPI Cookie 权限。可从当前 Chrome 同步管理员会话，系统访问令牌和 2FA 验证状态不会被覆盖。
             </div>
 
-            <div className="border-t border-[var(--color-border-subtle)] pt-4">
+            <div className="border-t border-line-soft pt-4">
               <Field label="主站 2FA 验证码" help="用于 NewAPI 渠道 key 安全验证">
                 <div className="flex flex-wrap gap-2">
                   <Input
@@ -386,7 +386,7 @@ export function AdminSiteFormDialog({
             </div>
           </>
         ) : (
-          <div className="grid gap-3 border-t border-[var(--color-border-subtle)] pt-4 sm:grid-cols-2">
+          <div className="grid gap-3 border-t border-line-soft pt-4 sm:grid-cols-2">
             <Field label="sub2api 管理员邮箱">
               <Input
                 type="email"
@@ -409,18 +409,18 @@ export function AdminSiteFormDialog({
               />
             </Field>
             {site?.has_sub2api_session ? (
-              <div className="text-xs text-[var(--color-success-text)] sm:col-span-2">
+              <div className="text-[12.5px] text-success-fg sm:col-span-2">
                 管理员登录态可用
               </div>
             ) : site?.login_last_error ? (
-              <div className="text-xs text-[var(--color-danger-text)] sm:col-span-2">
+              <div className="text-[12.5px] text-danger-fg sm:col-span-2">
                 最近登录失败：{site.login_last_error}
               </div>
             ) : null}
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2 border-t border-[var(--color-border-subtle)] pt-4">
+        <div className="flex flex-wrap gap-2 border-t border-line-soft pt-4">
           <Button
             variant="secondary"
             onClick={testConnection}
@@ -447,7 +447,7 @@ export function AdminSiteFormDialog({
           ) : null}
         </div>
         {form.platform === "newapi" && syncResult && syncResult.status !== "ready" ? (
-          <div className="flex flex-wrap gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-soft)] p-3">
+          <div className="flex flex-wrap gap-2 rounded-[var(--radius-md)] border border-line bg-panel-soft p-3">
             <Button
               type="button"
               variant="secondary"
@@ -473,7 +473,7 @@ export function AdminSiteFormDialog({
           </div>
         ) : null}
         {msg ? (
-          <div className="rounded-lg bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          <div className="rounded-[var(--radius-md)] bg-sunken px-3 py-2 text-[12.5px] text-ink-muted">
             {msg}
           </div>
         ) : null}

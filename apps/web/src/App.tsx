@@ -53,6 +53,38 @@ export default function App() {
         return nextSites[0]?.id ?? null;
       });
       setError("");
+      // Surface auto-sync results so the user can see when new main-site
+      // channels were imported.  The backend fires this on every /api/sites
+      // call; we only show a toast when something actually changed.
+      const autoSync = (sitesResp as { auto_sync?: unknown }).auto_sync;
+      if (Array.isArray(autoSync)) {
+        const imported = autoSync.filter(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            (entry as { imported?: number }).imported,
+        );
+        const failed = autoSync.filter(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            (entry as { status?: string }).status === "fetch_failed",
+        );
+        if (imported.length > 0) {
+          const total = imported.reduce(
+            (sum, entry) =>
+              sum + ((entry as { imported?: number }).imported || 0),
+            0,
+          );
+          setError(
+            `已从主站自动同步 ${total} 个新渠道（共 ${imported.length} 个主站）`,
+          );
+        } else if (failed.length > 0) {
+          const firstMessage =
+            (failed[0] as { message?: string }).message || "读取失败";
+          setError(`主站渠道自动同步失败：${firstMessage}`);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

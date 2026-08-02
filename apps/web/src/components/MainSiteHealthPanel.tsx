@@ -143,7 +143,7 @@ export function MainSiteHealthPanel() {
           </Button>
           <Link
             to="/channels"
-            className="rounded-lg px-3 py-1.5 text-sm font-semibold text-[var(--color-brand)] hover:underline"
+            className="rounded-[var(--radius-sm)] px-2.5 py-1 text-[13px] font-medium text-accent transition-colors duration-[var(--motion-fast)] hover:text-accent-hover hover:underline"
           >
             去管理 →
           </Link>
@@ -151,15 +151,15 @@ export function MainSiteHealthPanel() {
       }
     >
       {error ? (
-        <div className="mb-3 rounded-lg bg-[var(--color-danger-bg)] px-3 py-2 text-sm text-[var(--color-danger-text)]">
+        <div className="mb-3 rounded-[var(--radius-sm)] border border-danger-fg/30 bg-danger-bg px-3 py-2 text-[13px] text-danger-fg">
           {error}
         </div>
       ) : null}
 
       {!loading && !rows.length ? (
-        <div className="py-8 text-center text-sm text-[var(--color-text-muted)]">
+        <div className="py-8 text-center text-[13px] text-ink-muted">
           还没有配置主站。到「
-          <Link to="/channels" className="text-[var(--color-brand)] hover:underline">
+          <Link to="/channels" className="text-accent hover:underline">
             主站监控
           </Link>
           」添加 NewAPI 或 sub2api 主站。
@@ -171,52 +171,52 @@ export function MainSiteHealthPanel() {
               label="渠道总数"
               value={stats.total}
               hint={siteCountLabel}
-              icon={<Activity size={18} />}
+              icon={<Activity size={17} />}
               tone="brand"
             />
             <StatCard
               label="运行中"
               value={stats.active}
               hint="状态正常的渠道"
-              icon={<CheckCircle2 size={18} />}
+              icon={<CheckCircle2 size={17} />}
               tone="info"
             />
             <StatCard
               label="已停用"
               value={stats.disabled}
               hint="主站中已关闭"
-              icon={<PauseCircle size={18} />}
+              icon={<PauseCircle size={17} />}
               tone="warning"
             />
             <StatCard
               label="异常"
               value={stats.error}
               hint={stats.error ? "需要检查渠道配置" : "无异常渠道"}
-              icon={<AlertTriangle size={18} />}
+              icon={<AlertTriangle size={17} />}
               tone={stats.error ? "danger" : "neutral"}
             />
           </div>
 
           {recoverableNewApiErrors.length ? (
-            <div className="mt-3 rounded-xl border border-[var(--color-danger-text)]/30 bg-[var(--color-danger-bg)] px-4 py-3 text-sm">
-              <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-[var(--color-danger-text)]">
-                <AlertTriangle size={14} />
+            <div className="mt-3 rounded-[var(--radius-md)] border border-danger-fg/30 bg-danger-bg px-4 py-3 text-[13px]">
+              <div className="mb-1.5 flex items-center gap-1.5 font-semibold text-danger-fg">
+                <AlertTriangle size={13} />
                 {recoverableNewApiErrors.length} 个 NewAPI 渠道被自动停用，请排查
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {recoverableNewApiErrors.map(({ ch, site }) => (
                   <span
                     key={`${site.id}-${ch.id}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-panel)] px-2 py-1 text-xs"
+                    className="inline-flex items-center gap-1.5 rounded-[var(--radius-sm)] border border-line bg-panel px-2 py-1 text-[12px]"
                   >
-                    <span className="font-semibold text-[var(--color-text-primary)]">
+                    <span className="font-semibold text-ink-strong">
                       {ch.name || `#${ch.id}`}
                     </span>
                     {rows.length > 1 ? (
-                      <span className="text-[var(--color-text-soft)]">{site.name}</span>
+                      <span className="text-ink-soft">{site.name}</span>
                     ) : null}
                     <button
-                      className="text-[var(--color-brand)] disabled:opacity-50"
+                      className="text-accent transition-opacity duration-[var(--motion-fast)] hover:opacity-80 disabled:opacity-50"
                       disabled={busyKey === `${site.id}:${ch.id}`}
                       onClick={() => reEnable(site.id, ch)}
                     >
@@ -229,7 +229,7 @@ export function MainSiteHealthPanel() {
           ) : null}
 
           {failedSites.length ? (
-            <div className="mt-3 rounded-xl bg-[var(--color-warning-bg)] px-4 py-3 text-xs text-[var(--color-warning-text)]">
+            <div className="mt-3 rounded-[var(--radius-md)] border border-warning-fg/25 bg-warning-bg px-4 py-3 text-[12.5px] text-warning-fg">
               {failedSites.map((r) => (
                 <div key={r.site.id}>
                   主站「{r.site.name}」渠道读取失败：{r.error}

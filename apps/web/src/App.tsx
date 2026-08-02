@@ -257,8 +257,11 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--color-page)] text-sm text-[var(--color-text-muted)]">
-        加载中...
+      <div className="flex min-h-screen items-center justify-center text-[13px] text-ink-muted">
+        <span className="inline-flex items-center gap-2">
+          <span className="skeleton inline-block h-1.5 w-1.5 rounded-full" />
+          正在恢复会话…
+        </span>
       </div>
     );
   }
@@ -287,7 +290,7 @@ export default function App() {
             title="刷新数据"
             onClick={() => refresh()}
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={13} />
             <span className="hidden sm:inline">刷新</span>
           </Button>
           <Button
@@ -299,20 +302,28 @@ export default function App() {
               setFormOpen(true);
             }}
           >
-            <Plus size={15} />
+            <Plus size={13} />
             <span className="hidden sm:inline">添加渠道</span>
           </Button>
         </>
       }
     >
       {error ? (
-        <div className="mb-4 rounded-xl bg-[var(--color-danger-bg)] px-4 py-3 text-sm text-[var(--color-danger-text)]">
-          API 连接失败：{error}。请确认后端已启动（python app.py，默认 :8000）。
+        <div className="mb-6 rounded-[var(--radius-md)] border border-danger-fg/30 bg-danger-bg px-4 py-3 text-[13px] text-danger-fg">
+          <div className="font-semibold">无法连接后端 API</div>
+          <div className="mt-0.5 opacity-90">
+            {error}。请确认后端已启动（<code className="font-mono">python app.py</code>，默认 :8000）。
+          </div>
         </div>
       ) : null}
       {loading ? (
-        <div className="py-16 text-center text-sm text-[var(--color-text-muted)]">
-          加载中...
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <div key={i} className="skeleton h-[88px] w-full rounded-[var(--radius-md)]" />
+            ))}
+          </div>
+          <div className="skeleton h-[320px] w-full rounded-[var(--radius-lg)]" />
         </div>
       ) : (
         <Routes>

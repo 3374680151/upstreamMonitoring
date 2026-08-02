@@ -10,7 +10,7 @@ import {
 import { Button, Field, Input, Select, Textarea } from "./ui";
 
 const iconButtonClass =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-danger-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]";
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-sm)] border border-line bg-panel text-ink-muted transition hover:bg-sunken-hover hover:text-danger-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]";
 
 function emptyPricing(): Sub2ApiModelPricing {
   return {
@@ -116,10 +116,10 @@ export function Sub2ApiPricingEditor({
         value.map((pricing, rowIndex) => (
           <section
             key={pricing.id ?? `pricing-${rowIndex}`}
-            className="border border-[var(--color-border)] bg-[var(--color-panel-soft)]"
+            className="border border-line bg-panel-soft"
           >
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border-subtle)] px-3 py-2">
-              <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+            <div className="flex items-center justify-between gap-3 border-b border-line-soft px-3 py-2">
+              <div className="text-[12.5px] font-semibold text-ink-strong">
                 定价规则 {rowIndex + 1}
               </div>
               <button
@@ -233,9 +233,9 @@ export function Sub2ApiPricingEditor({
               />
             </div>
 
-            <div className="border-t border-[var(--color-border-subtle)] px-3 py-3">
+            <div className="border-t border-line-soft px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="text-xs font-semibold text-[var(--color-text-muted)]">
+                <div className="text-[12.5px] font-semibold text-ink-muted">
                   Token 区间价
                 </div>
                 <Button
@@ -253,7 +253,7 @@ export function Sub2ApiPricingEditor({
                 </Button>
               </div>
               {(pricing.intervals || []).length ? (
-                <div className="divide-y divide-[var(--color-border-subtle)]">
+                <div className="divide-y divide-line-soft">
                   {(pricing.intervals || []).map((interval, intervalIndex) => (
                     <div
                       key={interval.id ?? `interval-${intervalIndex}`}
@@ -379,7 +379,7 @@ export function Sub2ApiPricingEditor({
                   ))}
                 </div>
               ) : (
-                <div className="py-3 text-xs text-[var(--color-text-soft)]">
+                <div className="py-3 text-[12.5px] text-ink-soft">
                   未配置区间价
                 </div>
               )}
@@ -387,7 +387,7 @@ export function Sub2ApiPricingEditor({
           </section>
         ))
       ) : (
-        <div className="border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+        <div className="border border-dashed border-line px-4 py-8 text-center text-sm text-ink-muted">
           暂无模型定价
         </div>
       )}

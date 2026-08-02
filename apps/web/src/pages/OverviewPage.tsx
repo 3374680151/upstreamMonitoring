@@ -73,7 +73,7 @@ export function OverviewPage({
   }, [overviewSites.length, platformFilter]);
 
   return (
-    <div className="upstream-rise space-y-5 lg:space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         large
         title="上游分组倍率监控"
@@ -85,48 +85,48 @@ export function OverviewPage({
           label="监控渠道"
           value={sites.length}
           tone="info"
-          icon={<Server size={18} />}
+          icon={<Server size={17} />}
         />
         <StatCard
           label="启用中"
           value={enabled}
           tone="brand"
-          icon={<Zap size={18} />}
+          icon={<Zap size={17} />}
         />
         <StatCard
           label="正常"
           value={ok}
           tone="brand"
-          icon={<CheckCircle2 size={18} />}
+          icon={<CheckCircle2 size={17} />}
         />
         <StatCard
           label="异常"
           value={failed}
           tone={failed > 0 ? "danger" : "neutral"}
           accent={failed > 0}
-          icon={<AlertTriangle size={18} />}
+          icon={<AlertTriangle size={17} />}
         />
         <StatCard
           label="最近变化"
           value={changes.length}
           hint="最近 50 条"
           tone="warning"
-          icon={<Activity size={18} />}
+          icon={<Activity size={17} />}
           className="col-span-2 sm:col-span-1"
         />
       </div>
 
-      <div className="grid min-w-0 gap-5 min-[1400px]:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] min-[1400px]:items-start">
+      <div className="grid min-w-0 gap-6 min-[1400px]:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] min-[1400px]:items-start">
         <div ref={leftPanelRef} className="min-w-0">
           <Panel
             className="flex h-full min-w-0 flex-col"
             title="渠道概览"
             subtitle={`${overviewSites.length} 个渠道 · 最近检测状态和分组数量`}
             action={
-              <label className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)]">
+              <label className="flex items-center gap-2 text-[12.5px] font-medium text-ink-strong">
                 <span>平台分类</span>
                 <Select
-                  className="w-32 py-1 text-xs font-semibold"
+                  className="w-32"
                   value={platformFilter}
                   onChange={(event) => setPlatformFilter(event.target.value)}
                 >
@@ -159,7 +159,11 @@ export function OverviewPage({
               : undefined
           }
         >
-          <Panel className="flex h-full min-w-0 flex-col" title="最近变化" subtitle="最新倍率和分组变化">
+          <Panel
+            className="flex h-full min-w-0 flex-col"
+            title="最近变化"
+            subtitle="最新倍率和分组变化"
+          >
             <div className="priceai-scrollbar min-h-0 min-w-0 max-h-[430px] flex-1 overflow-y-auto pr-1 min-[1400px]:max-h-none">
               <ChangeTable changes={changes} sites={sites} />
             </div>

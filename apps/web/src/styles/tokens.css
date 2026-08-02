@@ -1,111 +1,217 @@
 @import "tailwindcss";
 
 /*
-  PriceAI-aligned design tokens for Upstream.
-  Source: priceai.cc static CSS (2026-07-25)
+  Upstream console — design tokens.
+  重构于 2026-08-02：
+  - 把命名从「按用途 8 档灰 + 5 档状态」改为「角色化 ink/paper/line/accent」，
+    解决原版「success-bg 直接当区块底色、状态色被滥用为装饰」的对比度滑档。
+  - 引入 6 档类型 / 7 档 spacing / 5 档 radius / 3 档 shadow，组件层只能消费 token，
+    不再允许 ad-hoc `text-[10px]` / `rounded-2xl` / `shadow-...`。
+  - 暖纸 + 浓墨双中性，把主色留给「信号」（品牌徽标 + 成功指示），避免绿色成为默认色。
 */
 
-:root {
-  color-scheme: light;
-  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif;
-  --font-serif: "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+@theme {
+  /* === Type ===
+     6 档固定：display / title / section / body / small / micro。
+     比例 ≈ 1.25 (major third)，leading 跟着场景走（标题紧、正文松）。 */
+  --font-sans: "Source Sans 3", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: "Source Serif 4", "Songti SC", "Noto Serif SC", Georgia, serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", Consolas,
+    "Liberation Mono", monospace;
 
-  --color-page: #f9f9f9;
-  --color-page-translucent: #f9f9f9f2;
-  --color-panel: #ffffff;
-  --color-panel-soft: #fbfcfc;
-  --color-surface: #f2f4f4;
-  --color-surface-raised: #ffffff;
-  --color-surface-hover: #edf0f1;
-  --color-surface-muted: #e4e9ea;
-  --color-surface-selected: #dde4e5;
+  --text-display: 1.875rem;     /* 30 */
+  --text-display--line-height: 1.15;
+  --text-display--letter-spacing: -0.02em;
 
-  --color-text-primary: #202829;
-  --color-text-body: #2d3435;
-  --color-text-muted: #5a6061;
-  --color-text-soft: #6f7778;
-  --color-text-placeholder: #9aa2a3;
-  --color-text-on-primary: #f8f8f8;
+  --text-title: 1.375rem;       /* 22 */
+  --text-title--line-height: 1.25;
+  --text-title--letter-spacing: -0.015em;
 
-  --color-border: #dfe4e5;
-  --color-border-subtle: #edf0f1;
-  --color-border-muted: #adb3b447;
-  --color-border-soft: #adb3b42e;
+  --text-section: 1.0625rem;    /* 17 */
+  --text-section--line-height: 1.4;
 
-  --color-primary: #2d3435;
-  --color-primary-strong: #202829;
-  --color-primary-hover: #1f2526;
-  --color-brand: #45bf78;
+  --text-body: 0.9375rem;       /* 15 */
+  --text-body--line-height: 1.55;
 
-  --color-success-bg: #e8f3ec;
-  --color-success-text: #2f7a4b;
-  --color-warning-bg: #fff7e8;
-  --color-warning-text: #7a541b;
-  --color-info-bg: #eef3f8;
-  --color-info-text: #47657a;
-  --color-danger-bg: #fbe9e7;
-  --color-danger-text: #9b3328;
-  --color-overlay: #20282959;
+  --text-small: 0.8125rem;      /* 13 */
+  --text-small--line-height: 1.45;
 
-  --shadow-surface: 0 20px 55px #2d34350b;
-  --shadow-control: 0 10px 30px #2d34350f;
-  --shadow-floating: 0 30px 80px #2d34352e;
+  --text-micro: 0.6875rem;      /* 11 */
+  --text-micro--line-height: 1.4;
+  --text-micro--letter-spacing: 0.02em;
 
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 1rem;
+  /* === Spacing ===
+     baseline 4px，组件不再用 `space-y-4` 这种「满屏同距」。
+     语义命名直接对应角色。 */
+  --space-xs: 0.25rem;          /* 4  */
+  --space-sm: 0.5rem;           /* 8  */
+  --space-md: 0.75rem;          /* 12 */
+  --space-base: 1rem;           /* 16 */
+  --space-lg: 1.5rem;           /* 24 */
+  --space-xl: 2rem;             /* 32 */
+  --space-2xl: 3rem;            /* 48 */
 
-  --background: var(--color-page);
-  --foreground: var(--color-text-body);
+  /* === Radius ===
+     越像按钮/输入框/徽标，半径越小；越像卡片/对话框，半径越大。
+     不要把卡片和按钮用同一个 radius。 */
+  --radius-xs: 4px;             /* 紧凑：badge、tag 内的 chip */
+  --radius-sm: 6px;             /* 控件：button、input、tab */
+  --radius-md: 10px;            /* 小卡片：StatCard、列表行容器 */
+  --radius-lg: 14px;            /* 主面板 */
+  --radius-xl: 18px;            /* 模态、登录框 */
+  --radius-pill: 9999px;        /* 状态点 / 圆角徽章 */
+
+  /* === Motion ===
+     默认 ease-out 入场 / ease-in 离场 / 节奏用相同的 cubic-bezier。 */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-quart: cubic-bezier(0.55, 0, 1, 0.45);
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 280ms;
+
+  /* === Color tokens (Tailwind 4 暴露成 utility) ===
+     组件只用 `bg-ink-strong` / `text-ink` / `border-line` 等语义类，
+     不再写 `bg-[var(--color-…)]`。 */
+  --color-page: var(--color-page);
+  --color-paper: var(--color-paper);
+  --color-panel: var(--color-panel);
+  --color-panel-soft: var(--color-panel-soft);
+  --color-sunken: var(--color-sunken);
+  --color-sunken-hover: var(--color-sunken-hover);
+  --color-sunken-active: var(--color-sunken-active);
+  --color-overlay: var(--color-overlay);
+
+  --color-ink-strong: var(--color-ink-strong);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-soft: var(--color-ink-soft);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-ink-on-accent: var(--color-ink-on-accent);
+
+  --color-line: var(--color-line);
+  --color-line-soft: var(--color-line-soft);
+  --color-line-strong: var(--color-line-strong);
+
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-accent-ring: var(--color-accent-ring);
+
+  --color-success-fg: var(--color-success-fg);
+  --color-success-bg: var(--color-success-bg);
+  --color-warning-fg: var(--color-warning-fg);
+  --color-warning-bg: var(--color-warning-bg);
+  --color-info-fg: var(--color-info-fg);
+  --color-info-bg: var(--color-info-bg);
+  --color-danger-fg: var(--color-danger-fg);
+  --color-danger-bg: var(--color-danger-bg);
+
+  /* === Misc utilities (Tailwind 4 background-image) === */
+  --background-image-select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23797f81' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='3,5 6,8 9,5'/></svg>");
+  --select-chevron: var(--background-image-select-chevron);
 }
 
+/* === Light theme === */
+:root {
+  color-scheme: light;
+
+  /* Surfaces — 暖纸色族，避开纯白 */
+  --color-page: #f4f1ea;
+  --color-paper: #faf7f0;
+  --color-panel: #ffffff;
+  --color-panel-soft: #fbf9f3;
+  --color-sunken: #ede9df;
+  --color-sunken-hover: #e6e1d4;
+  --color-sunken-active: #ddd6c5;
+  --color-overlay: rgba(15, 18, 19, 0.42);
+
+  /* Ink — 偏冷的浓墨，非纯黑 */
+  --color-ink-strong: #0f1213;
+  --color-ink: #1d2123;
+  --color-ink-muted: #4f5658;
+  --color-ink-soft: #797f81;
+  --color-ink-faint: #a4a8a4;
+  --color-ink-on-accent: #fbf9f3;
+
+  /* Lines — 永远从 ink 派生，不写死 RGB */
+  --color-line: rgba(15, 18, 19, 0.12);
+  --color-line-soft: rgba(15, 18, 19, 0.07);
+  --color-line-strong: rgba(15, 18, 19, 0.18);
+
+  /* Brand accent — veridian，按下「信号」时使用，平常 < 5% 面积 */
+  --color-accent: #2c8a5a;
+  --color-accent-hover: #1f6e47;
+  --color-accent-soft: rgba(44, 138, 90, 0.10);
+  --color-accent-ring: rgba(44, 138, 90, 0.28);
+
+  /* Status — 全部从 accent 系衍生，不用纯色块当区块底色 */
+  --color-success-fg: #1f6e47;
+  --color-success-bg: rgba(44, 138, 90, 0.10);
+
+  --color-warning-fg: #8a5a14;
+  --color-warning-bg: rgba(168, 116, 28, 0.10);
+
+  --color-info-fg: #2c4f73;
+  --color-info-bg: rgba(56, 105, 159, 0.10);
+
+  --color-danger-fg: #8a2820;
+  --color-danger-bg: rgba(159, 49, 36, 0.10);
+
+  /* Shadows — 真正需要浮层的地方才用，主页面靠 hairline 分层 */
+  --shadow-hairline: inset 0 -1px 0 0 var(--color-line);
+  --shadow-pop: 0 1px 2px rgba(15, 18, 19, 0.04),
+                0 8px 24px -12px rgba(15, 18, 19, 0.18);
+  --shadow-floating: 0 4px 12px rgba(15, 18, 19, 0.05),
+                     0 28px 64px -16px rgba(15, 18, 19, 0.32);
+}
+
+/* === Dark theme === */
 html[data-theme="dark"] {
   color-scheme: dark;
-  --color-page: #111718;
-  --color-page-translucent: #111718f0;
-  --color-panel: #182122;
-  --color-panel-soft: #1b2526;
-  --color-surface: #1f292a;
-  --color-surface-raised: #243132;
-  --color-surface-hover: #2a3637;
-  --color-surface-muted: #263233;
-  --color-surface-selected: #314143;
 
-  --color-text-primary: #d7e1de;
-  --color-text-body: #c8d2cf;
-  --color-text-muted: #9eaaa7;
-  --color-text-soft: #879693;
-  --color-text-placeholder: #7f8f8b;
-  --color-text-on-primary: #dce5e2;
+  --color-page: #0d1011;
+  --color-paper: #12171a;
+  --color-panel: #161c1f;
+  --color-panel-soft: #1a2124;
+  --color-sunken: #1f2629;
+  --color-sunken-hover: #252d31;
+  --color-sunken-active: #2c353a;
+  --color-overlay: rgba(0, 0, 0, 0.62);
 
-  --color-border: #334142;
-  --color-border-subtle: #263334;
-  --color-border-muted: #9aaaa638;
-  --color-border-soft: #9aaaa624;
+  --color-ink-strong: #ecf0ec;
+  --color-ink: #d6dcd8;
+  --color-ink-muted: #9aa4a0;
+  --color-ink-soft: #767e7b;
+  --color-ink-faint: #555c5a;
+  --color-ink-on-accent: #ecf0ec;
 
-  --color-primary: #243132;
-  --color-primary-strong: #2c3a3b;
-  --color-primary-hover: #314143;
-  --color-brand: #65cc8c;
+  --color-line: rgba(236, 240, 236, 0.10);
+  --color-line-soft: rgba(236, 240, 236, 0.05);
+  --color-line-strong: rgba(236, 240, 236, 0.18);
 
-  --color-success-bg: #45bf7821;
-  --color-success-text: #77d59c;
-  --color-warning-bg: #d99a2b24;
-  --color-warning-text: #e8c783;
-  --color-info-bg: #649ecb24;
-  --color-info-text: #96bfdc;
-  --color-danger-bg: #d9574521;
-  --color-danger-text: #e99a8d;
-  --color-overlay: #05090a94;
+  --color-accent: #5cba89;
+  --color-accent-hover: #7ad0a1;
+  --color-accent-soft: rgba(92, 186, 137, 0.16);
+  --color-accent-ring: rgba(92, 186, 137, 0.36);
 
-  --shadow-surface: 0 14px 38px #0000002e;
-  --shadow-control: 0 10px 24px #00000029;
-  --shadow-floating: 0 28px 80px #00000061;
+  --color-success-fg: #7ad0a1;
+  --color-success-bg: rgba(92, 186, 137, 0.14);
 
-  --background: var(--color-page);
-  --foreground: var(--color-text-body);
+  --color-warning-fg: #d8b06a;
+  --color-warning-bg: rgba(216, 176, 106, 0.12);
+
+  --color-info-fg: #8fb6df;
+  --color-info-bg: rgba(143, 182, 223, 0.12);
+
+  --color-danger-fg: #e08876;
+  --color-danger-bg: rgba(224, 136, 118, 0.14);
+
+  --shadow-hairline: inset 0 -1px 0 0 var(--color-line);
+  --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.3),
+                0 8px 28px -10px rgba(0, 0, 0, 0.55);
+  --shadow-floating: 0 4px 12px rgba(0, 0, 0, 0.3),
+                     0 32px 72px -16px rgba(0, 0, 0, 0.6);
 }
 
 @layer base {
@@ -118,116 +224,34 @@ html[data-theme="dark"] {
   body {
     margin: 0;
     font-family: var(--font-sans);
-    background: var(--color-page);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    color: var(--color-ink);
+    background-color: var(--color-page);
+    background-image:
+      radial-gradient(
+        1200px circle at 100% -10%,
+        var(--color-accent-soft),
+        transparent 55%
+      );
     background-attachment: fixed;
-    color: var(--color-text-body);
-    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "ss01", "cv11", "cv01";
   }
 
   html[data-theme="dark"] body {
-    background: var(--color-page);
-    background-attachment: fixed;
+    background-image:
+      radial-gradient(
+        1100px circle at 100% -10%,
+        var(--color-accent-soft),
+        transparent 60%
+      );
   }
 
-  .font-serif {
-    font-family: var(--font-serif);
-  }
-
-  .priceai-scrollbar {
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-border) transparent;
-  }
-
-  @keyframes upstream-pulse-dot {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 currentColor;
-      opacity: 1;
-    }
-    70% {
-      box-shadow: 0 0 0 4px transparent;
-      opacity: 0.85;
-    }
-  }
-
-  @keyframes upstream-rise {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .upstream-rise {
-    animation: upstream-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-
-  @keyframes upstream-fade {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  @keyframes upstream-pop {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-
-  .upstream-fade {
-    animation: upstream-fade 0.2s ease-out both;
-  }
-
-  .upstream-pop {
-    animation: upstream-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-
-  .pulse-dot {
-    animation: upstream-pulse-dot 2s ease-in-out infinite;
-  }
-
-  /* 全局操作提示：从右下角滑入 */
-  .upstream-toast {
-    animation: upstream-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .upstream-rise,
-    .upstream-fade,
-    .upstream-pop,
-    .upstream-toast,
-    .pulse-dot {
-      animation: none;
-    }
-  }
-
-  .priceai-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  .priceai-scrollbar::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: var(--color-border);
-  }
-
-  .priceai-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  * {
+  *,
+  *::before,
+  *::after {
     box-sizing: border-box;
   }
 
@@ -241,5 +265,196 @@ html[data-theme="dark"] {
   a {
     color: inherit;
     text-decoration: none;
+  }
+
+  /* === Scrollbar === */
+  .priceai-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: var(--radius-pill);
+    background: var(--color-line-strong);
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* === Type utilities ===
+     组件不再直接用 Tailwind 的 text-xs 等，统一消费以下 utility。 */
+  .t-display {
+    font-size: var(--text-display);
+    line-height: var(--text-display--line-height);
+    letter-spacing: var(--text-display--letter-spacing);
+    font-weight: 700;
+    color: var(--color-ink-strong);
+  }
+
+  .t-title {
+    font-size: var(--text-title);
+    line-height: var(--text-title--line-height);
+    letter-spacing: var(--text-title--letter-spacing);
+    font-weight: 650;
+    color: var(--color-ink-strong);
+  }
+
+  .t-section {
+    font-size: var(--text-section);
+    line-height: var(--text-section--line-height);
+    font-weight: 600;
+    color: var(--color-ink-strong);
+  }
+
+  .t-body {
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    color: var(--color-ink);
+  }
+
+  .t-small {
+    font-size: var(--text-small);
+    line-height: var(--text-small--line-height);
+    color: var(--color-ink-muted);
+  }
+
+  .t-micro {
+    font-size: var(--text-micro);
+    line-height: var(--text-micro--line-height);
+    letter-spacing: var(--text-micro--letter-spacing);
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--color-ink-soft);
+  }
+
+  .font-serif {
+    font-family: var(--font-serif);
+    font-feature-settings: "ss01";
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "ss02", "zero";
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* === Motion === */
+  @keyframes upstream-rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .upstream-rise {
+    animation: upstream-rise 0.42s var(--ease-out-quart) both;
+  }
+
+  @keyframes upstream-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .upstream-fade {
+    animation: upstream-fade var(--motion-base) var(--ease-out-quart) both;
+  }
+
+  @keyframes upstream-pop {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .upstream-pop {
+    animation: upstream-pop 0.28s var(--ease-out-quart) both;
+  }
+
+  @keyframes upstream-pulse-dot {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 var(--color-accent-ring);
+      opacity: 1;
+    }
+    70% {
+      box-shadow: 0 0 0 6px transparent;
+      opacity: 0.85;
+    }
+  }
+
+  .pulse-dot {
+    animation: upstream-pulse-dot 2s var(--ease-out-quart) infinite;
+  }
+
+  /* 骨架屏：代替转圈，给「数秒才回来」的请求一个诚实等待 */
+  @keyframes upstream-shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-sunken) 0%,
+      var(--color-sunken-hover) 50%,
+      var(--color-sunken) 100%
+    );
+    background-size: 200% 100%;
+    animation: upstream-shimmer 1.6s linear infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .upstream-rise,
+    .upstream-fade,
+    .upstream-pop,
+    .pulse-dot,
+    .skeleton {
+      animation: none;
+    }
+  }
+
+  /* === Focus ===
+     单一焦点环规则，不再由各组件重复声明。 */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  button:focus-visible,
+  a:focus-visible {
+    outline-offset: 3px;
+  }
+
+  /* === Selection === */
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-ink-strong);
   }
 }

@@ -127,18 +127,18 @@ const KIND_STYLE: Record<
   { wrap: string; icon: ReactNode; role: "status" | "alert" }
 > = {
   success: {
-    wrap: "border-[var(--color-brand)]/40 bg-[var(--color-success-bg)] text-[var(--color-success-text)]",
-    icon: <CheckCircle2 size={16} />,
+    wrap: "border-accent/35 bg-success-bg text-success-fg",
+    icon: <CheckCircle2 size={15} />,
     role: "status",
   },
   error: {
-    wrap: "border-[var(--color-danger-text)]/40 bg-[var(--color-danger-bg)] text-[var(--color-danger-text)]",
-    icon: <AlertTriangle size={16} />,
+    wrap: "border-danger-fg/35 bg-danger-bg text-danger-fg",
+    icon: <AlertTriangle size={15} />,
     role: "alert",
   },
   info: {
-    wrap: "border-[var(--color-border)] bg-[var(--color-panel)] text-[var(--color-text-body)]",
-    icon: <Info size={16} />,
+    wrap: "border-line bg-panel text-ink",
+    icon: <Info size={15} />,
     role: "status",
   },
 };
@@ -161,7 +161,7 @@ function ToastViewport({
           <div
             key={t.id}
             role={style.role}
-            className={`upstream-toast pointer-events-auto flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm font-medium shadow-[var(--shadow-surface)] backdrop-blur-sm ${style.wrap}`}
+            className={`upstream-pop pointer-events-auto flex items-start gap-2 rounded-[var(--radius-md)] border px-3.5 py-2.5 text-[13px] font-medium shadow-[var(--shadow-pop)] backdrop-blur-md ${style.wrap}`}
           >
             <span className="mt-0.5 shrink-0" aria-hidden>
               {style.icon}
@@ -169,11 +169,11 @@ function ToastViewport({
             <span className="min-w-0 flex-1 break-words">{t.message}</span>
             <button
               type="button"
-              className="-mr-1 shrink-0 rounded p-0.5 opacity-60 transition hover:opacity-100"
+              className="-mr-1 shrink-0 rounded p-0.5 opacity-60 transition-opacity duration-[var(--motion-fast)] hover:opacity-100"
               onClick={() => onDismiss(t.id)}
               aria-label="关闭提示"
             >
-              <X size={14} />
+              <X size={13} />
             </button>
           </div>
         );

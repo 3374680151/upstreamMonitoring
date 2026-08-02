@@ -11,7 +11,7 @@ export function ChangesPage({
   sites: Site[];
 }) {
   return (
-    <div className="upstream-rise space-y-6">
+    <div className="upstream-rise flex flex-col gap-6 md:gap-8">
       <PageHeader
         title="变化记录"
         subtitle="所有渠道最近变化，方便快速扫一眼是否有上游改价。"

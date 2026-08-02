@@ -254,7 +254,7 @@ export function RatiosDialog({
       onClose={onClose}
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-xs text-[var(--color-text-muted)]">
+        <div className="text-[12.5px] text-ink-muted">
           {source} · {groups.length} 个分组 · 上次检测 {fmtTime(site.last_check_at)}
           {isNewApi
             ? ` · 模型清单 ${pricing ? "已读取" : "读取中"} · 状态范围 ${selectedHoursLabel}`
@@ -265,10 +265,10 @@ export function RatiosDialog({
                 : ` · 模型读取 ${fmtTime(fetchedAt)}`}
         </div>
         {isNewApi ? (
-          <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+          <label className="flex items-center gap-2 text-[12.5px] text-ink-muted">
             <span>状态时间</span>
             <Select
-              className="w-28 py-1 text-xs"
+              className="w-28 py-1 text-[12.5px]"
               value={String(perfHours)}
               onChange={(event) => setPerfHours(Number(event.target.value))}
             >
@@ -283,23 +283,23 @@ export function RatiosDialog({
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
-            className="px-2 py-1 text-xs"
+            className="px-2 py-1 text-[12.5px]"
             onClick={() => setCollapsedGroups(new Set(visibleGroups.map(([name]) => name)))}
           >
             全部折叠
           </Button>
           <Button
             variant="ghost"
-            className="px-2 py-1 text-xs"
+            className="px-2 py-1 text-[12.5px]"
             onClick={() => setCollapsedGroups(new Set())}
           >
             全部展开
           </Button>
         </div>
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-primary)]">
+        <label className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink-strong">
           <span>分组</span>
           <Select
-            className="w-32 border-[var(--color-brand)] bg-[var(--color-surface)] py-1 text-xs font-semibold"
+            className="w-32 border-[var(--color-accent)] bg-sunken py-1 text-[12.5px] font-semibold"
             value={selectedGroup}
             onChange={(event) => setSelectedGroup(event.target.value)}
           >
@@ -314,7 +314,7 @@ export function RatiosDialog({
       </div>
 
       {isNewApi ? (
-        <div className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-info-bg)] px-3 py-2 text-xs text-[var(--color-info-text)]">
+        <div className="mb-3 rounded-xl border border-line bg-info-bg px-3 py-2 text-[12.5px] text-info-fg">
           模型清单按当前分组归属展示；状态来自上游 <code>perf-metrics/summary</code>，是模型级汇总，不代表单独某个分组的状态。
           分组默认收起，点击分组左侧“展开”查看模型。
           {summaryModels.length ? ` 已获取 ${summaryModels.length} 个模型的状态。` : ""}
@@ -324,7 +324,7 @@ export function RatiosDialog({
       <div className="priceai-scrollbar overflow-x-auto pb-1">
         <table className="w-full min-w-max table-auto text-left text-sm">
           <thead>
-            <tr className="border-b border-[var(--color-border-subtle)] text-xs font-semibold text-[var(--color-text-muted)]">
+            <tr className="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
               <th className="pb-2">分组</th>
               <th className="pb-2">倍率</th>
               <th className="pb-2">模型状态 / 倍率</th>
@@ -334,7 +334,7 @@ export function RatiosDialog({
           <tbody>
             {groups.length === 0 ? (
               <tr>
-                <td colSpan={4} className="py-8 text-center text-[var(--color-text-muted)]">
+                <td colSpan={4} className="py-8 text-center text-ink-muted">
                   暂无倍率数据
                 </td>
               </tr>
@@ -347,12 +347,12 @@ export function RatiosDialog({
                 return (
                 <tr
                   key={name}
-                  className="border-b border-[var(--color-border-subtle)] align-top last:border-0"
+                  className="border-b border-line-soft align-top last:border-0"
                 >
-                  <td className="py-3 pr-3 font-bold text-[var(--color-text-primary)]">
+                  <td className="py-3 pr-3 font-bold text-ink-strong">
                     <button
                       type="button"
-                      className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-brand)]"
+                      className="flex items-center gap-2 rounded-[var(--radius-md)] px-1.5 py-1 text-left hover:bg-sunken-hover hover:text-accent"
                       onClick={() => {
                         const next = new Set(collapsedGroups);
                         if (next.has(name)) next.delete(name);
@@ -361,13 +361,13 @@ export function RatiosDialog({
                       }}
                       aria-expanded={!collapsed}
                     >
-                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-[var(--color-surface)] px-1 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                      <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-[var(--radius-sm)] bg-sunken px-1 text-[10px] font-semibold text-ink-muted">
                         {collapsed ? "展开" : "收起"}
                       </span>
                       <span>{name}</span>
                     </button>
                   </td>
-                  <td className="py-3 pr-3 font-extrabold tabular-nums text-[var(--color-text-primary)]">
+                  <td className="py-3 pr-3 font-extrabold tabular-nums text-ink-strong">
                     {ratioLabel(item)}
                   </td>
                   <td className="py-3 pr-3">
@@ -387,7 +387,7 @@ export function RatiosDialog({
                       />
                     )}
                   </td>
-                  <td className="py-3 text-xs text-[var(--color-text-muted)]">
+                  <td className="py-3 text-[12.5px] text-ink-muted">
                     {groupPropertyText(item || {})}
                   </td>
                 </tr>
@@ -398,7 +398,7 @@ export function RatiosDialog({
         </table>
       </div>
       {error || perfError ? (
-        <div className="mt-3 rounded-xl bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
+        <div className="mt-3 rounded-xl bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
           {error || `模型状态：${perfError}`}
         </div>
       ) : null}
@@ -415,8 +415,8 @@ function GroupSummaryBar({
 }) {
   const tone = successTone(summary.successRate);
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--color-border-subtle)] pb-2 text-[11px] text-[var(--color-text-muted)]">
-      <span className="font-semibold text-[var(--color-text-primary)]">分组平均</span>
+    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft pb-2 text-[11px] text-ink-muted">
+      <span className="font-semibold text-ink-strong">分组平均</span>
       <Badge tone={tone}>
         {summary.successRate == null
           ? "暂无成功率"
@@ -431,7 +431,7 @@ function GroupSummaryBar({
         模型 {summary.monitoredCount}/{summary.modelCount}
       </span>
       {collapsed ? (
-        <span className="text-[var(--color-text-soft)]">已折叠 · 点击展开</span>
+        <span className="text-ink-soft">已折叠 · 点击展开</span>
       ) : null}
     </div>
   );
@@ -463,7 +463,7 @@ function ModelCell({
   if (isNewApi) {
     if (!pricing) {
       return (
-        <span className="text-xs text-[var(--color-text-soft)]">
+        <span className="text-[12.5px] text-ink-soft">
           {error || "正在读取上游模型清单..."}
         </span>
       );
@@ -473,7 +473,7 @@ function ModelCell({
     );
     if (!list.length) {
       return (
-        <span className="text-xs text-[var(--color-text-soft)]">
+        <span className="text-[12.5px] text-ink-soft">
           上游未返回该分组的模型数据
         </span>
       );
@@ -493,15 +493,15 @@ function ModelCell({
   }
 
   if (models === null) {
-    return <span className="text-xs text-[var(--color-text-soft)]">正在读取上游模型...</span>;
+    return <span className="text-[12.5px] text-ink-soft">正在读取上游模型...</span>;
   }
   if (error) {
-    return <span className="text-xs text-[var(--color-danger-text)]">{error}</span>;
+    return <span className="text-[12.5px] text-danger-fg">{error}</span>;
   }
   const list = models[groupName] || [];
   if (!list.length) {
     return (
-      <span className="text-xs text-[var(--color-text-soft)]">
+      <span className="text-[12.5px] text-ink-soft">
         上游未返回该分组的模型数据
       </span>
     );
@@ -524,7 +524,7 @@ function ModelCell({
         return (
           <div
             key={key}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)]"
+            className="rounded-xl border border-line bg-panel-soft"
           >
             <button
               type="button"
@@ -537,7 +537,7 @@ function ModelCell({
               }}
             >
               <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
+                <div className="truncate text-sm font-semibold text-ink-strong">
                   {model.name}
                 </div>
               </div>
@@ -546,13 +546,13 @@ function ModelCell({
                 <Badge tone={successTone(hasAvail ? Number(model.availability_7d) : null)}>
                   可用 {availability}
                 </Badge>
-                <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-primary)]">
+                <span className="text-[11px] font-bold tabular-nums text-ink-strong">
                   {ratioLabel(model)}
                 </span>
               </div>
             </button>
             {open ? (
-              <div className="space-y-2 border-t border-[var(--color-border-subtle)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+              <div className="space-y-2 border-t border-line-soft px-3 py-2 text-[11px] text-ink-muted">
                 <div>
                   {[model.source, model.monitor, model.platform].filter(Boolean).join(" · ") ||
                     "-"}
@@ -560,10 +560,10 @@ function ModelCell({
                 {model.status && model.status !== "configured" ? (
                   <div className="flex gap-4">
                     <span>
-                      延迟 <b className="text-[var(--color-text-primary)]">{modelMetricText(model.latency_ms)}</b>
+                      延迟 <b className="text-ink-strong">{modelMetricText(model.latency_ms)}</b>
                     </span>
                     <span>
-                      PING <b className="text-[var(--color-text-primary)]">{modelMetricText(model.ping_latency_ms)}</b>
+                      PING <b className="text-ink-strong">{modelMetricText(model.ping_latency_ms)}</b>
                     </span>
                   </div>
                 ) : (
@@ -601,9 +601,9 @@ function NewApiModelRow({
   const modelRatio = Number(model.model_ratio);
   const ratio = Number.isFinite(modelRatio) ? `${modelRatio.toFixed(2)}x` : "-";
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] px-3 py-2">
+    <div className="rounded-xl border border-line bg-panel-soft px-3 py-2">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <div className="min-w-0 truncate text-sm font-semibold text-[var(--color-text-primary)]">
+        <div className="min-w-0 truncate text-sm font-semibold text-ink-strong">
           {model.model_name}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px]">
@@ -611,18 +611,18 @@ function NewApiModelRow({
           <Badge tone={perfLoading ? "neutral" : tone} className="tabular-nums">
             成功率 {recentRate == null ? "-" : formatRate(recentRate)}
           </Badge>
-          <span className="tabular-nums text-[var(--color-text-muted)]">
+          <span className="tabular-nums text-ink-muted">
             延迟 {formatMs(perf?.avg_latency_ms)}
           </span>
-          <span className="tabular-nums text-[var(--color-text-muted)]">
+          <span className="tabular-nums text-ink-muted">
             TPS {formatTps(perf?.avg_tps)}
           </span>
-          <span className="tabular-nums text-[var(--color-text-primary)]">
+          <span className="tabular-nums text-ink-strong">
             {ratio}
           </span>
         </div>
       </div>
-      <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-[var(--color-text-soft)]">
+      <div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-ink-soft">
         <span>样本 {perf?.request_count == null ? "-" : perf.request_count}</span>
         {perf?.recent_success_rates?.length ? (
           <PerfBars values={perf.recent_success_rates} />
@@ -652,12 +652,12 @@ function PerfBars({ values }: { values: number[] }) {
         const tone = successTone(number);
         const color =
           tone === "success"
-            ? "bg-[var(--color-success-text)]"
+            ? "bg-[var(--color-success-fg)]"
             : tone === "warning"
-              ? "bg-[var(--color-warning-text)]"
+              ? "bg-[var(--color-warning-fg)]"
               : tone === "danger"
-                ? "bg-[var(--color-danger-text)]"
-                : "bg-[var(--color-surface-muted)]";
+                ? "bg-[var(--color-danger-fg)]"
+                : "bg-sunken-active";
         return (
           <span
             key={index}

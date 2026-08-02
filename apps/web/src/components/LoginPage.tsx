@@ -34,55 +34,68 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[var(--color-page)] px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-panel)] p-6 shadow-[var(--shadow-floating)]">
-        <div className="mb-5 flex items-center gap-2.5">
-          <span
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-sm font-black text-white shadow-[0_6px_16px_#45bf7855]"
-            style={{ backgroundImage: "linear-gradient(135deg, #52cc86 0%, #2f9d63 100%)" }}
-          >
-            U
-          </span>
-          <div className="leading-tight">
-            <div className="text-sm font-extrabold tracking-tight text-[var(--color-text-primary)]">
-              Upstream 控制台
-            </div>
-            <div className="text-[11px] font-semibold text-[var(--color-text-muted)]">
-              请输入访问密码
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="w-full max-w-[400px] overflow-hidden rounded-[var(--radius-xl)] border border-line bg-panel shadow-[var(--shadow-floating)]">
+        <div className="border-b border-line-soft bg-panel-soft px-7 py-6">
+          <div className="flex items-center gap-3">
+            <span
+              className="inline-flex h-10 w-10 items-center justify-center rounded-[10px] font-serif text-[17px] font-semibold text-ink-on-accent shadow-[var(--shadow-pop)]"
+              style={{
+                backgroundImage:
+                  "linear-gradient(135deg, #2c8a5a 0%, #1f6e47 100%)",
+              }}
+            >
+              U
+            </span>
+            <div className="leading-tight">
+              <div className="font-serif text-[16px] font-semibold tracking-[-0.01em] text-ink-strong">
+                Upstream 控制台
+              </div>
+              <div className="t-micro mt-0.5">访问受密码保护</div>
             </div>
           </div>
         </div>
 
-        <label className="block space-y-1.5">
-          <span className="text-xs font-semibold text-[var(--color-text-muted)]">
-            控制台密码
-          </span>
-          <Input
-            type="password"
-            value={password}
-            autoFocus
-            autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-            placeholder="CONSOLE_PASSWORD"
-          />
-        </label>
+        <form
+          className="flex flex-col gap-6 md:gap-8 px-7 py-6"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
+        >
+          <label className="flex flex-col gap-1.5">
+            <span className="t-small font-medium text-ink-muted">
+              控制台密码
+            </span>
+            <Input
+              type="password"
+              value={password}
+              autoFocus
+              autoComplete="current-password"
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="在服务端 .env 中设置"
+            />
+          </label>
 
-        {error ? (
-          <div className="mt-3 rounded-lg bg-[var(--color-danger-bg)] px-3 py-2 text-xs text-[var(--color-danger-text)]">
-            {error}
-          </div>
-        ) : null}
+          {error ? (
+            <div className="rounded-[var(--radius-sm)] border border-danger-fg/25 bg-danger-bg px-3 py-2 text-[12.5px] text-danger-fg">
+              {error}
+            </div>
+          ) : null}
 
-        <Button className="mt-5 w-full" onClick={submit} loading={busy}>
-          {busy ? "登录中..." : "登录"}
-        </Button>
+          <Button
+            type="submit"
+            variant="brand"
+            className="h-9 w-full text-[13.5px]"
+            loading={busy}
+          >
+            {busy ? "登录中..." : "登录"}
+          </Button>
 
-        <p className="mt-4 text-[11px] leading-relaxed text-[var(--color-text-soft)]">
-          密码在服务端通过环境变量 <code>CONSOLE_PASSWORD</code> 设置。留空该变量则不启用登录（仅建议本地/内网直连时）。
-        </p>
+          <p className="text-[11.5px] leading-relaxed text-ink-soft">
+            密码在服务端通过环境变量 <code className="font-mono">CONSOLE_PASSWORD</code> 设置。留空该变量则不启用登录（仅建议本地/内网直连时）。
+          </p>
+        </form>
       </div>
     </div>
   );

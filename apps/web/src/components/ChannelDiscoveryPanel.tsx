@@ -372,11 +372,11 @@ export function ChannelDiscoveryPanel({
   if (!open) return null;
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <Link2 size={15} className="shrink-0 text-[var(--color-brand)]" aria-hidden />
-          <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+          <Link2 size={15} className="shrink-0 text-accent" aria-hidden />
+          <span className="text-sm font-semibold text-ink-strong">
             从主站发现 · NewAPI
           </span>
           <Badge tone="info">只读发现</Badge>
@@ -397,7 +397,7 @@ export function ChannelDiscoveryPanel({
 
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <label className="block space-y-1.5">
-          <span className="text-xs font-semibold text-[var(--color-text-muted)]">来源主站</span>
+          <span className="text-[12.5px] font-semibold text-ink-muted">来源主站</span>
           <Select
             value={adminSiteId ?? ""}
             onChange={(event) => setAdminSiteId(Number(event.target.value) || null)}
@@ -413,11 +413,11 @@ export function ChannelDiscoveryPanel({
           </Select>
         </label>
         <label className="block space-y-1.5">
-          <span className="text-xs font-semibold text-[var(--color-text-muted)]">筛选候选</span>
+          <span className="text-[12.5px] font-semibold text-ink-muted">筛选候选</span>
           <div className="relative">
             <Search
               size={14}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-soft)]"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft"
               aria-hidden
             />
             <Input
@@ -430,7 +430,7 @@ export function ChannelDiscoveryPanel({
           </div>
         </label>
         <label className="block space-y-1.5 sm:col-span-2">
-          <span className="text-xs font-semibold text-[var(--color-text-muted)]">
+          <span className="text-[12.5px] font-semibold text-ink-muted">
             新建渠道监控间隔（分钟）
           </span>
           <div className="flex flex-wrap items-center gap-2">
@@ -447,7 +447,7 @@ export function ChannelDiscoveryPanel({
               }}
               aria-label="新建渠道监控间隔"
             />
-            <span className="text-[11px] text-[var(--color-text-soft)]">
+            <span className="text-[11px] text-ink-soft">
               新建站点使用此间隔，已存在站点保留原配置
             </span>
           </div>
@@ -463,10 +463,10 @@ export function ChannelDiscoveryPanel({
         ].map(([label, value]) => (
           <div
             key={String(label)}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-panel-soft)] px-3 py-2"
+            className="rounded-xl border border-line bg-panel-soft px-3 py-2"
           >
-            <div className="text-[11px] text-[var(--color-text-muted)]">{label}</div>
-            <div className="mt-0.5 text-xl font-extrabold tabular-nums text-[var(--color-text-primary)]">
+            <div className="text-[11px] text-ink-muted">{label}</div>
+            <div className="mt-0.5 text-xl font-extrabold tabular-nums text-ink-strong">
               {value}
             </div>
           </div>
@@ -474,13 +474,13 @@ export function ChannelDiscoveryPanel({
       </div>
 
       {message ? (
-        <div className="rounded-lg border border-[var(--color-warning-text)]/25 bg-[var(--color-warning-bg)] px-3 py-2 text-xs text-[var(--color-warning-text)]">
+        <div className="rounded-[var(--radius-md)] border border-[var(--color-warning-fg)]/25 bg-warning-bg px-3 py-2 text-[12.5px] text-warning-fg">
           {message}
         </div>
       ) : null}
 
       {progress ? (
-        <div className="flex min-w-0 items-center gap-3 rounded-lg border border-[var(--color-brand)]/25 bg-[var(--color-success-bg)] px-3 py-2 text-xs text-[var(--color-success-text)]">
+        <div className="flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-accent)]/25 bg-success-bg px-3 py-2 text-[12.5px] text-success-fg">
           <Spinner />
           <span className="min-w-0 truncate">
             正在同步登录态 {progress.current}/{progress.total} · {progress.baseUrl}
@@ -488,7 +488,7 @@ export function ChannelDiscoveryPanel({
         </div>
       ) : null}
 
-      <div className="priceai-scrollbar hidden min-w-0 overflow-x-auto rounded-xl border border-[var(--color-border-subtle)] sm:block">
+      <div className="priceai-scrollbar hidden min-w-0 overflow-x-auto rounded-xl border border-line-soft sm:block">
         <table className="w-full min-w-[760px] table-fixed text-left text-sm">
           <colgroup>
             <col className="w-10" />
@@ -497,8 +497,8 @@ export function ChannelDiscoveryPanel({
             <col className="w-[18%]" />
             <col className="w-[20%]" />
           </colgroup>
-          <thead className="bg-[var(--color-panel-soft)] text-xs font-semibold text-[var(--color-text-muted)]">
-            <tr className="border-b border-[var(--color-border-subtle)]">
+          <thead className="bg-panel-soft text-[12.5px] font-semibold text-ink-muted">
+            <tr className="border-b border-line-soft">
               <th className="px-3 py-2.5">
                 <input
                   type="checkbox"
@@ -519,13 +519,13 @@ export function ChannelDiscoveryPanel({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-3 py-12 text-center text-sm text-[var(--color-text-muted)]">
+                <td colSpan={5} className="px-3 py-12 text-center text-sm text-ink-muted">
                   <span className="inline-flex items-center gap-2"><Spinner /> 正在读取主站渠道</span>
                 </td>
               </tr>
             ) : !filteredCandidates.length ? (
               <tr>
-                <td colSpan={5} className="px-3 py-12 text-center text-sm text-[var(--color-text-muted)]">
+                <td colSpan={5} className="px-3 py-12 text-center text-sm text-ink-muted">
                   暂无匹配候选
                 </td>
               </tr>
@@ -546,7 +546,7 @@ export function ChannelDiscoveryPanel({
                 return (
                   <tr
                     key={key}
-                    className="border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-surface-hover)]"
+                    className="border-b border-line-soft last:border-0 hover:bg-sunken-hover"
                   >
                     <td className="px-3 py-3 align-top">
                       <input
@@ -557,15 +557,15 @@ export function ChannelDiscoveryPanel({
                       />
                     </td>
                     <td className="max-w-0 px-3 py-3 align-top">
-                      <div className="truncate font-semibold text-[var(--color-text-primary)]">
+                      <div className="truncate font-semibold text-ink-strong">
                         {candidate.name}
                       </div>
-                      <div className="mt-1 truncate text-[11px] text-[var(--color-text-soft)]" title={candidate.channel_names.join("、")}>
+                      <div className="mt-1 truncate text-[11px] text-ink-soft" title={candidate.channel_names.join("、")}>
                         {candidate.channel_count} 个主站渠道
                       </div>
                     </td>
                     <td className="max-w-0 px-3 py-3 align-top">
-                      <code className="block truncate text-xs text-[var(--color-text-body)]" title={candidate.base_url}>
+                      <code className="block truncate text-[12.5px] text-ink" title={candidate.base_url}>
                         {candidate.base_url}
                       </code>
                     </td>
@@ -574,7 +574,7 @@ export function ChannelDiscoveryPanel({
                         {state.status ? sessionLabel(state.status) : candidate.existing_site_id ? "已监控" : "待添加"}
                       </Badge>
                       {state.message ? (
-                        <div className="mt-1 max-w-[180px] truncate text-[10px] text-[var(--color-danger-text)]" title={state.message}>
+                        <div className="mt-1 max-w-[180px] truncate text-[10px] text-danger-fg" title={state.message}>
                           {state.message}
                         </div>
                       ) : null}
@@ -617,7 +617,7 @@ export function ChannelDiscoveryPanel({
                             打开登录页
                           </Button>
                         ) : null}
-                        {state.status === "ready" ? <Check size={16} className="mt-1 text-[var(--color-brand)]" aria-label="已同步" /> : null}
+                        {state.status === "ready" ? <Check size={16} className="mt-1 text-accent" aria-label="已同步" /> : null}
                       </div>
                     </td>
                   </tr>
@@ -630,11 +630,11 @@ export function ChannelDiscoveryPanel({
 
       <div className="space-y-2 sm:hidden">
         {loading ? (
-          <div className="rounded-xl border border-[var(--color-border-subtle)] px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">
+          <div className="rounded-xl border border-line-soft px-3 py-10 text-center text-sm text-ink-muted">
             <span className="inline-flex items-center gap-2"><Spinner /> 正在读取主站渠道</span>
           </div>
         ) : !filteredCandidates.length ? (
-          <div className="rounded-xl border border-[var(--color-border-subtle)] px-3 py-10 text-center text-sm text-[var(--color-text-muted)]">
+          <div className="rounded-xl border border-line-soft px-3 py-10 text-center text-sm text-ink-muted">
             暂无匹配候选
           </div>
         ) : (
@@ -654,7 +654,7 @@ export function ChannelDiscoveryPanel({
             return (
               <div
                 key={`mobile-${key}`}
-                className="space-y-2 rounded-xl border border-[var(--color-border-subtle)] bg-[var(--color-panel-soft)] p-3"
+                className="space-y-2 rounded-xl border border-line-soft bg-panel-soft p-3"
               >
                 <div className="flex min-w-0 items-start gap-2">
                   <input
@@ -667,10 +667,10 @@ export function ChannelDiscoveryPanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="break-words font-semibold text-[var(--color-text-primary)]">
+                        <div className="break-words font-semibold text-ink-strong">
                           {candidate.name}
                         </div>
-                        <div className="mt-0.5 text-[11px] text-[var(--color-text-soft)]">
+                        <div className="mt-0.5 text-[11px] text-ink-soft">
                           {candidate.channel_count} 个主站渠道
                         </div>
                       </div>
@@ -682,11 +682,11 @@ export function ChannelDiscoveryPanel({
                             : "待添加"}
                       </Badge>
                     </div>
-                    <code className="mt-2 block break-all text-[11px] leading-5 text-[var(--color-text-body)]">
+                    <code className="mt-2 block break-all text-[11px] leading-5 text-ink">
                       {candidate.base_url}
                     </code>
                     {state.message ? (
-                      <div className="mt-1 break-words text-[10px] text-[var(--color-danger-text)]">
+                      <div className="mt-1 break-words text-[10px] text-danger-fg">
                         {state.message}
                       </div>
                     ) : null}
@@ -738,9 +738,9 @@ export function ChannelDiscoveryPanel({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border-subtle)] pt-3">
-        <span className="text-xs text-[var(--color-text-muted)]">
-          已选择 <b className="tabular-nums text-[var(--color-text-primary)]">{selectedCandidates.length}</b> 个候选
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line-soft pt-3">
+        <span className="text-[12.5px] text-ink-muted">
+          已选择 <b className="tabular-nums text-ink-strong">{selectedCandidates.length}</b> 个候选
         </span>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" className="h-8" onClick={onClose} disabled={busy}>

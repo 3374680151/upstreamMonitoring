@@ -16,7 +16,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# 唯一的第三方依赖：纯 Python 的 MySQL 驱动 PyMySQL
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY app.py /app/app.py
+COPY scripts /app/scripts
 COPY --from=web-build /web/dist /app/apps/web/dist
 
 RUN mkdir -p /app/data /app/static

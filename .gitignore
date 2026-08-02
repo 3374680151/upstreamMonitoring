@@ -2,6 +2,11 @@ node_modules/
 dist/
 build/
 .DS_Store
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
 .env
 .env.*
 !.env.example
@@ -11,7 +16,15 @@ coverage/
 .idea/
 .vscode/
 *.local
-data/*.db
-data/*.db-*
+# 业务数据现在存 MySQL；data/ 仅用于本地备份 / 迁移残留，整体忽略以防密钥泄露。
+data/*
+data/**
 !data/.gitkeep
+# 防御性：数据库损坏/恢复/备份残留（可能含真实令牌），无论放哪都不入库
+*.corrupt*
+*.broken*
+*.bak
+recover_full.sql
+# 本地工具配置（launch.json / settings.local.json 等），不进公开仓库
+.claude/
 apps/web/tsconfig.tsbuildinfo

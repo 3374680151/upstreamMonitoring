@@ -1,0 +1,1649 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Upstream 使用与配置教程</title>
+  <meta name="description" content="Upstream 上游倍率监控的部署、配置、使用、安全审查与排障手册">
+  <style>
+    :root {
+      --page: #f9f9f9;
+      --panel: #ffffff;
+      --panel-soft: #f4f7f5;
+      --surface: #eef4f0;
+      --surface-hover: #e7f1eb;
+      --text: #17201b;
+      --text-body: #35423a;
+      --muted: #68766e;
+      --soft: #89958e;
+      --border: #dce4df;
+      --border-strong: #cbd7d0;
+      --brand: #45bf78;
+      --brand-dark: #188950;
+      --brand-soft: #e8f7ee;
+      --info: #2f6f9f;
+      --info-soft: #eaf3f9;
+      --warn: #946514;
+      --warn-soft: #fff7df;
+      --danger: #b13c3c;
+      --danger-soft: #fff0f0;
+      --success: #247a4b;
+      --success-soft: #eaf7ef;
+      --code: #15201a;
+      --code-text: #e8f4ed;
+      --shadow: 0 1px 2px rgba(22, 38, 29, .04);
+      --shadow-float: 0 18px 50px rgba(22, 38, 29, .13);
+      --radius: 8px;
+      --topbar: 64px;
+      --sidebar: 274px;
+    }
+
+    html[data-theme="dark"] {
+      --page: #101512;
+      --panel: #171e1a;
+      --panel-soft: #1c2520;
+      --surface: #223028;
+      --surface-hover: #293a30;
+      --text: #edf4ef;
+      --text-body: #c5d0c9;
+      --muted: #9ca9a1;
+      --soft: #7f8d84;
+      --border: #2c3931;
+      --border-strong: #3a4a40;
+      --brand: #55c985;
+      --brand-dark: #71d79b;
+      --brand-soft: #183425;
+      --info: #87b9d9;
+      --info-soft: #172c38;
+      --warn: #e2bd6d;
+      --warn-soft: #352b17;
+      --danger: #ee9292;
+      --danger-soft: #351d1d;
+      --success: #75d49d;
+      --success-soft: #183526;
+      --code: #0b100d;
+      --code-text: #dcebe2;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .25);
+      --shadow-float: 0 18px 50px rgba(0, 0, 0, .42);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: calc(var(--topbar) + 20px); }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text-body);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      letter-spacing: 0;
+    }
+    button, input { font: inherit; letter-spacing: 0; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { cursor: pointer; }
+    a { color: var(--brand-dark); }
+    a:hover { text-decoration-thickness: 2px; }
+    code, pre, .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      letter-spacing: 0;
+    }
+    code:not(pre code) {
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--panel-soft);
+      padding: .1em .35em;
+      color: var(--text);
+      font-size: .9em;
+      overflow-wrap: anywhere;
+    }
+    :focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--brand) 70%, transparent);
+      outline-offset: 2px;
+    }
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 1000;
+      transform: translateY(-150%);
+      border-radius: 6px;
+      background: var(--panel);
+      padding: 9px 13px;
+      color: var(--text);
+      box-shadow: var(--shadow-float);
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 80;
+      height: var(--topbar);
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--page) 93%, transparent);
+      backdrop-filter: blur(14px);
+    }
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: min(1560px, 100%);
+      height: 100%;
+      margin: 0 auto;
+      padding: 0 18px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 230px;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .brand-mark {
+      display: inline-grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 850;
+      box-shadow: 0 6px 16px rgba(69, 191, 120, .25);
+    }
+    .brand-copy { line-height: 1.2; }
+    .brand-copy b { display: block; font-size: 14px; color: var(--text); }
+    .brand-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; font-weight: 700; }
+    .toolbar-search {
+      position: relative;
+      width: min(520px, 46vw);
+      margin-left: auto;
+    }
+    .toolbar-search input {
+      width: 100%;
+      height: 40px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0 86px 0 38px;
+      box-shadow: var(--shadow);
+    }
+    .toolbar-search svg {
+      position: absolute;
+      top: 11px;
+      left: 12px;
+      width: 18px;
+      height: 18px;
+      color: var(--muted);
+    }
+    .search-count {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      color: var(--soft);
+      font-size: 11px;
+    }
+    .icon-button {
+      display: inline-grid;
+      flex: 0 0 auto;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted);
+      transition: background .18s ease, color .18s ease, border-color .18s ease;
+    }
+    .icon-button:hover { border-color: var(--border-strong); background: var(--surface); color: var(--text); }
+    .icon-button svg { width: 18px; height: 18px; }
+    .menu-button { display: none; }
+    .sun-icon { display: none; }
+    html[data-theme="dark"] .sun-icon { display: block; }
+    html[data-theme="dark"] .moon-icon { display: none; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      width: min(1560px, 100%);
+      margin: 0 auto;
+    }
+    .sidebar {
+      position: sticky;
+      top: var(--topbar);
+      align-self: start;
+      height: calc(100vh - var(--topbar));
+      overflow-y: auto;
+      border-right: 1px solid var(--border);
+      padding: 22px 16px 36px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-strong) transparent;
+    }
+    .nav-label {
+      margin: 16px 10px 6px;
+      color: var(--soft);
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .nav-label:first-child { margin-top: 0; }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 38px;
+      margin: 2px 0;
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 650;
+      text-decoration: none;
+      transition: background .15s ease, color .15s ease;
+    }
+    .nav-link:hover { background: var(--surface); color: var(--text); }
+    .nav-link[aria-current="true"] { background: var(--brand-soft); color: var(--brand-dark); }
+    .nav-number {
+      display: inline-grid;
+      width: 22px;
+      height: 22px;
+      flex: 0 0 22px;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--soft);
+      font-size: 10px;
+      font-weight: 800;
+    }
+    .nav-link[aria-current="true"] .nav-number { border-color: color-mix(in srgb, var(--brand) 55%, var(--border)); }
+    .sidebar-note {
+      margin-top: 20px;
+      border-top: 1px solid var(--border);
+      padding: 16px 10px 0;
+      color: var(--soft);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .content {
+      min-width: 0;
+      padding: 42px clamp(22px, 4vw, 68px) 96px;
+    }
+    .content-inner { width: min(1060px, 100%); margin: 0 auto; }
+    .hero {
+      position: relative;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 0 38px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--brand-dark);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+    h1, h2, h3, h4 { margin: 0; color: var(--text); letter-spacing: 0; }
+    h1 {
+      max-width: 780px;
+      margin-top: 14px;
+      font-family: "Songti SC", "STSong", Georgia, serif;
+      font-size: clamp(36px, 5vw, 58px);
+      line-height: 1.12;
+      font-weight: 800;
+    }
+    .hero-copy { max-width: 760px; margin: 17px 0 0; color: var(--muted); font-size: 16px; line-height: 1.85; }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--panel);
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .pill.brand { border-color: color-mix(in srgb, var(--brand) 45%, var(--border)); background: var(--brand-soft); color: var(--brand-dark); min-width: auto; }
+    .quick-links { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 22px; }
+    .button-link {
+      display: inline-flex;
+      min-height: 42px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+      padding: 8px 13px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    .button-link.primary { border-color: var(--brand); background: var(--brand); color: #fff; }
+    .button-link:hover { box-shadow: var(--shadow); }
+    .button-link svg { width: 16px; height: 16px; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 24px; }
+    .kpi {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+    .kpi-label { color: var(--muted); font-size: 11px; font-weight: 700; }
+    .kpi-value { margin-top: 4px; color: var(--text); font-size: 24px; line-height: 1.2; font-weight: 850; font-variant-numeric: tabular-nums; }
+    .kpi-note { margin-top: 5px; color: var(--soft); font-size: 10px; }
+
+    .doc-section {
+      scroll-margin-top: calc(var(--topbar) + 22px);
+      border-bottom: 1px solid var(--border);
+      padding: 46px 0;
+    }
+    .doc-section:last-of-type { border-bottom: 0; }
+    .section-head { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 14px; margin-bottom: 22px; }
+    .section-index {
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+      border-radius: 7px;
+      background: var(--brand-soft);
+      color: var(--brand-dark);
+      font-size: 12px;
+      font-weight: 850;
+    }
+    h2 { font-size: 25px; line-height: 1.3; }
+    .section-subtitle { max-width: 760px; margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    h3 { margin-top: 28px; margin-bottom: 10px; font-size: 17px; }
+    h4 { margin-top: 18px; margin-bottom: 7px; font-size: 14px; }
+    p { margin: 10px 0; }
+    ul, ol { margin: 10px 0; padding-left: 1.35rem; }
+    li + li { margin-top: 6px; }
+    strong { color: var(--text); }
+    .lead { color: var(--text-body); font-size: 16px; }
+
+    .cards-2, .cards-3 { display: grid; gap: 12px; }
+    .cards-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+    .card h3, .card h4 { margin-top: 0; }
+    .card p:last-child { margin-bottom: 0; }
+    .card-kicker { color: var(--brand-dark); font-size: 10px; font-weight: 850; text-transform: uppercase; }
+    .card-title { margin-top: 6px; color: var(--text); font-size: 16px; font-weight: 800; }
+    .card-copy { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .mini-list { margin: 12px 0 0; padding: 0; list-style: none; }
+    .mini-list li { position: relative; padding-left: 15px; color: var(--muted); font-size: 12px; }
+    .mini-list li::before { content: ""; position: absolute; top: .66em; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+
+    .alert {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 11px;
+      margin: 16px 0;
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: var(--radius);
+      padding: 14px 15px;
+      background: var(--panel);
+      font-size: 13px;
+    }
+    .alert svg { width: 20px; height: 20px; margin-top: 2px; }
+    .alert p { margin: 0; }
+    .alert p + p { margin-top: 5px; }
+    .alert.info { border-left-color: var(--info); background: var(--info-soft); color: var(--info); }
+    .alert.warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+    .alert.danger { border-left-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
+    .alert.success { border-left-color: var(--success); background: var(--success-soft); color: var(--success); }
+    .alert strong { color: currentColor; }
+
+    .flow {
+      margin: 18px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      padding: 18px;
+      overflow-x: auto;
+    }
+    .flow-track {
+      display: flex;
+      min-width: 760px;
+      align-items: stretch;
+      gap: 8px;
+    }
+    .flow-node {
+      display: grid;
+      flex: 1 1 0;
+      min-width: 124px;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+      padding: 12px 10px;
+      color: var(--text);
+      text-align: center;
+      font-size: 12px;
+      font-weight: 750;
+      box-shadow: var(--shadow);
+    }
+    .flow-node small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; font-weight: 600; }
+    .flow-arrow { display: grid; flex: 0 0 22px; place-items: center; color: var(--brand-dark); font-weight: 900; }
+    .flow-caption { margin-top: 10px; color: var(--muted); font-size: 11px; }
+
+    .table-wrap {
+      max-width: 100%;
+      margin: 14px 0;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    table { width: 100%; min-width: 680px; border-collapse: collapse; text-align: left; font-size: 12px; }
+    th {
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-soft);
+      padding: 10px 12px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+    td { border-bottom: 1px solid var(--border); padding: 11px 12px; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: color-mix(in srgb, var(--surface) 45%, transparent); }
+    .yes { color: var(--success); font-weight: 800; }
+    .no { color: var(--soft); font-weight: 700; }
+    .risk { color: var(--danger); font-weight: 800; }
+    .recommended { color: var(--brand-dark); font-weight: 800; }
+
+    .tabs {
+      margin: 16px 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .tab-list {
+      display: flex;
+      gap: 2px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-soft);
+      padding: 6px;
+    }
+    .tab {
+      min-height: 38px;
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      padding: 7px 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .tab[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+    .tab-panel { padding: 18px; }
+    .tab-panel[hidden] { display: none; }
+
+    .code-block {
+      position: relative;
+      margin: 12px 0;
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      background: var(--code);
+      overflow: hidden;
+    }
+    .code-label {
+      min-height: 34px;
+      border-bottom: 1px solid rgba(255,255,255,.1);
+      padding: 8px 88px 7px 12px;
+      color: #91a79a;
+      font-size: 10px;
+      font-weight: 750;
+    }
+    pre {
+      max-width: 100%;
+      margin: 0;
+      overflow-x: auto;
+      padding: 14px;
+      color: var(--code-text);
+      font-size: 11px;
+      line-height: 1.65;
+      tab-size: 2;
+    }
+    pre code { color: inherit; }
+    .copy-button {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      display: inline-flex;
+      min-width: 74px;
+      min-height: 28px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 5px;
+      background: rgba(255,255,255,.08);
+      color: #cce0d4;
+      font-size: 10px;
+      font-weight: 750;
+    }
+    .copy-button:hover { background: rgba(255,255,255,.14); }
+    .copy-button svg { width: 13px; height: 13px; }
+
+    .steps { counter-reset: step; margin: 18px 0; }
+    .step {
+      position: relative;
+      margin-left: 18px;
+      border-left: 1px solid var(--border-strong);
+      padding: 0 0 24px 28px;
+    }
+    .step:last-child { border-left-color: transparent; padding-bottom: 0; }
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      top: -2px;
+      left: -15px;
+      display: grid;
+      width: 29px;
+      height: 29px;
+      place-items: center;
+      border: 2px solid var(--page);
+      border-radius: 50%;
+      background: var(--brand);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 850;
+      box-shadow: 0 0 0 1px var(--brand);
+    }
+    .step h3 { margin: 0 0 5px; font-size: 14px; }
+    .step p { margin: 4px 0; color: var(--muted); font-size: 12px; }
+
+    details {
+      margin: 9px 0;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+    }
+    summary {
+      min-height: 44px;
+      cursor: pointer;
+      padding: 10px 40px 10px 13px;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 750;
+    }
+    details > div { border-top: 1px solid var(--border); padding: 13px; color: var(--muted); font-size: 12px; }
+
+    .review-list { display: grid; gap: 8px; margin: 14px 0; }
+    .review-item {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-height: 44px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--panel);
+      padding: 10px 12px;
+    }
+    .review-item input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--brand); }
+    .review-item span { color: var(--text-body); font-size: 12px; }
+    .review-item:has(input:checked) span { color: var(--muted); text-decoration: line-through; }
+    .no-results {
+      display: none;
+      margin-top: 24px;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      padding: 30px;
+      color: var(--muted);
+      text-align: center;
+    }
+    mark.search-hit { border-radius: 2px; background: #ffe18a; color: #2d260e; padding: 0 1px; }
+    .footer { border-top: 1px solid var(--border); padding-top: 24px; color: var(--soft); font-size: 11px; }
+    .back-top {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 50;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(8px);
+    }
+    .back-top.visible { opacity: 1; pointer-events: auto; transform: translateY(0); }
+    .drawer-overlay { display: none; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 1100px) {
+      :root { --sidebar: 248px; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cards-3 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 820px) {
+      .topbar-inner { padding: 0 12px; }
+      .brand { min-width: 0; }
+      .brand-copy span { display: none; }
+      .menu-button { display: inline-grid; }
+      .toolbar-search { width: auto; flex: 1 1 auto; }
+      .toolbar-search input { padding-right: 12px; }
+      .search-count { display: none; }
+      .print-button { display: none; }
+      .layout { display: block; }
+      .sidebar {
+        position: fixed;
+        top: var(--topbar);
+        bottom: 0;
+        left: 0;
+        z-index: 100;
+        width: min(310px, 86vw);
+        height: auto;
+        transform: translateX(-105%);
+        border-right: 1px solid var(--border);
+        background: var(--page);
+        box-shadow: var(--shadow-float);
+        transition: transform .22s ease;
+      }
+      body.nav-open .sidebar { transform: translateX(0); }
+      .drawer-overlay {
+        position: fixed;
+        inset: var(--topbar) 0 0;
+        z-index: 90;
+        border: 0;
+        background: rgba(0,0,0,.38);
+      }
+      body.nav-open .drawer-overlay { display: block; }
+      .content { padding: 32px 18px 80px; }
+      .cards-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 540px) {
+      .brand-copy { display: none; }
+      .toolbar-search input { height: 42px; }
+      .content { padding-inline: 14px; }
+      h1 { font-size: 37px; }
+      h2 { font-size: 21px; }
+      .kpi-grid { grid-template-columns: 1fr 1fr; }
+      .kpi-value { font-size: 20px; }
+      .section-head { grid-template-columns: 38px minmax(0, 1fr); gap: 10px; }
+      .section-index { width: 36px; height: 36px; }
+      .tab-panel { padding: 13px; }
+      .card { padding: 15px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+    @media print {
+      :root, html[data-theme="dark"] {
+        --page: #fff; --panel: #fff; --panel-soft: #f6f7f6; --surface: #f1f3f2;
+        --text: #111; --text-body: #333; --muted: #555; --soft: #777; --border: #ccc;
+        --brand-dark: #167a45; --code: #f4f4f4; --code-text: #111;
+      }
+      .topbar, .sidebar, .back-top, .drawer-overlay, .copy-button, .quick-links { display: none !important; }
+      .layout { display: block; }
+      .content { padding: 0; }
+      .content-inner { width: 100%; }
+      .doc-section { break-inside: avoid; padding: 24px 0; }
+      .card, .alert, .table-wrap, .code-block { break-inside: avoid; box-shadow: none; }
+      pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-3.6-3.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.4A8 8 0 0 1 9.6 3.5 8.5 8.5 0 1 0 20.5 14.4Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v6M12 7h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.8 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.8a2 2 0 0 0-3.4 0Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 9v4M12 17h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m9 12 2 2 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button class="icon-button menu-button" id="menu-button" type="button" aria-label="打开目录" aria-expanded="false">
+        <svg><use href="#i-menu"/></svg>
+      </button>
+      <a class="brand" href="#overview" aria-label="回到教程顶部">
+        <span class="brand-mark">U</span>
+        <span class="brand-copy"><b>Upstream</b><span>使用与配置教程</span></span>
+      </a>
+      <label class="toolbar-search" for="doc-search">
+        <svg><use href="#i-search"/></svg>
+        <input id="doc-search" type="search" placeholder="搜索配置项、接口或错误..." autocomplete="off">
+        <span class="search-count" id="search-count">15 章</span>
+      </label>
+      <button class="icon-button print-button" id="print-button" type="button" title="打印或导出 PDF" aria-label="打印或导出 PDF">
+        <svg><use href="#i-print"/></svg>
+      </button>
+      <button class="icon-button" id="theme-button" type="button" title="切换主题" aria-label="切换浅色或暗色主题">
+        <svg class="moon-icon"><use href="#i-moon"/></svg>
+        <svg class="sun-icon"><use href="#i-sun"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="教程目录">
+      <div class="nav-label">先审查逻辑</div>
+      <a class="nav-link" href="#overview"><span class="nav-number">01</span>教程总览</a>
+      <a class="nav-link" href="#logic"><span class="nav-number">02</span>三类对象与数据流</a>
+      <a class="nav-link" href="#sessions"><span class="nav-number">03</span>历史会话统计</a>
+      <div class="nav-label">开始配置</div>
+      <a class="nav-link" href="#quickstart"><span class="nav-number">04</span>安装与启动</a>
+      <a class="nav-link" href="#environment"><span class="nav-number">05</span>环境变量</a>
+      <a class="nav-link" href="#monitor-sites"><span class="nav-number">06</span>渠道监控配置</a>
+      <a class="nav-link" href="#admin-sites"><span class="nav-number">07</span>主站监控配置</a>
+      <a class="nav-link" href="#browser-bridge"><span class="nav-number">08</span>浏览器登录态</a>
+      <div class="nav-label">日常使用</div>
+      <a class="nav-link" href="#detection"><span class="nav-number">09</span>检测、快照与变化</a>
+      <a class="nav-link" href="#balance-models"><span class="nav-number">10</span>余额与模型健康</a>
+      <a class="nav-link" href="#notifications"><span class="nav-number">11</span>消息推送</a>
+      <a class="nav-link" href="#backup"><span class="nav-number">12</span>备份与迁移</a>
+      <div class="nav-label">上线前</div>
+      <a class="nav-link" href="#security"><span class="nav-number">13</span>安全与合理性审查</a>
+      <a class="nav-link" href="#troubleshooting"><span class="nav-number">14</span>故障排查</a>
+      <a class="nav-link" href="#acceptance"><span class="nav-number">15</span>验收清单</a>
+      <div class="sidebar-note">
+        内容依据：当前 <code>app.py</code>、React 页面、部署脚本、迁移脚本及 23 条历史任务记录。冲突时以当前源码为准。
+      </div>
+    </aside>
+    <button class="drawer-overlay" id="drawer-overlay" type="button" aria-label="关闭目录"></button>
+
+    <main class="content" id="main-content">
+      <div class="content-inner">
+        <section class="hero doc-section" id="overview" data-title="教程总览">
+          <div class="eyebrow"><span class="status-dot"></span> 基于 2026-08-01 当前工作区代码</div>
+          <h1>Upstream 使用与配置教程</h1>
+          <p class="hero-copy">
+            这是一份面向实际运维的单文件手册。先解释项目里几类配置为什么必须分开，再给出本地、Docker、NewAPI、sub2api、浏览器登录态、推送、备份和排障的完整操作路径。
+          </p>
+          <div class="hero-meta">
+            <span class="pill brand">PriceAI 视觉规范</span>
+            <span class="pill">离线可用</span>
+            <span class="pill">敏感值已脱敏</span>
+            <span class="pill">浅色 / 暗色 / 打印</span>
+          </div>
+          <div class="quick-links">
+            <a class="button-link primary" href="#quickstart">开始安装 <svg><use href="#i-arrow"/></svg></a>
+            <a class="button-link" href="#logic">先看配置逻辑</a>
+            <a class="button-link" href="#security">直接审查风险</a>
+          </div>
+          <div class="kpi-grid">
+            <div class="kpi"><div class="kpi-label">历史任务记录</div><div class="kpi-value">23</div><div class="kpi-note">不含当前教程任务</div></div>
+            <div class="kpi"><div class="kpi-label">支持协议</div><div class="kpi-value">2</div><div class="kpi-note">NewAPI + sub2api</div></div>
+            <div class="kpi"><div class="kpi-label">调度扫描</div><div class="kpi-value">10s</div><div class="kpi-note">到期后按站点执行</div></div>
+            <div class="kpi"><div class="kpi-label">控制台页面</div><div class="kpi-value">7</div><div class="kpi-note">总览到消息推送</div></div>
+          </div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div>
+              <p><strong>先记住：</strong>顶部“添加渠道”创建的是本地监控节点，不是在你的 NewAPI / sub2api 主站里新建真实渠道。</p>
+              <p>主站数据是实时读取；只有本地监控节点进入定时快照、diff 和通知。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="logic" data-title="三类对象与数据流">
+          <div class="section-head">
+            <div class="section-index">02</div>
+            <div><h2>三类对象与数据流</h2><p class="section-subtitle">绝大多数配置疑问，都来自把这三类对象混成一个。</p></div>
+          </div>
+          <div class="cards-3">
+            <article class="card">
+              <div class="card-kicker">本地数据库 · sites</div>
+              <div class="card-title">渠道监控节点</div>
+              <p class="card-copy">代表你要长期盯盘的上游。由“添加渠道”创建，保存普通用户认证，参与定时检测。</p>
+              <ul class="mini-list"><li>产生 snapshots 与 changes</li><li>触发邮件 / 企业微信</li><li>支持按需余额与模型健康</li></ul>
+            </article>
+            <article class="card">
+              <div class="card-kicker">本地数据库 · admin_sites</div>
+              <div class="card-title">主站连接</div>
+              <p class="card-copy">代表你自己的 NewAPI / sub2api 管理后台连接，保存管理员凭据，实时读取远端渠道。</p>
+              <ul class="mini-list"><li>不进入定时快照</li><li>NewAPI UI 只改优先级</li><li>sub2api UI 可完整编辑和启停</li></ul>
+            </article>
+            <article class="card">
+              <div class="card-kicker">远端系统</div>
+              <div class="card-title">主站真实渠道</div>
+              <p class="card-copy">真实存在于 NewAPI / sub2api 主站。Upstream 只是通过管理接口读取或执行受限更新。</p>
+              <ul class="mini-list"><li>不是本地 sites 记录</li><li>删除主站连接不删除它</li><li>Base URL 可匹配本地监控登录态</li></ul>
+            </article>
+          </div>
+
+          <h3>定时监控链路</h3>
+          <div class="flow" aria-label="定时监控数据流">
+            <div class="flow-track">
+              <div class="flow-node">sites<small>已启用节点</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">10 秒扫描<small>找 next_check_at 到期项</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">协议采集<small>NewAPI / sub2api</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">snapshots<small>成功或失败快照</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">diff / changes<small>与最近成功快照比较</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">通知<small>邮件 + 企业微信</small></div>
+            </div>
+            <div class="flow-caption">扫描周期是 10 秒，不等于每个站点每 10 秒采集；真实采集间隔由各站点的分钟配置决定，默认 3 分钟，最小 1 分钟。</div>
+          </div>
+
+          <h3>NewAPI 主站渠道倍率匹配链路</h3>
+          <div class="flow" aria-label="NewAPI 渠道 Key 倍率匹配数据流">
+            <div class="flow-track">
+              <div class="flow-node">主站真实渠道<small>渠道 Key + Base URL</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">同 URL 的 sites<small>复用普通用户登录态</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">/api/token/<small>查用户自己的 Key</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">确定所属分组<small>必要时精确读取 Key</small></div><div class="flow-arrow">→</div>
+              <div class="flow-node">用户分组接口<small>读取实际倍率</small></div>
+            </div>
+            <div class="flow-caption">这里使用上游普通用户权限，不应使用第三方上游的管理员令牌。主站渠道 Key 读取若受保护，首次可能需要合法 2FA；成功缓存后优先复用。</div>
+          </div>
+
+          <div class="alert info">
+            <svg><use href="#i-info"/></svg>
+            <div><p><strong>合理之处：</strong>监控数据与主站管理数据分离，避免管理员接口波动制造假变化，也避免每 3 分钟打一次远端管理后台。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="sessions" data-title="历史会话统计">
+          <div class="section-head">
+            <div class="section-index">03</div>
+            <div><h2>历史会话统计</h2><p class="section-subtitle">按工作目录筛出 23 条此前任务记录，其中 22 条与本项目实质相关，1 条只是工作目录关联的浏览器插件任务。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>主题</th><th>记录数</th><th>形成的当前逻辑</th><th>教程中的结论</th></tr></thead>
+              <tbody>
+                <tr><td>迁移、定位、启动与项目说明</td><td>5</td><td>stdlib 后端 + MySQL + React PriceAI 前端</td><td>本地与 Docker 两条正式启动路径</td></tr>
+                <tr><td>响应式、状态色与弹窗交互</td><td>3</td><td>7 页高密度控制台、显式关闭弹窗</td><td>教程按当前页面名称编排</td></tr>
+                <tr><td>sub2api、模型映射与双协议</td><td>5</td><td>协议隔离、分组/倍率/模型/余额双适配</td><td>两套认证字段不能串用</td></tr>
+                <tr><td>主站 Key、Session、2FA</td><td>3</td><td>Key 缓存、普通用户分组匹配、合法安全验证</td><td>2FA 不能绕过，只能减少重复验证</td></tr>
+                <tr><td>网络、上游失败与人机验证</td><td>5</td><td>浏览器同步、错误解释、旧代理缓存排查</td><td>历史快照和实时健康必须分开看</td></tr>
+                <tr><td>余额批量稳定性</td><td>1</td><td>一键查询改为逐站串行</td><td>余额按需查，不进入 15 秒自动刷新</td></tr>
+                <tr><td>工作目录噪声</td><td>1</td><td>与本项目功能无关</td><td>未纳入配置判断</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div>
+              <p><strong>历史样本不是实时状态：</strong>历史记录最近曾出现 8 个监控站点、1 个 NewAPI 主站连接、约 15,008 条快照和 188 条变化，但生成本文档时本机 8000 端口未运行，因此这些数字只用于容量估算。</p>
+            </div>
+          </div>
+          <h3>历史会话反复验证出的边界</h3>
+          <div class="cards-2">
+            <div class="card"><div class="card-title">监控工具，不是 API 网关</div><p class="card-copy">它不负责请求转发、用户注册、计费、支付、密钥签发或流量调度；这些仍由 NewAPI / sub2api 承担。</p></div>
+            <div class="card"><div class="card-title">同步登录态，不是突破验证</div><p class="card-copy">扩展复用你在 Chrome 中已经完成验证的会话，不会自动解 Turnstile / Cloudflare，也不能绕过 NewAPI 的 2FA 安全 proof。</p></div>
+            <div class="card"><div class="card-title">倍率可见，不代表实时接口正常</div><p class="card-copy">页面可能从最近成功快照显示倍率；成功率、延迟、余额和主站列表通常需要实时请求，网络失败时会为空。</p></div>
+            <div class="card"><div class="card-title">当前 UI 边界小于后端边界</div><p class="card-copy">NewAPI 主站页面只暴露优先级，但后端仍保留新增、批量修改和删除等写路由，需要用控制台密码和反向代理保护。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="quickstart" data-title="安装与启动">
+          <div class="section-head">
+            <div class="section-index">04</div>
+            <div><h2>安装与启动</h2><p class="section-subtitle">选择一种运行方式。生产模式必须先构建前端，Docker 镜像会自动完成构建。</p></div>
+          </div>
+          <div class="alert info">
+            <svg><use href="#i-info"/></svg>
+            <div><p>前置：Python 3.11+、Node.js 20+、MySQL 8.0+。后端唯一第三方库是 PyMySQL。</p></div>
+          </div>
+          <div class="tabs" data-tabs>
+            <div class="tab-list" role="tablist" aria-label="启动方式">
+              <button class="tab" type="button" role="tab" aria-selected="true" aria-controls="tab-local-dev" id="tab-local-dev-button">本地开发</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="tab-local-prod" id="tab-local-prod-button">本地生产</button>
+              <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="tab-docker" id="tab-docker-button">Docker Compose</button>
+            </div>
+            <div class="tab-panel" role="tabpanel" id="tab-local-dev" aria-labelledby="tab-local-dev-button">
+              <p><strong>适合：</strong>修改 React 页面并实时预览。后端 8000，Vite 5173，前端自动代理 <code>/api</code>。</p>
+              <div class="code-block"><div class="code-label">准备数据库与后端</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>cd /Users/wang/Desktop/upstream
+cp .env.example .env
+
+# 先编辑 .env，只在本地填写 DB_PASSWORD
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS upstream CHARACTER SET utf8mb4;"
+python3 -m pip install -r requirements.txt
+python3 app.py</code></pre></div>
+              <div class="code-block"><div class="code-label">另开终端启动前端</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>cd /Users/wang/Desktop/upstream/apps/web
+npm ci
+npm run dev</code></pre></div>
+              <p>访问 <code>http://127.0.0.1:5173</code>。</p>
+            </div>
+            <div class="tab-panel" role="tabpanel" id="tab-local-prod" aria-labelledby="tab-local-prod-button" hidden>
+              <p><strong>适合：</strong>在本机按生产结构运行，由 <code>app.py</code> 托管构建后的静态资源。</p>
+              <div class="code-block"><div class="code-label">构建并运行</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>cd /Users/wang/Desktop/upstream
+python3 -m pip install -r requirements.txt
+cd apps/web
+npm ci
+npm run build
+cd ../..
+python3 app.py</code></pre></div>
+              <p>访问 <code>http://127.0.0.1:8000</code>。若缺少 <code>apps/web/dist</code>，后端会回退到旧 static 目录。</p>
+            </div>
+            <div class="tab-panel" role="tabpanel" id="tab-docker" aria-labelledby="tab-docker-button" hidden>
+              <p><strong>适合：</strong>服务器长期运行。Compose 自带 MySQL 8.4，并用命名卷 <code>mysql-data</code> 持久化。</p>
+              <div class="code-block"><div class="code-label">一键启动</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>cd /Users/wang/Desktop/upstream
+cp .env.example .env
+
+# 编辑 .env：至少设置 DB_PASSWORD 和 CONSOLE_PASSWORD
+docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8000/api/auth/status</code></pre></div>
+              <p>宿主机 MySQL 已占用 3306 时，可在 <code>.env</code> 设置 <code>DB_PORT=3307</code>。应用容器始终通过 Docker 内网的 <code>mysql:3306</code> 连接，不受该映射影响。</p>
+            </div>
+          </div>
+          <h3>启动后最小验证</h3>
+          <div class="code-block"><div class="code-label">只读健康检查</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>curl -i http://127.0.0.1:8000/api/auth/status
+curl -i http://127.0.0.1:8000/api/overview
+curl -i http://127.0.0.1:8000/api/sites</code></pre></div>
+          <p>设置 <code>CONSOLE_PASSWORD</code> 后，后两个接口未登录返回 401 是正常现象；请从 Web 登录，不要把会话 Token 写进脚本或教程。</p>
+        </section>
+
+        <section class="doc-section" id="environment" data-title="环境变量">
+          <div class="section-head">
+            <div class="section-index">05</div>
+            <div><h2>环境变量</h2><p class="section-subtitle"><code>.env</code> 只负责运行环境；站点、主站和推送等业务配置由 Web UI 保存到 MySQL。</p></div>
+          </div>
+          <div class="code-block"><div class="code-label">安全的 .env 示例</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=&lt;仅在本机填写强密码&gt;
+DB_NAME=upstream
+
+HOST=127.0.0.1
+PORT=8000
+APP_TIMEZONE=Asia/Shanghai
+
+CONSOLE_PASSWORD=&lt;公网部署必须填写&gt;
+CONSOLE_SESSION_TTL=604800</code></pre></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>变量</th><th>默认值</th><th>用途</th><th>审查建议</th></tr></thead>
+              <tbody>
+                <tr><td><code>DB_HOST</code> / <code>DB_PORT</code></td><td>127.0.0.1 / 3306</td><td>MySQL 地址</td><td>Docker 内由 Compose 固定为 mysql:3306</td></tr>
+                <tr><td><code>DB_USER</code> / <code>DB_PASSWORD</code></td><td>root / 空</td><td>数据库身份</td><td class="risk">密码必填且只放 .env</td></tr>
+                <tr><td><code>DB_NAME</code></td><td>upstream</td><td>业务数据库</td><td>先创建 utf8mb4 数据库</td></tr>
+                <tr><td><code>DB_POOL_SIZE</code></td><td>8</td><td>每进程连接池，限制 1–32</td><td>8 个以内站点通常无需调整</td></tr>
+                <tr><td><code>DB_POOL_ACQUIRE_TIMEOUT</code></td><td>5 秒</td><td>连接池等待上限</td><td>超时会快速失败而非无限阻塞</td></tr>
+                <tr><td><code>DB_CONNECT_TIMEOUT</code></td><td>5 秒</td><td>MySQL 建连超时</td><td>跨机数据库可酌情提高</td></tr>
+                <tr><td><code>DB_READ_TIMEOUT</code> / <code>DB_WRITE_TIMEOUT</code></td><td>15 秒</td><td>MySQL 读写超时</td><td>不要用极大值掩盖网络问题</td></tr>
+                <tr><td><code>UPSTREAM_HTTP_TIMEOUT</code></td><td>15 秒</td><td>上游 HTTP 单次超时，限制 1–120</td><td>不改变主站 Key 请求 2 秒间隔</td></tr>
+                <tr><td><code>SLOW_REQUEST_THRESHOLD_MS</code></td><td>500</td><td>脱敏慢请求日志阈值</td><td>设 0 可关闭</td></tr>
+                <tr><td><code>HOST</code> / <code>PORT</code></td><td>127.0.0.1 / 8000</td><td>监听地址与端口</td><td class="risk">0.0.0.0 必须配控制台密码</td></tr>
+                <tr><td><code>APP_TIMEZONE</code> / <code>TZ</code></td><td>Asia/Shanghai</td><td>展示时区，前者优先</td><td>容器与应用保持一致</td></tr>
+                <tr><td><code>CONSOLE_PASSWORD</code></td><td>空</td><td>启用所有 API 的登录门禁</td><td class="risk">公网或 Docker 映射必须设置</td></tr>
+                <tr><td><code>CONSOLE_SESSION_TTL</code></td><td>604800 秒</td><td>内存会话有效期，最小 300</td><td>后端重启后需重新登录</td></tr>
+                <tr><td><code>SEED_DEMO</code></td><td>0</td><td>空库是否插入 Demo NewAPI</td><td>生产保持 0，避免失败快照噪声</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert danger">
+            <svg><use href="#i-shield"/></svg>
+            <div><p><strong>不要把业务密钥写进环境示例或 Git：</strong>站点密码、Token、主站渠道 Key、SMTP 密码和 Webhook 当前都存入 MySQL；数据库备份同样属于敏感文件。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="monitor-sites" data-title="渠道监控配置">
+          <div class="section-head">
+            <div class="section-index">06</div>
+            <div><h2>渠道监控配置</h2><p class="section-subtitle">入口：顶部“添加渠道”或“渠道监控”。这里创建的是 <code>sites</code>，也是定时监控、余额和变化记录的基础。</p></div>
+          </div>
+          <div class="steps">
+            <div class="step"><h3>填写基本信息</h3><p>名称用于识别；平台选 NewAPI 或 sub2api；Base URL 只填根地址，例如 <code>https://api.example.com</code>，不要附加 API 路径；检测间隔默认 3 分钟，最小 1 分钟。</p></div>
+            <div class="step"><h3>选择认证方式</h3><p>按下表选择。NewAPI 可关闭认证增强只监控公开分组；sub2api 必须有可用登录态。</p></div>
+            <div class="step"><h3>测试或同步</h3><p>手动 Token 模式使用“测试连接 / 测试认证”；浏览器模式先检测扩展，再保存并同步真实会话。</p></div>
+            <div class="step"><h3>保存并立即检测</h3><p>保存后在渠道表点击“检测”。确认状态、公开分组、认证分组、上次检测和下次检测符合预期。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>平台 / 模式</th><th>需要填写</th><th>读取能力</th><th>适用情况</th></tr></thead>
+              <tbody>
+                <tr><td>NewAPI 公开模式</td><td>Base URL</td><td><code>/api/user/groups</code></td><td>只看公开默认分组</td></tr>
+                <tr><td>NewAPI 浏览器同步</td><td>同一 Chrome 已登录普通用户</td><td>隐藏/专属分组、余额、用户 Key 匹配</td><td class="recommended">推荐，减少手工复制 Token</td></tr>
+                <tr><td>NewAPI 手动令牌</td><td>普通用户系统访问令牌 + NewAPI 用户 ID</td><td><code>/api/user/self</code>、用户分组</td><td>不使用扩展时</td></tr>
+                <tr><td>sub2api 浏览器同步</td><td>Chrome 中的 auth_token + refresh_token；账号密码可选兜底</td><td>实际分组倍率、模型、余额、订阅</td><td class="recommended">推荐，适合已完成人机验证</td></tr>
+                <tr><td>sub2api 账号密码</td><td>普通用户邮箱 + 密码</td><td>登录后完整监控能力</td><td>站点没有 Turnstile 或登录限制</td></tr>
+                <tr><td>sub2api 手动登录态</td><td>auth_token；refresh_token 建议填写；到期时间可选</td><td>与浏览器登录态相同</td><td>无法安装扩展时</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert danger">
+            <svg><use href="#i-shield"/></svg>
+            <div><p><strong>NewAPI 监控节点只填普通用户令牌。</strong>系统访问令牌继承所属账号角色；如果填第三方上游的管理员令牌，一旦泄露会扩大到渠道、用户和日志权限。</p></div>
+          </div>
+          <h3>编辑与删除规则</h3>
+          <ul>
+            <li>密码或 Token 已保存时，编辑表单留空表示保持不变。</li>
+            <li>切换平台或认证模式会清理不兼容凭据，避免 NewAPI 与 sub2api 串线。</li>
+            <li>删除监控节点会通过外键级联删除该节点的快照、变化和登录态同步请求，<strong>不可撤销</strong>。</li>
+            <li>浏览器同步失败不会回滚已保存节点，可选择打开上游登录页、重新同步或稍后处理。</li>
+          </ul>
+        </section>
+
+        <section class="doc-section" id="admin-sites" data-title="主站监控配置">
+          <div class="section-head">
+            <div class="section-index">07</div>
+            <div><h2>主站监控配置</h2><p class="section-subtitle">入口：“主站监控”。这里保存 <code>admin_sites</code>，实时读取你自己的中转站后台，不参与定时 diff。</p></div>
+          </div>
+          <div class="cards-2">
+            <article class="card">
+              <div class="card-kicker">NewAPI 主站</div>
+              <div class="card-title">管理员令牌 + 用户 ID</div>
+              <p class="card-copy">用于读取 <code>/api/channel</code> 与分组。另可配置管理员网页登录账号/密码或同步现代浏览器会话，受保护 Key 读取需要合法 2FA proof。</p>
+              <ul class="mini-list"><li>页面列出真实渠道与分组</li><li>按 Base URL 匹配本地 sites 登录态</li><li>当前 UI 仅刷新倍率和调整 priority</li></ul>
+            </article>
+            <article class="card">
+              <div class="card-kicker">sub2api 主站</div>
+              <div class="card-title">管理员邮箱 + 密码</div>
+              <p class="card-copy">登录后只读取管理员渠道与分组接口，不读取号池。UI 可编辑现有渠道的白名单字段、模型定价、映射、高级计费和启停状态。</p>
+              <ul class="mini-list"><li>不支持管理员 API Key</li><li>不开主站浏览器同步</li><li>不在 Upstream 新建或删除真实渠道</li></ul>
+            </article>
+          </div>
+          <h3>能力边界</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>能力</th><th>NewAPI 主站</th><th>sub2api 主站</th><th>是否进入快照 / 通知</th></tr></thead>
+              <tbody>
+                <tr><td>实时渠道列表与分组</td><td class="yes">支持</td><td class="yes">支持</td><td class="no">否</td></tr>
+                <tr><td>渠道 Key 对应上游倍率</td><td class="yes">支持，复用 sites 普通用户登录态</td><td class="no">不走此链路</td><td class="no">否</td></tr>
+                <tr><td>优先级调整</td><td class="yes">当前 UI 支持</td><td>包含在完整编辑能力内</td><td class="no">否</td></tr>
+                <tr><td>完整编辑与启停</td><td class="no">当前 UI 隐藏</td><td class="yes">按 capabilities 支持</td><td class="no">否</td></tr>
+                <tr><td>新增 / 删除真实渠道</td><td class="no">当前 UI 不提供</td><td class="no">禁止</td><td class="no">否</td></tr>
+                <tr><td>号池读取</td><td>不适用</td><td class="no">明确不访问</td><td class="no">否</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div>
+              <p><strong>UI 与后端能力不完全相同：</strong>当前 NewAPI 页面不提供新增、删除、批量操作或完整编辑，但 <code>app.py</code> 仍保留相关写接口。只隐藏按钮不是安全边界，必须启用 <code>CONSOLE_PASSWORD</code> 并限制网络访问。</p>
+            </div>
+          </div>
+          <h3>正确配置顺序</h3>
+          <ol>
+            <li>先在“渠道监控”添加上游 <code>sites</code>，配置普通用户登录态并测试。</li>
+            <li>再在“主站监控”添加自己的主站连接，使用最小权限的管理员凭据。</li>
+            <li>确保主站真实渠道的 Base URL 与本地 <code>sites</code> 的 Base URL 归一化后相同。</li>
+            <li>NewAPI 首次读取受保护 Key 时按页面提示完成 2FA；成功后本地缓存，后续优先复用。</li>
+            <li>刷新渠道倍率，检查“精确匹配 / 部分匹配 / 待验证 / 刷新失败”等状态，不要把最近成功数据误认为当前实时值。</li>
+          </ol>
+        </section>
+
+        <section class="doc-section" id="browser-bridge" data-title="浏览器登录态">
+          <div class="section-head">
+            <div class="section-index">08</div>
+            <div><h2>浏览器登录态同步</h2><p class="section-subtitle">扩展版本 0.1.2。它把同一 Chrome 中已经登录的会话直接提交到本机后端，React 页面不会拿到 Token。</p></div>
+          </div>
+          <div class="steps">
+            <div class="step"><h3>加载本地扩展</h3><p>打开 <code>chrome://extensions</code>，启用开发者模式，点击“加载已解压的扩展程序”，选择 <code>/Users/wang/Desktop/upstream/extensions/upstream-session-bridge</code>。</p></div>
+            <div class="step"><h3>从回环地址打开控制台</h3><p>必须用 <code>http://127.0.0.1:8000</code> 或 <code>http://localhost:8000</code>。扩展 content script 不匹配局域网 IP、自定义域名或 IPv6 <code>[::1]</code>。</p></div>
+            <div class="step"><h3>提前打开并登录上游</h3><p>同一个 Chrome 中保留目标上游标签页。标签页的 scheme、host、port 必须与 Base URL Origin 完全一致；扩展只寻找已打开标签页，不会自动创建。</p></div>
+            <div class="step"><h3>检测扩展并保存同步</h3><p>“检测同步扩展”只确认桥接可用；真正读取登录态发生在保存或“重新同步”时。页面等待结果最多约 25 秒。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>对象</th><th>读取来源</th><th>要求</th><th>不会做什么</th></tr></thead>
+              <tbody>
+                <tr><td>NewAPI 普通监控站点</td><td>现代会话、<code>new_api_refresh</code>，并兼容部分旧 Local Storage</td><td>同 Origin 已登录普通用户</td><td>不会把令牌返回 React 页面</td></tr>
+                <tr><td>NewAPI 主站</td><td>现代管理员浏览器会话</td><td>仍需管理员系统令牌、用户 ID；Key 读取可能仍需 2FA</td><td>不会用普通用户旧 Local Storage 替代管理员会话</td></tr>
+                <tr><td>sub2api 监控站点</td><td>Local Storage 的 <code>auth_token</code>、<code>refresh_token</code>、<code>token_expires_at</code></td><td>access 与 refresh Token 同时存在</td><td>不读密码或 Cookie</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert danger">
+            <svg><use href="#i-shield"/></svg>
+            <div>
+              <p><strong>权限范围较宽：</strong>Manifest 声明 <code>tabs</code>、<code>scripting</code>、<code>storage</code>、<code>cookies</code>，以及所有 HTTP/HTTPS 站点访问权限。只从可信的本地源码加载，修改后重新审查。</p>
+              <p>Cookie 权限实际用于 NewAPI；sub2api 只读页面 Local Storage。凭据不写扩展存储，不输出日志。</p>
+            </div>
+          </div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div><p><strong>不能绕过人机验证：</strong>扩展只能复用你已经在浏览器里合法完成的人机验证和登录会话。若会话缺失、过期、Origin 不一致或上游 API 仍要求验证，必须回到上游页面手动完成。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="detection" data-title="检测、快照与变化">
+          <div class="section-head">
+            <div class="section-index">09</div>
+            <div><h2>检测、快照与变化</h2><p class="section-subtitle">只有 <code>sites</code> 走这条链路。主站连接和远端真实渠道不会进入定时采集。</p></div>
+          </div>
+          <h3>每次检测做什么</h3>
+          <div class="steps">
+            <div class="step"><h3>采集公开或用户实际分组</h3><p>NewAPI 先取公开分组，认证增强时再取用户分组；sub2api 通过当前认证模式读取可用分组与用户专属倍率。</p></div>
+            <div class="step"><h3>写入快照</h3><p>成功与失败都会写入 <code>snapshots</code>。成功快照保存规范化分组、原始响应摘要和 hash。</p></div>
+            <div class="step"><h3>与最近成功快照比较</h3><p>首个成功快照建立基线，不发送变化；后续比较分组、倍率、描述、状态、专属、订阅、RPM、平台和模型名单。</p></div>
+            <div class="step"><h3>记录变化并通知</h3><p>每条变化写入 <code>changes</code>，然后聚合成邮件和企业微信消息。认证增强失败会使站点为 warning，但公开采集结果仍可保留。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>变化类型</th><th>含义</th><th>严重度逻辑</th></tr></thead>
+              <tbody>
+                <tr><td><code>group_added</code></td><td>新增分组，消息含倍率（若有）</td><td>信息</td></tr>
+                <tr><td><code>group_removed</code></td><td>分组被删除</td><td>严重</td></tr>
+                <tr><td><code>ratio_changed</code></td><td>倍率变化并计算百分比</td><td>上涨为警告，下降为信息</td></tr>
+                <tr><td><code>desc_changed</code></td><td>分组描述变化</td><td>信息</td></tr>
+                <tr><td><code>status_changed</code> 等</td><td>状态、专属、订阅、RPM、平台字段变化</td><td>信息</td></tr>
+                <tr><td><code>model_added_to_group</code></td><td>某分组上架模型</td><td>信息</td></tr>
+                <tr><td><code>model_removed_from_group</code></td><td>某分组下架模型</td><td>警告</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert info">
+            <svg><use href="#i-info"/></svg>
+            <div><p>模型上下架只在新旧快照都包含模型名单时比较。任一侧缺失就跳过，避免把缓存未加载误报成整组模型下架。</p></div>
+          </div>
+          <h3>状态如何变化</h3>
+          <ul>
+            <li>采集成功且认证增强无错误：<code>ok</code>，连续失败归零。</li>
+            <li>公开采集成功但认证增强失败：<code>warning</code>。</li>
+            <li>调度异常连续不足 3 次：<code>warning</code>；达到 3 次：<code>failed</code>。</li>
+            <li>页面每 15 秒刷新站点、最近 50 条变化和通知设置；这不是重新检测上游。</li>
+            <li>“立即检测”会直接运行单站检测。仅 <code>sub2api + browser</code> 在返回需要同步时会自动同步并重试一次。</li>
+          </ul>
+        </section>
+
+        <section class="doc-section" id="balance-models" data-title="余额与模型健康">
+          <div class="section-head">
+            <div class="section-index">10</div>
+            <div><h2>余额与模型健康</h2><p class="section-subtitle">这两类数据多数是按需实时查询，不应与数据库里的最后快照混为一谈。</p></div>
+          </div>
+          <div class="cards-2">
+            <article class="card">
+              <div class="card-kicker">NewAPI</div>
+              <div class="card-title"><code>/api/user/self</code></div>
+              <p class="card-copy">读取剩余额度、已用额度、请求次数和用户分组。按默认 500000 额度 = 1 美元折算展示。</p>
+            </article>
+            <article class="card">
+              <div class="card-kicker">sub2api</div>
+              <div class="card-title"><code>/api/v1/auth/me</code></div>
+              <p class="card-copy">读取余额、冻结余额、累计充值、RPM 上限，以及订阅的日 / 周 / 月用量和到期时间。</p>
+            </article>
+          </div>
+          <h3>余额页面的真实行为</h3>
+          <ul>
+            <li>只包含“渠道监控”里的 <code>sites</code>，不包含 <code>admin_sites</code>。</li>
+            <li>进入页面不会自动查询，必须点击单站“查询”或“一键查询”。</li>
+            <li>一键查询逐站串行，不使用 <code>Promise.all</code> 并发洪峰；单站失败后继续下一站。</li>
+            <li>只把成功结果计入合计，失败行保留各自错误。</li>
+          </ul>
+          <h3>模型健康</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>平台</th><th>主要接口</th><th>展示内容</th><th>失败时</th></tr></thead>
+              <tbody>
+                <tr><td>NewAPI</td><td><code>/api/pricing</code>、uptime / perf-metrics</td><td>模型目录、成功率、延迟、时间窗口汇总</td><td>可能仍显示上次倍率，但实时性能为空</td></tr>
+                <tr><td>sub2api</td><td><code>/api/v1/channels/available</code>、<code>/api/v1/channel-monitors</code></td><td>分组模型、渠道监控状态</td><td>分组名为空时会做规范化与倍率消歧</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div><p>看到“倍率正常、成功率和延迟为空”时，先检查实时接口和网络。倍率可能来自 MySQL 最近成功快照，并不证明当前 TCP、代理或上游 API 正常。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="notifications" data-title="消息推送">
+          <div class="section-head">
+            <div class="section-index">11</div>
+            <div><h2>消息推送</h2><p class="section-subtitle">入口：“消息推送”。当前只维护邮件与企业微信，不复活 QQ 推送。</p></div>
+          </div>
+          <div class="cards-2">
+            <article class="card">
+              <div class="card-kicker">企业微信</div>
+              <div class="card-title">群机器人 Webhook</div>
+              <p class="card-copy">填写完整 Webhook，启用开关，测试发送。无需服务器回调。</p>
+              <ul class="mini-list"><li>Webhook 保存到 MySQL</li><li>测试结果记录 notification_logs</li><li>错误显示最近一次失败原因</li></ul>
+            </article>
+            <article class="card">
+              <div class="card-kicker">邮件</div>
+              <div class="card-title">SMTP + SSL / STARTTLS</div>
+              <p class="card-copy">填写主机、端口、账号、授权码或密码、发件人和收件人。多个收件人用逗号分隔。</p>
+              <ul class="mini-list"><li>SSL 默认端口 465</li><li>非 SSL 分支使用 STARTTLS</li><li>编辑时密码留空保持不变</li></ul>
+            </article>
+          </div>
+          <h3>推荐配置顺序</h3>
+          <ol>
+            <li>先关闭两个启用开关，填写完整字段。</li>
+            <li>启用目标通道，点击页面底部“保存配置”；该按钮同时保存邮件与企业微信两组表单。</li>
+            <li>分别点击“测试企业微信”和“测试邮件”，确认状态文案与实际接收。</li>
+            <li>手动触发一个可控变化或等待下一次真实 diff，确认自动通知。</li>
+          </ol>
+          <div class="alert info">
+            <svg><use href="#i-info"/></svg>
+            <div><p>测试接口会携带当前表单值，后端在发送前更新设置；操作上仍建议显式点击“保存配置”，以便页面状态和审查流程清晰。</p></div>
+          </div>
+          <div class="alert danger">
+            <svg><use href="#i-shield"/></svg>
+            <div><p>SMTP 密码和企业微信 Webhook 当前以可用明文形式保存在 MySQL。不要把数据库导出上传到公开仓库、网盘公开链接或聊天记录。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="backup" data-title="备份与迁移">
+          <div class="section-head">
+            <div class="section-index">12</div>
+            <div><h2>备份与迁移</h2><p class="section-subtitle">运行期数据以 MySQL 为准。<code>data/app.db</code> 只是旧 SQLite 迁移源，不是当前主库。</p></div>
+          </div>
+          <h3>MySQL 备份</h3>
+          <div class="code-block"><div class="code-label">密码由终端交互输入，不写命令行</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>cd /Users/wang/Desktop/upstream
+mkdir -p backups
+mysqldump -h 127.0.0.1 -P 3306 -u root -p \
+  --single-transaction --routines --triggers upstream \
+  &gt; backups/upstream-$(date +%F).sql</code></pre></div>
+          <h3>恢复前先建空库</h3>
+          <div class="code-block"><div class="code-label">恢复会修改目标数据库，请先确认文件与目标</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>mysql -h 127.0.0.1 -P 3306 -u root -p \
+  -e "CREATE DATABASE IF NOT EXISTS upstream CHARACTER SET utf8mb4;"
+mysql -h 127.0.0.1 -P 3306 -u root -p upstream \
+  &lt; backups/upstream-2026-08-01.sql</code></pre></div>
+          <h3>旧 SQLite 迁移到 MySQL</h3>
+          <div class="code-block"><div class="code-label">默认幂等 upsert，不清空目标</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>python3 scripts/migrate_sqlite_to_mysql.py \
+  --sqlite data/app.db</code></pre></div>
+          <div class="code-block"><div class="code-label">Docker 内执行</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code>docker compose run --rm upstream \
+  python scripts/migrate_sqlite_to_mysql.py \
+  --sqlite data/app.db</code></pre></div>
+          <div class="alert danger">
+            <svg><use href="#i-alert"/></svg>
+            <div>
+              <p><strong>默认不要使用 <code>--truncate</code>。</strong>它会在导入前删除 MySQL 的 <code>sites</code>、<code>snapshots</code>、<code>changes</code>、<code>notification_settings</code> 和 <code>notification_logs</code> 五张业务表中的数据。</p>
+              <p>迁移脚本只搬旧 SQLite 中这五张表，不包含后来新增的 <code>admin_sites</code>、渠道绑定、Key 缓存和浏览器同步请求。</p>
+            </div>
+          </div>
+          <h3>Docker 数据注意事项</h3>
+          <ul>
+            <li>MySQL 正式数据在命名卷 <code>mysql-data</code>，升级容器时不要删除该卷。</li>
+            <li><code>./data:/app/data</code> 只为旧 SQLite 迁移提供挂载；纯 MySQL 生产环境可移除，减少旧明文库进入容器。</li>
+            <li>备份完成后校验文件大小，并在隔离数据库做一次恢复演练。</li>
+          </ul>
+        </section>
+
+        <section class="doc-section" id="security" data-title="安全与合理性审查">
+          <div class="section-head">
+            <div class="section-index">13</div>
+            <div><h2>安全与合理性审查</h2><p class="section-subtitle">以下是基于当前代码和历史运行样本的审查结论，可直接逐项决定是否接受或整改。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>审查项</th><th>当前判断</th><th>理由</th><th>建议</th></tr></thead>
+              <tbody>
+                <tr><td>sites 与 admin_sites 分离</td><td class="yes">合理</td><td>定时监控和实时管理接口职责不同</td><td>继续保持，不合表</td></tr>
+                <tr><td>双协议适配</td><td class="yes">合理</td><td>认证、分组、Key、模型和余额接口明确分支</td><td>新增协议能力时补隔离测试</td></tr>
+                <tr><td>stdlib 后端 + PyMySQL</td><td class="yes">适合当前规模</td><td>依赖少，8 个左右站点足够</td><td>站点数大幅增长再评估队列与异步架构</td></tr>
+                <tr><td>控制台密码默认关闭</td><td class="risk">公网不合理</td><td>未启用时所有 API 可直接访问</td><td>Docker / 0.0.0.0 必须设置密码、HTTPS 和 IP 白名单</td></tr>
+                <tr><td>敏感字段存 MySQL</td><td class="risk">有风险</td><td>站点密码、Token、Key、SMTP 密码和 Webhook 需可直接使用</td><td>限制 DB 权限、加密磁盘、严格备份权限；后续可做应用层加密</td></tr>
+                <tr><td>NewAPI 后端隐藏写接口</td><td class="risk">边界不完整</td><td>UI 隐藏但新增、批量、删除、完整更新路由仍存在</td><td>若确定不用，应在后端加只读开关或移除路由</td></tr>
+                <tr><td>快照保留策略</td><td class="risk">缺失</td><td>代码未发现自动清理 snapshots</td><td>先备份，再设计按月归档或保留天数</td></tr>
+                <tr><td>删除监控节点</td><td class="risk">需要谨慎</td><td>外键级联删除快照和变化</td><td>删除前导出该站历史，UI 保持二次确认</td></tr>
+                <tr><td>浏览器扩展权限</td><td class="risk">功能需要但范围宽</td><td>声明全部 HTTP/HTTPS 站点与 Cookie 权限</td><td>只加载可信本地源码，定期审查 Manifest</td></tr>
+                <tr><td>主站不进通知</td><td class="yes">合理</td><td>避免实时管理接口波动制造变化噪声</td><td>若以后需要，单独设计主站健康告警，不混用快照</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>容量估算</h3>
+          <div class="cards-3">
+            <div class="card"><div class="card-kicker">8 站点 × 3 分钟</div><div class="card-title">约 3,840 快照 / 天</div><p class="card-copy">无论是否发生变化，每次检测都会产生快照。</p></div>
+            <div class="card"><div class="card-kicker">按历史样本折算</div><div class="card-title">约 1.4M 快照 / 年</div><p class="card-copy">历史约 15,008 条快照曾占约 47 MB，粗估约 3 KB / 条。</p></div>
+            <div class="card"><div class="card-kicker">未设清理策略</div><div class="card-title">约 4–5 GB / 年</div><p class="card-copy">仅作容量规划，实际取决于原始 JSON、模型名单和失败信息长度。</p></div>
+          </div>
+          <div class="alert danger">
+            <svg><use href="#i-shield"/></svg>
+            <div><p><strong>最低上线门槛：</strong><code>CONSOLE_PASSWORD</code> 非空、HTTPS 反代、IP 白名单或 VPN、MySQL 不暴露公网、备份文件 600 权限、扩展只在受控浏览器加载。</p></div>
+          </div>
+          <details>
+            <summary>为什么“只隐藏危险按钮”不够安全？</summary>
+            <div>浏览器 UI 不是权限边界。拥有网络访问的人可以绕过页面直接调用 API；当前后端只由控制台 Bearer 会话保护，没有针对“只读用户”和“管理员操作”的细粒度 RBAC。因此公网部署必须先保护整个控制台。</div>
+          </details>
+          <details>
+            <summary>是否应该马上给数据库敏感字段加密？</summary>
+            <div>方向合理，但要先设计主密钥来源、轮换、备份恢复和旧数据迁移。只把固定密钥写进源码或同一份 .env，保护收益有限。当前更优先的是网络隔离、最小权限、磁盘加密和备份管理。</div>
+          </details>
+        </section>
+
+        <section class="doc-section" id="troubleshooting" data-title="故障排查">
+          <div class="section-head">
+            <div class="section-index">14</div>
+            <div><h2>故障排查</h2><p class="section-subtitle">先判断是“本地服务、数据库、网络、认证、协议还是实时接口”，不要先删除站点或重新填写所有凭据。</p></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>现象</th><th>优先判断</th><th>处理顺序</th></tr></thead>
+              <tbody>
+                <tr><td><code>127.0.0.1:8000</code> Connection refused</td><td>后端没启动或端口不同</td><td>检查进程 / Compose → 查看日志 → 启动 app.py</td></tr>
+                <tr><td>所有不同域名同时 Connection refused</td><td>长期进程缓存了已失效的 macOS 系统代理</td><td>检查当前代理 → 重启 app.py → 再检测；不要先改 Token</td></tr>
+                <tr><td>单站被重置连接 / 超时</td><td>上游网络、防护或瞬态故障</td><td>浏览器直接访问 → curl 根地址 → 稍后重试 → 保留最近成功值</td></tr>
+                <tr><td>扩展不可用</td><td>控制台不是 localhost / 127.0.0.1，或页面未刷新</td><td>检查扩展 0.1.2 → 刷新控制台 → 检测同步扩展</td></tr>
+                <tr><td>找不到上游标签页</td><td>未提前打开，或 Origin 不一致</td><td>打开 Base URL 根地址并登录 → 保持标签页 → 重试</td></tr>
+                <tr><td>人机验证失败</td><td>扩展没有可复用的已验证会话</td><td>在上游页面手动完成验证 → 确认 Token 存在 → 重新同步</td></tr>
+                <tr><td>NewAPI 401</td><td>令牌与 NewAPI 用户 ID 不匹配或已过期</td><td>用普通用户重新生成系统令牌 → 填本人 ID → 测试认证</td></tr>
+                <tr><td>NewAPI 403 SECURITY_PROOF_REQUIRED</td><td>主站渠道 Key 受 2FA 保护且本地无缓存</td><td>编辑主站 → 输入当前 2FA → 验证 Key 读取 → 刷新倍率</td></tr>
+                <tr><td>倍率有值但成功率 / 延迟为空</td><td>倍率来自历史快照，实时接口失败</td><td>查看原始错误 → 检查代理 / perf-metrics → 不要当成倍率采集正常证明</td></tr>
+                <tr><td>主站渠道待配置登录态</td><td>没有同 Base URL 的本地 sites 或认证不完整</td><td>先建监控节点 → 配普通用户登录态 → 确保 URL 归一化一致</td></tr>
+                <tr><td>模型显示 0/0</td><td>模型缓存未取到、分组名缺失或接口版本不兼容</td><td>打开倍率 / 模型详情触发预热 → 检查 channels/monitors 响应 → 看映射错误</td></tr>
+                <tr><td>一键余额部分失败</td><td>上游单站认证或网络失败</td><td>当前已串行；逐站单查 → 对照错误 → 不要全局重试登录</td></tr>
+                <tr><td>修改代码后页面仍是旧版</td><td>后端托管旧 dist 或旧进程</td><td>npm run build → 重启 app.py / 重建容器 → 强制刷新</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <h3>最小诊断命令</h3>
+          <div class="code-block"><div class="code-label">不输出业务数据的基础检查</div><button class="copy-button" type="button"><svg><use href="#i-copy"/></svg><span>复制</span></button><pre><code># 端口与容器
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+docker compose ps
+docker compose logs --tail=100 upstream
+
+# 公开状态接口
+curl -i --max-time 5 http://127.0.0.1:8000/api/auth/status
+
+# 语法与前端构建
+python3 -m py_compile app.py
+cd apps/web &amp;&amp; npm run build</code></pre></div>
+          <div class="alert warn">
+            <svg><use href="#i-alert"/></svg>
+            <div><p>排障日志中不要打印完整请求体、Authorization、Cookie、Webhook、渠道 Key 或数据库连接字符串。若密钥曾进入工具日志或测试断言，按泄露处理并轮换。</p></div>
+          </div>
+        </section>
+
+        <section class="doc-section" id="acceptance" data-title="验收清单">
+          <div class="section-head">
+            <div class="section-index">15</div>
+            <div><h2>验收清单</h2><p class="section-subtitle">勾选状态只保存在当前浏览器的本地存储，不会写入项目或数据库。</p></div>
+          </div>
+          <h3>部署与安全</h3>
+          <div class="review-list">
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="env-local"><span><code>.env</code> 未提交 Git，DB 密码与控制台密码均为强密码。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="console-auth"><span>非本机部署已启用 <code>CONSOLE_PASSWORD</code>，并配置 HTTPS 与访问来源限制。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="mysql-private"><span>MySQL 仅内网或回环可达，备份文件权限受控。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="backup-tested"><span>已完成 MySQL 备份，并在隔离环境验证一次恢复。</span></label>
+          </div>
+          <h3>监控节点</h3>
+          <div class="review-list">
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="sites-created"><span>每个上游都在“渠道监控”中创建，Base URL 不带 API 路径。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="least-token"><span>NewAPI 上游使用普通用户令牌，不使用第三方管理员令牌。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="site-check"><span>每个站点已手动检测，公开 / 认证分组与下一次检测时间正确。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="balance-check"><span>余额已逐站查询，失败站点已按各自错误处理。</span></label>
+          </div>
+          <h3>主站、推送与日常运维</h3>
+          <div class="review-list">
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="admin-separated"><span>团队成员理解“主站连接”不等于“监控节点”，主站数据不产生变化通知。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="admin-min-perm"><span>NewAPI 主站令牌只授予页面实际需要的最小管理权限。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="notify-test"><span>邮件和 / 或企业微信已保存并测试成功。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="retention"><span>已决定快照保留周期、容量告警和归档方式。</span></label>
+            <label class="review-item"><input class="review-check" type="checkbox" data-key="danger-api"><span>已接受或整改后端 NewAPI 主站隐藏写接口风险。</span></label>
+          </div>
+          <div class="alert success">
+            <svg><use href="#i-check"/></svg>
+            <div><p><strong>最终验收：</strong><code>/api/auth/status</code> 可达；登录后 <code>/api/overview</code> 与 <code>/api/sites</code> 可访问；页面能添加、编辑、检测监控站点；推送页能保存并测试配置。</p></div>
+          </div>
+        </section>
+
+        <div class="no-results" id="no-results"><strong>没有匹配章节</strong><br>可尝试“Token”“倍率”“Docker”“2FA”或具体错误关键字。</div>
+
+        <footer class="footer">
+          <p>Upstream 使用与配置教程 · 依据当前工作区源码生成 · 所有示例均为脱敏占位值。</p>
+          <p>源文件：<code>docs/upstream-usage-guide.html</code>。本页不请求网络，也不会读取项目数据库或浏览器登录态。</p>
+        </footer>
+      </div>
+    </main>
+  </div>
+
+  <button class="icon-button back-top" id="back-top" type="button" aria-label="返回顶部" title="返回顶部">
+    <svg><use href="#i-up"/></svg>
+  </button>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var root = document.documentElement;
+      var body = document.body;
+      var themeButton = document.getElementById("theme-button");
+      var menuButton = document.getElementById("menu-button");
+      var overlay = document.getElementById("drawer-overlay");
+      var searchInput = document.getElementById("doc-search");
+      var searchCount = document.getElementById("search-count");
+      var noResults = document.getElementById("no-results");
+      var backTop = document.getElementById("back-top");
+      var sections = Array.prototype.slice.call(document.querySelectorAll(".doc-section"));
+      var navLinks = Array.prototype.slice.call(document.querySelectorAll(".nav-link"));
+
+      function readStorage(key) {
+        try { return localStorage.getItem(key); } catch (error) { return null; }
+      }
+
+      function writeStorage(key, value) {
+        try { localStorage.setItem(key, value); } catch (error) { /* file mode may deny storage */ }
+      }
+
+      var savedTheme = readStorage("upstream-guide-theme");
+      root.setAttribute("data-theme", savedTheme === "dark" ? "dark" : "light");
+
+      themeButton.addEventListener("click", function () {
+        var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        writeStorage("upstream-guide-theme", next);
+        themeButton.setAttribute("aria-label", next === "dark" ? "切换为浅色主题" : "切换为暗色主题");
+      });
+
+      document.getElementById("print-button").addEventListener("click", function () {
+        window.print();
+      });
+
+      function setNavOpen(open) {
+        body.classList.toggle("nav-open", open);
+        menuButton.setAttribute("aria-expanded", open ? "true" : "false");
+        menuButton.setAttribute("aria-label", open ? "关闭目录" : "打开目录");
+      }
+
+      menuButton.addEventListener("click", function () {
+        setNavOpen(!body.classList.contains("nav-open"));
+      });
+      overlay.addEventListener("click", function () { setNavOpen(false); });
+      navLinks.forEach(function (link) {
+        link.addEventListener("click", function () { setNavOpen(false); });
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") setNavOpen(false);
+        if (
+          event.key === "/" &&
+          document.activeElement !== searchInput &&
+          !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)
+        ) {
+          event.preventDefault();
+          searchInput.focus();
+        }
+      });
+
+      Array.prototype.slice.call(document.querySelectorAll("[data-tabs]")).forEach(function (tabs) {
+        var tabButtons = Array.prototype.slice.call(tabs.querySelectorAll('[role="tab"]'));
+        var panels = Array.prototype.slice.call(tabs.querySelectorAll('[role="tabpanel"]'));
+
+        function activate(tab) {
+          tabButtons.forEach(function (button) {
+            var active = button === tab;
+            button.setAttribute("aria-selected", active ? "true" : "false");
+            button.tabIndex = active ? 0 : -1;
+          });
+          panels.forEach(function (panel) {
+            panel.hidden = panel.id !== tab.getAttribute("aria-controls");
+          });
+        }
+
+        tabButtons.forEach(function (tab, index) {
+          tab.addEventListener("click", function () { activate(tab); });
+          tab.addEventListener("keydown", function (event) {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            var direction = event.key === "ArrowRight" ? 1 : -1;
+            var next = (index + direction + tabButtons.length) % tabButtons.length;
+            tabButtons[next].focus();
+            activate(tabButtons[next]);
+          });
+        });
+      });
+
+      function fallbackCopy(text) {
+        var area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+
+      Array.prototype.slice.call(document.querySelectorAll(".copy-button")).forEach(function (button) {
+        button.addEventListener("click", async function () {
+          var code = button.parentElement.querySelector("pre code");
+          var text = code ? code.textContent : "";
+          try {
+            if (navigator.clipboard && window.isSecureContext) {
+              await navigator.clipboard.writeText(text);
+            } else {
+              fallbackCopy(text);
+            }
+            var label = button.querySelector("span");
+            var original = label.textContent;
+            label.textContent = "已复制";
+            button.setAttribute("aria-label", "代码已复制");
+            window.setTimeout(function () {
+              label.textContent = original;
+              button.removeAttribute("aria-label");
+            }, 1400);
+          } catch (error) {
+            fallbackCopy(text);
+          }
+        });
+      });
+
+      function clearHighlights() {
+        Array.prototype.slice.call(document.querySelectorAll("mark.search-hit")).forEach(function (mark) {
+          mark.replaceWith(document.createTextNode(mark.textContent));
+        });
+        sections.forEach(function (section) { section.normalize(); });
+      }
+
+      function highlightSection(section, query, budget) {
+        var walker = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
+        var nodes = [];
+        var node;
+        while ((node = walker.nextNode())) {
+          var parent = node.parentElement;
+          if (!parent || /SCRIPT|STYLE|CODE|PRE|BUTTON|INPUT|TEXTAREA/.test(parent.tagName)) continue;
+          if (node.nodeValue.toLocaleLowerCase("zh-CN").indexOf(query) !== -1) nodes.push(node);
+        }
+
+        nodes.forEach(function (textNode) {
+          if (budget.count >= 120) return;
+          var source = textNode.nodeValue;
+          var lower = source.toLocaleLowerCase("zh-CN");
+          var fragment = document.createDocumentFragment();
+          var cursor = 0;
+          var index = lower.indexOf(query, cursor);
+          while (index !== -1 && budget.count < 120) {
+            if (index > cursor) fragment.appendChild(document.createTextNode(source.slice(cursor, index)));
+            var mark = document.createElement("mark");
+            mark.className = "search-hit";
+            mark.textContent = source.slice(index, index + query.length);
+            fragment.appendChild(mark);
+            budget.count += 1;
+            cursor = index + query.length;
+            index = lower.indexOf(query, cursor);
+          }
+          fragment.appendChild(document.createTextNode(source.slice(cursor)));
+          textNode.replaceWith(fragment);
+        });
+      }
+
+      var searchTimer = 0;
+      function runSearch() {
+        clearHighlights();
+        var query = searchInput.value.trim().toLocaleLowerCase("zh-CN");
+        var visible = 0;
+        var budget = { count: 0 };
+
+        sections.forEach(function (section) {
+          var matches = !query || section.textContent.toLocaleLowerCase("zh-CN").indexOf(query) !== -1;
+          section.hidden = !matches;
+          if (matches) {
+            visible += 1;
+            if (query) highlightSection(section, query, budget);
+          }
+        });
+
+        navLinks.forEach(function (link) {
+          var target = document.querySelector(link.getAttribute("href"));
+          link.hidden = Boolean(target && target.hidden);
+        });
+
+        noResults.style.display = visible ? "none" : "block";
+        searchCount.textContent = query ? visible + " 个结果" : sections.length + " 章";
+      }
+
+      searchInput.addEventListener("input", function () {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(runSearch, 80);
+      });
+      searchInput.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          searchInput.value = "";
+          runSearch();
+          searchInput.blur();
+        }
+      });
+
+      var observer = new IntersectionObserver(function (entries) {
+        var visibleEntries = entries.filter(function (entry) { return entry.isIntersecting; });
+        if (!visibleEntries.length) return;
+        visibleEntries.sort(function (a, b) { return a.boundingClientRect.top - b.boundingClientRect.top; });
+        var id = visibleEntries[0].target.id;
+        navLinks.forEach(function (link) {
+          link.setAttribute("aria-current", link.getAttribute("href") === "#" + id ? "true" : "false");
+        });
+      }, { rootMargin: "-18% 0px -70% 0px", threshold: 0 });
+      sections.forEach(function (section) { observer.observe(section); });
+
+      Array.prototype.slice.call(document.querySelectorAll(".review-check")).forEach(function (checkbox) {
+        var key = "upstream-guide-check-" + checkbox.getAttribute("data-key");
+        checkbox.checked = readStorage(key) === "1";
+        checkbox.addEventListener("change", function () {
+          writeStorage(key, checkbox.checked ? "1" : "0");
+        });
+      });
+
+      function updateBackTop() {
+        backTop.classList.toggle("visible", window.scrollY > 640);
+      }
+      window.addEventListener("scroll", updateBackTop, { passive: true });
+      updateBackTop();
+      backTop.addEventListener("click", function () {
+        var reduceMotion = window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+      });
+    })();
+  </script>
+</body>
+</html>

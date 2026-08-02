@@ -15,10 +15,10 @@
 
 | 层 | 实现 |
 |----|------|
-| 后端 | 根目录 `app.py`（stdlib HTTP + SQLite） |
+| 后端 | 根目录 `app.py`（stdlib HTTP + MySQL，驱动 PyMySQL） |
 | 前端 | `apps/web`（React + Vite + Tailwind + priceai-ui） |
-| 数据 | `data/app.db` |
-| 部署 | `python3 app.py` / Docker Compose |
+| 数据 | MySQL 数据库（连接走 `.env`，见 `DB_*`） |
+| 部署 | `python3 app.py` / Docker Compose（自带 mysql:8.4） |
 
 ---
 
@@ -26,10 +26,10 @@
 
 1. 对用户默认**简体中文**
 2. UI 必须遵循 skill **`priceai-ui`**（`.agents/skills/priceai-ui/SKILL.md`）
-3. **兼容现有 `data/app.db`**，禁止未确认清空用户数据
-4. 密钥（密码、token、webhook）勿写入 git / 对话明文
+3. **兼容现有 MySQL 数据**，禁止未确认清空用户数据；`data/` 里的旧 SQLite 与备份整体 gitignore
+4. 密钥（DB 密码、token、webhook）只放本地 `.env`，勿写入源码 / git / 对话明文
 5. 推送通道：邮件 + 企业微信；不主动复活 QQ 推送
-6. 后端优先保持 **无第三方 Python 依赖**；前端可在 `apps/web` 使用 npm 依赖
+6. 后端依赖收敛：**仅允许 PyMySQL 一个第三方库**（数据库驱动），其余走标准库；前端可在 `apps/web` 使用 npm 依赖
 7. 改 API 契约时同步改 `apps/web/src/lib/api.ts` 与页面
 
 ---
@@ -48,10 +48,11 @@
 
 1. 站点 CRUD（NewAPI / sub2api）
 2. 定时检测 + 手动检测
-3. 快照 + 分组/倍率 diff
+3. 快照 + 分组/倍率 diff（含模型上下架 `model_added_to_group` / `model_removed_from_group`）
 4. 变化列表
 5. 邮件 + 企业微信（含测试发送）
 6. 总览 KPI / 站点详情 / 分组倍率弹窗 / 模型健康
+7. 账户额度：NewAPI `/api/user/self`、sub2api `/api/v1/auth/me`（站点详情页按需查询）
 
 ---
 

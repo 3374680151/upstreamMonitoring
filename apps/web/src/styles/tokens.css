@@ -119,12 +119,112 @@ html[data-theme="dark"] {
     margin: 0;
     font-family: var(--font-sans);
     background: var(--color-page);
+    background-attachment: fixed;
     color: var(--color-text-body);
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+  }
+
+  html[data-theme="dark"] body {
+    background: var(--color-page);
+    background-attachment: fixed;
   }
 
   .font-serif {
     font-family: var(--font-serif);
+  }
+
+  .priceai-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+
+  @keyframes upstream-pulse-dot {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 currentColor;
+      opacity: 1;
+    }
+    70% {
+      box-shadow: 0 0 0 4px transparent;
+      opacity: 0.85;
+    }
+  }
+
+  @keyframes upstream-rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .upstream-rise {
+    animation: upstream-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes upstream-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes upstream-pop {
+    from {
+      opacity: 0;
+      transform: translateY(12px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .upstream-fade {
+    animation: upstream-fade 0.2s ease-out both;
+  }
+
+  .upstream-pop {
+    animation: upstream-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .pulse-dot {
+    animation: upstream-pulse-dot 2s ease-in-out infinite;
+  }
+
+  /* 全局操作提示：从右下角滑入 */
+  .upstream-toast {
+    animation: upstream-pop 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .upstream-rise,
+    .upstream-fade,
+    .upstream-pop,
+    .upstream-toast,
+    .pulse-dot {
+      animation: none;
+    }
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--color-border);
+  }
+
+  .priceai-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
   }
 
   * {

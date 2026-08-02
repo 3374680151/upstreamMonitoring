@@ -1,9 +1,23 @@
 export type Platform = "newapi" | "sub2api";
-export type AuthMode = "password" | "token";
+export type AuthMode = "password" | "token" | "browser";
+export type SessionSyncTargetKind = "site" | "admin_site";
+export type SessionSyncStatus =
+  | "not_requested"
+  | "pending"
+  | "validating"
+  | "ready"
+  | "no_session"
+  | "expired"
+  | "permission_required"
+  | "extension_unavailable"
+  | "failed";
 export type SiteStatus = "ok" | "warning" | "failed" | "unknown" | string;
 
 export type GroupItem = {
+  id?: number;
+  name?: string;
   ratio?: number | string;
+  rate_multiplier?: number | null;
   ratio_type?: string;
   desc?: string;
   platform?: string;
@@ -34,10 +48,88 @@ export type Site = {
   auth_mode?: AuthMode | string;
   login_username?: string | null;
   access_user_id?: string | null;
+  has_access_token?: boolean;
+  has_login_password?: boolean;
+  platform_label?: string;
   has_refresh_token?: boolean;
   token_expires_at?: string | null;
   login_last_error?: string | null;
   login_last_check_at?: string | null;
+  session_sync_status?: SessionSyncStatus;
+  session_sync_error?: string | null;
+  session_synced_at?: string | null;
+  has_browser_session?: boolean;
+};
+
+export type ChannelDiscoveryCandidate = {
+  base_url: string;
+  name: string;
+  channel_ids: number[];
+  channel_names: string[];
+  channel_count: number;
+  existing_site_id?: number | null;
+  existing_site_status?: string | null;
+  /** 已存在站点的非敏感认证模式，用于决定是否允许发现面板重试浏览器同步。 */
+  existing_site_auth_mode?: AuthMode | string | null;
+  existing_site_enabled?: boolean | number | null;
+  existing_site_session_sync_status?: SessionSyncStatus | string | null;
+  importable?: boolean;
+};
+
+export type ChannelDiscoveryImportItem = {
+  base_url: string;
+  name?: string;
+  channel_ids?: number[];
+  channel_names?: string[];
+};
+
+export type SiteDiscoveryLink = {
+  site_id: number;
+  admin_site_id: number;
+  admin_site_name: string;
+  channel_id: number;
+  channel_name?: string | null;
+  upstream_base_url: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ChannelDiscoveryImportResult = {
+  base_url: string;
+  name?: string;
+  site_id?: number | null;
+  status: "created" | "existing" | "invalid" | "conflict" | "failed" | string;
+  message?: string | null;
+};
+
+export type SiteSessionSyncRequest = {
+  request_id: string;
+  secret: string;
+  target_kind: SessionSyncTargetKind;
+  platform: Platform;
+  target_origin: string;
+  expires_in: number;
+};
+
+export type SiteSessionSyncState = {
+  request_id: string;
+  target_kind: SessionSyncTargetKind;
+  status: SessionSyncStatus;
+  platform: Platform;
+  target_origin: string;
+  error_code?: string;
+  message?: string;
+  expires_at?: string;
+  updated_at?: string;
+  consumed_at?: string;
+};
+
+export type SiteCheckResponse = {
+  success: boolean;
+  message?: string;
+  status?: SiteStatus;
+  code?: string;
+  browser_sync_required?: boolean;
 };
 
 export type Change = {
@@ -79,6 +171,45 @@ export type NotificationSettings = {
   email_last_error?: string | null;
 };
 
+export type AccountSubscription = {
+  name?: string;
+  status?: string;
+  expires_at?: string | number | null;
+  daily_usage_usd?: number | null;
+  weekly_usage_usd?: number | null;
+  monthly_usage_usd?: number | null;
+  daily_limit_usd?: number | null;
+  weekly_limit_usd?: number | null;
+  monthly_limit_usd?: number | null;
+};
+
+export type SiteAccount = {
+  platform: Platform | string;
+  username?: string;
+  email?: string;
+  role?: string;
+  status?: string;
+  group?: string;
+  balance_usd?: number | null;
+  used_usd?: number | null;
+  frozen_balance_usd?: number | null;
+  total_recharged_usd?: number | null;
+  request_count?: number | null;
+  rpm_limit?: number | string | null;
+  raw_quota?: number | null;
+  raw_used_quota?: number | null;
+  quota_per_unit?: number | null;
+  subscriptions?: AccountSubscription[];
+};
+
+export type SiteAccountResponse = {
+  success: boolean;
+  source?: string;
+  fetched_at?: string;
+  account?: SiteAccount;
+  message?: string;
+};
+
 export type ModelHealth = {
   name: string;
   status?: string;
@@ -93,6 +224,211 @@ export type ModelHealth = {
   ping_latency_ms?: number | null;
   latency_ms?: number | null;
   timeline?: Array<{ status?: string; checked_at?: string }>;
+};
+
+export type AdminSiteCapabilities = {
+  list_channels: boolean;
+  read_channel_detail: boolean;
+  edit_channel: boolean;
+  toggle_channel: boolean;
+  create_channel: boolean;
+  delete_channel: boolean;
+  channel_key: boolean;
+  channel_priority: boolean;
+  channel_weight: boolean;
+  group_rates: boolean;
+  model_pricing: boolean;
+};
+
+export type Sub2ApiGroupRef = {
+  id: number;
+  name: string;
+  platform?: string;
+  status?: string;
+  rate_multiplier?: number | null;
+};
+
+export type Sub2ApiPricingInterval = {
+  id?: number;
+  min_tokens: number;
+  max_tokens?: number | null;
+  tier_label?: string;
+  input_price?: number | null;
+  output_price?: number | null;
+  cache_write_price?: number | null;
+  cache_read_price?: number | null;
+  per_request_price?: number | null;
+  sort_order?: number;
+};
+
+export type Sub2ApiModelPricing = {
+  id?: number;
+  platform: string;
+  models: string[];
+  billing_mode: "token" | "per_request" | "image" | string;
+  input_price?: number | null;
+  output_price?: number | null;
+  cache_write_price?: number | null;
+  cache_read_price?: number | null;
+  image_input_price?: number | null;
+  image_output_price?: number | null;
+  per_request_price?: number | null;
+  intervals: Sub2ApiPricingInterval[];
+};
+
+export type Sub2ApiAccountStatsPricingRule = {
+  id?: number;
+  name: string;
+  group_ids: number[];
+  account_ids: number[];
+  pricing: Sub2ApiModelPricing[];
+};
+
+/** NewAPI / sub2api 主站渠道的统一前端契约。 */
+export type Channel = {
+  id: number;
+  name?: string;
+  type?: number;
+  /** 1=启用 2=手动停用 3=自动停用 */
+  status?: number | string;
+  description?: string;
+  source_platform?: Platform | string;
+  normalized_status?: "active" | "disabled" | "error" | string;
+  /** 列表默认掩码，仅点「显示」时按需取明文 */
+  key?: string;
+  key_masked?: boolean;
+  /** 逗号分隔的分组名 */
+  group?: string;
+  weight?: number;
+  priority?: number;
+  models?: string;
+  base_url?: string;
+  /** 模型重定向：JSON 字符串，如 {"gpt-4":"gpt-4o"} */
+  model_mapping?: string | Record<string, Record<string, string>>;
+  group_ids?: number[];
+  groups?: Sub2ApiGroupRef[];
+  model_pricing?: Sub2ApiModelPricing[];
+  billing_model_source?: string;
+  restrict_models?: boolean;
+  features?: string | string[];
+  features_config?: Record<string, unknown>;
+  apply_pricing_to_account_stats?: boolean;
+  account_stats_pricing_rules?: Sub2ApiAccountStatsPricingRule[];
+  capabilities?: {
+    edit?: boolean;
+    toggle?: boolean;
+    create?: boolean;
+    delete?: boolean;
+  };
+  test_model?: string;
+  response_time?: number;
+  test_time?: number;
+  balance?: number;
+  used_quota?: number;
+  tag?: string;
+  auto_ban?: number;
+  [key: string]: unknown;
+};
+
+export type ChannelMatchedGroup = {
+  name: string;
+  ratio?: number | string | null;
+  ratio_type?: string;
+  desc?: string;
+  available_to_login?: boolean;
+};
+
+export type ChannelUpstreamBinding = {
+  configured?: boolean;
+  /** 未单独配置主站渠道时，是否复用了同 Base URL 的渠道监控登录态 */
+  inherited_from_monitor?: boolean;
+  upstream_base_url?: string;
+  upstream_platform?: Platform | string;
+  auth_mode?: AuthMode | string;
+  has_login_username?: boolean;
+  has_login_password?: boolean;
+  has_access_token?: boolean;
+  has_refresh_token?: boolean;
+  access_user_id?: string;
+  has_channel_key?: boolean;
+  match_status?: "unmatched" | "matched" | "matched_partial" | string;
+  match_message?: string;
+  matched_groups?: ChannelMatchedGroup[];
+  matched_at?: string | null;
+};
+
+export type ChannelUpstreamBindingPayload = {
+  upstream_base_url: string;
+  upstream_platform: Platform | string;
+  auth_mode: AuthMode | string;
+  login_username?: string;
+  login_password?: string;
+  access_token?: string;
+  access_user_id?: string;
+  refresh_token?: string;
+  channel_key?: string;
+};
+
+export type ChannelListResponse = {
+  success: boolean;
+  data?: Channel[];
+  meta?: { total?: number; page?: number; page_size?: number };
+  message?: string;
+};
+
+export type ChannelDetailResponse = {
+  success: boolean;
+  data?: Channel;
+  message?: string;
+  key_error?: string;
+};
+
+/** 分组名 → 倍率/描述（供渠道密钥比对） */
+export type ChannelGroupsResponse = {
+  success: boolean;
+  data?: Record<string, GroupItem>;
+  message?: string;
+};
+
+/** 管理站点：统一入口，后端按 NewAPI / sub2api 平台适配。 */
+export type AdminSite = {
+  id: number;
+  name: string;
+  platform: Platform;
+  platform_label?: string;
+  capabilities?: AdminSiteCapabilities;
+  base_url: string;
+  access_user_id?: string;
+  /** 后端只返回是否已配置令牌，不回传明文 */
+  has_access_token?: boolean;
+  login_username?: string;
+  has_login_password?: boolean;
+  has_sub2api_session?: boolean;
+  login_last_error?: string | null;
+  login_last_check_at?: string | null;
+  has_browser_session?: boolean;
+  browser_login_last_error?: string | null;
+  browser_login_last_check_at?: string | null;
+  has_security_proof?: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AdminSiteFormPayload = {
+  platform: Platform;
+  name: string;
+  base_url: string;
+  /** 编辑时留空表示不修改 */
+  access_token: string;
+  access_user_id: string;
+  /** 主站网页登录账号；用于 /api/verify 和真实渠道 key 读取 */
+  login_username: string;
+  /** 编辑时留空表示不修改 */
+  login_password: string;
+};
+
+export type AdminSiteListResponse = {
+  data?: AdminSite[];
 };
 
 export type SiteFormPayload = {

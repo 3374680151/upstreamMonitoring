@@ -1,19 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { SiteFormDialog } from "@/components/SiteFormDialog";
 import { RatiosDialog } from "@/components/RatiosDialog";
-import { Button } from "@/components/ui";
-import { api } from "@/lib/api";
+import { LoginPage } from "@/components/LoginPage";
+import { Button, ConfirmDialog } from "@/components/ui";
+import { errorText, useToast } from "@/components/Toast";
+import { api, setConsoleToken } from "@/lib/api";
+import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
 import type { Change, NotificationSettings, Site } from "@/lib/types";
 import { OverviewPage } from "@/pages/OverviewPage";
 import { SitesPage } from "@/pages/SitesPage";
 import { DetailPage } from "@/pages/DetailPage";
 import { ChangesPage } from "@/pages/ChangesPage";
+import { BalancePage } from "@/pages/BalancePage";
+import { ChannelsPage } from "@/pages/ChannelsPage";
 import { NotificationsPage } from "@/pages/NotificationsPage";
 
 export default function App() {
   const navigate = useNavigate();
+  const toast = useToast();
+  const [deleteTarget, setDeleteTarget] = useState<Site | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const [sites, setSites] = useState<Site[]>([]);
   const [changes, setChanges] = useState<Change[]>([]);
   const [notify, setNotify] = useState<NotificationSettings | null>(null);
@@ -23,6 +33,9 @@ export default function App() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Site | null>(null);
   const [ratiosSite, setRatiosSite] = useState<Site | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authed, setAuthed] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -48,29 +61,124 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    api
+      .authStatus()
+      .then((s) => {
+        if (!mounted) return;
+        setAuthRequired(!!s.auth_required);
+        setAuthed(!!s.authenticated);
+      })
+      .catch(() => {
+        // 状态接口都拿不到时退化为不拦截，避免把用户锁在门外
+        if (!mounted) return;
+        setAuthRequired(false);
+        setAuthed(true);
+      })
+      .finally(() => {
+        if (mounted) setAuthReady(true);
+      });
+    const onUnauth = () => {
+      setAuthed(false);
+      setAuthRequired(true);
+    };
+    window.addEventListener("console-unauthorized", onUnauth);
+    return () => {
+      mounted = false;
+      window.removeEventListener("console-unauthorized", onUnauth);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (authRequired && !authed) return;
     refresh();
     const timer = window.setInterval(() => {
       refresh().catch(() => {});
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, authReady, authRequired, authed]);
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+      toast.success("已退出登录");
+    } catch {
+      // 登出即使网络失败也要本地清 token，但仍要让用户知道服务端没收到
+      toast.info("已在本机退出（服务端未确认）");
+    }
+    setConsoleToken("");
+    setAuthed(false);
+    setAuthRequired(true);
+  }
 
   async function handleCheck(site: Site) {
+    await toast.run(
+      async () => {
+        const firstResult = await api.checkSite(site.id);
+        if (firstResult.success) {
+          await refresh();
+          return;
+        }
+        const canSyncBrowser =
+          firstResult.browser_sync_required &&
+          site.platform === "sub2api" &&
+          site.auth_mode === "browser";
+        if (!canSyncBrowser) {
+          throw new Error(firstResult.message || "检测失败");
+        }
+
+        const syncResult = await syncSiteBrowserSession(site.id);
+        await refresh();
+        if (syncResult.status !== "ready") {
+          throw new Error(
+            syncResult.message ||
+              syncResult.error_code ||
+              "请先在浏览器登录并同步",
+          );
+        }
+
+        const retryResult = await api.checkSite(site.id);
+        await refresh();
+        if (!retryResult.success) {
+          throw new Error(retryResult.message || "同步后检测仍然失败");
+        }
+      },
+      { success: `已检测「${site.name}」`, failure: `检测「${site.name}」失败` },
+    );
+  }
+
+  async function handleSessionSync(site: Site) {
     try {
-      await api.checkSite(site.id);
+      const result = await syncSiteBrowserSession(site.id);
       await refresh();
+      if (result.status === "ready") {
+        toast.success(`渠道「${site.name}」登录态已同步`);
+        return;
+      }
+      toast.info(result.message || result.error_code || "登录态同步未完成");
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      toast.error(errorText(err, "登录态同步失败"));
     }
   }
 
-  async function handleDelete(site: Site) {
-    if (!confirm(`确认删除站点「${site.name}」？`)) return;
+  // 删除走自绘确认框：window.confirm 在内嵌 WebView 里会被直接抑制，
+  // 表现为「点了没反应」；自绘弹窗能显示进行中与失败原因。
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setDeleteError("");
     try {
-      await api.deleteSite(site.id);
+      await api.deleteSite(deleteTarget.id);
       await refresh();
+      toast.success(`已删除渠道「${deleteTarget.name}」`);
+      setDeleteTarget(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+      const message = errorText(err, "删除失败");
+      setDeleteError(message);
+      toast.error(message);
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -83,28 +191,63 @@ export default function App() {
     onView: handleView,
     onRatios: (site: Site) => setRatiosSite(site),
     onCheck: handleCheck,
+    onSyncSession: handleSessionSync,
     onEdit: (site: Site) => {
       setEditing(site);
       setFormOpen(true);
     },
-    onDelete: handleDelete,
+    onDelete: (site: Site) => {
+      setDeleteError("");
+      setDeleteTarget(site);
+    },
   };
+
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--color-page)] text-sm text-[var(--color-text-muted)]">
+        加载中...
+      </div>
+    );
+  }
+
+  if (authRequired && !authed) {
+    return (
+      <LoginPage
+        onSuccess={() => {
+          setAuthed(true);
+          setLoading(true);
+          refresh();
+        }}
+      />
+    );
+  }
 
   return (
     <AppShell
       siteCount={sites.length}
+      onLogout={authRequired ? handleLogout : undefined}
       actions={
         <>
-          <Button variant="secondary" onClick={() => refresh()}>
-            刷新
+          <Button
+            variant="secondary"
+            aria-label="刷新数据"
+            title="刷新数据"
+            onClick={() => refresh()}
+          >
+            <RefreshCw size={14} />
+            <span className="hidden sm:inline">刷新</span>
           </Button>
           <Button
+            variant="brand"
+            aria-label="添加渠道"
+            title="添加渠道"
             onClick={() => {
               setEditing(null);
               setFormOpen(true);
             }}
           >
-            添加站点
+            <Plus size={15} />
+            <span className="hidden sm:inline">添加渠道</span>
           </Button>
         </>
       }
@@ -171,6 +314,8 @@ export default function App() {
             path="/changes"
             element={<ChangesPage changes={changes} sites={sites} />}
           />
+          <Route path="/balance" element={<BalancePage sites={sites} />} />
+          <Route path="/channels" element={<ChannelsPage />} />
           <Route
             path="/notifications"
             element={
@@ -186,11 +331,40 @@ export default function App() {
         site={editing}
         onClose={() => setFormOpen(false)}
         onSaved={refresh}
+        onEditSite={(siteId) => {
+          const target = sites.find((site) => site.id === siteId);
+          if (!target) {
+            toast.info("渠道列表正在刷新，请稍后重试");
+            return;
+          }
+          setEditing(target);
+          setFormOpen(true);
+        }}
       />
       <RatiosDialog
         open={!!ratiosSite}
         site={ratiosSite}
         onClose={() => setRatiosSite(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="删除渠道"
+        message={
+          <>
+            确认删除渠道「<b>{deleteTarget?.name}</b>」？
+            <br />
+            该渠道的历史快照与变化记录会一并删除，且不可撤销。
+          </>
+        }
+        confirmLabel="删除"
+        danger
+        busy={deleteBusy}
+        error={deleteError}
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          setDeleteTarget(null);
+          setDeleteError("");
+        }}
       />
     </AppShell>
   );

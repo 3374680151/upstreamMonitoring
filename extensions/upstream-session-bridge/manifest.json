@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Upstream 登录态同步",
+  "version": "0.1.2",
+  "description": "按需将已登录上游站点的会话安全同步到本机 Upstream。",
+  "permissions": ["tabs", "scripting", "storage", "cookies"],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://127.0.0.1/*",
+    "https://localhost/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://127.0.0.1/*",
+        "http://localhost/*",
+        "https://127.0.0.1/*",
+        "https://localhost/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_title": "Upstream 登录态同步",
+    "default_popup": "popup.html"
+  }
+}

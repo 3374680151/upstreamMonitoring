@@ -1,14 +1,76 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: upstream-mysql
+    restart: unless-stopped
+    environment:
+      # root 密码从 .env 注入（严禁写死在此文件里）；未设置会直接报错终止。
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-upstream}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      # 仅绑定本机回环，不对外暴露。此映射只为「在宿主机上直接跑迁移脚本连 127.0.0.1」用；
+      # app 容器走 Docker 内网 mysql:3306，不依赖它。
+      # 若本机已有别的 MySQL 占用 3306：在 .env 设 DB_PORT=3307（映射 127.0.0.1:3307->3306，
+      # 不影响 app），或直接删除本 ports 段。
+      - "127.0.0.1:${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # 仅探测存活，不传密码：服务已起时 mysqladmin ping 即返回成功，
+      # 避免把 DB 密码写进命令行（docker inspect 可见）。
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   upstream:
     build: .
+    image: upstream:latest
     container_name: upstream
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
       HOST: 0.0.0.0
       PORT: 8000
-      TZ: Asia/Shanghai
-      APP_TIMEZONE: Asia/Shanghai
+      # 时区：APP_TIMEZONE 优先，TZ 兜底；可用 .env 覆盖
+      TZ: ${TZ:-Asia/Shanghai}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
+      # 数据库：容器内通过服务名 mysql 连接（密码从 .env 注入，不硬编码）
+      DB_HOST: mysql
+      DB_PORT: 3306
+      # compose 内置的 mysql 只创建 root 账户，故 Docker 下 DB_USER 应保持 root。
+      # 如需专用非 root 用户：给上面 mysql 服务加 MYSQL_USER/MYSQL_PASSWORD，再改这里的 DB_USER（勿设为 root）。
+      DB_USER: ${DB_USER:-root}
+      DB_PASSWORD: ${DB_PASSWORD:?请在 .env 设置 DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-upstream}
+      # 性能与超时：保持实时读取，不启用主站渠道/分组缓存。
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-8}
+      DB_POOL_ACQUIRE_TIMEOUT: ${DB_POOL_ACQUIRE_TIMEOUT:-5}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_READ_TIMEOUT: ${DB_READ_TIMEOUT:-15}
+      DB_WRITE_TIMEOUT: ${DB_WRITE_TIMEOUT:-15}
+      UPSTREAM_HTTP_TIMEOUT: ${UPSTREAM_HTTP_TIMEOUT:-15}
+      SLOW_REQUEST_THRESHOLD_MS: ${SLOW_REQUEST_THRESHOLD_MS:-500}
+      # 控制台登录密码（留空 = 不启用登录）；对公网暴露时务必设置。
+      CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-}
+      CONSOLE_SESSION_TTL: ${CONSOLE_SESSION_TTL:-604800}
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:8000"
     volumes:
+      # 仅迁移用：把宿主机 ./data 挂进来，供容器内跑 scripts/migrate_sqlite_to_mysql.py 读取旧 SQLite。
+      # 运行期数据已全部在 MySQL；纯 MySQL 部署可注释掉此挂载，避免明文旧库进入容器。
       - ./data:/app/data
+    healthcheck:
+      # 用公开的 /api/auth/status（设了密码时 /api/overview 会返回 401）
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/auth/status', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  mysql-data:

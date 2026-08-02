@@ -1,12 +1,31 @@
+# 版本控制 / 编辑器
 .git
 .gitignore
-data
+.idea
+.vscode
+
+# 前端依赖与构建产物（镜像内由 web-build 阶段重新生成）
+node_modules
+apps/web/node_modules
+apps/web/dist
+apps/web/tsconfig.tsbuildinfo
+.vite
+
+# Python 缓存
 __pycache__
 *.py[cod]
+.venv
+venv
+
+# 本地数据（运行时挂载卷提供）
+data
 *.db
 *.db-shm
 *.db-wal
+
+# 其他
 .env
-.venv
-venv
+.env.*
+!.env.example
 *.log
+.DS_Store

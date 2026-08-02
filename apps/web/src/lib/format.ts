@@ -1,10 +1,25 @@
 import type { Change, GroupItem, Site } from "./types";
 
+const ratioNumberFormat = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 6,
+  useGrouping: false,
+});
+
 export function fmtTime(value?: string | null): string {
   if (!value) return "-";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString("zh-CN", { hour12: false });
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export function fmtTimeParts(value?: string | null): [string, string] {
+  const formatted = fmtTime(value);
+  const separator = formatted.indexOf(" ");
+  return separator === -1
+    ? [formatted, ""]
+    : [formatted.slice(0, separator), formatted.slice(separator + 1)];
 }
 
 export function platformLabel(siteOrValue?: Site | string | null): string {
@@ -24,6 +39,16 @@ export function statusTone(
   return "neutral";
 }
 
+export function statusLabel(status?: string | null): string {
+  const labels: Record<string, string> = {
+    ok: "正常",
+    warning: "警告",
+    failed: "异常",
+    unknown: "未知",
+  };
+  return labels[String(status || "").toLowerCase()] || status || "未知";
+}
+
 export function changeTone(
   change: Change,
 ): "success" | "warning" | "danger" | "neutral" {
@@ -35,6 +60,8 @@ export function changeTone(
     return "warning";
   }
   if (change.change_type === "ratio_changed") return "success";
+  if (change.change_type === "model_removed_from_group") return "warning";
+  if (change.change_type === "model_added_to_group") return "success";
   return "neutral";
 }
 
@@ -49,8 +76,36 @@ export function changeTypeLabel(type?: string | null): string {
     subscription_type_changed: "订阅变化",
     rpm_limit_changed: "RPM 变化",
     platform_changed: "平台变化",
+    model_added_to_group: "模型上架",
+    model_removed_from_group: "模型下架",
   };
   return labels[type || ""] || type || "-";
+}
+
+export function changeDisplayMessage(change: Change): string {
+  const message =
+    change.message ||
+    (change.change_type === "group_added"
+      ? `新增分组 ${change.group_name || "-"}`
+      : "-");
+  if (change.change_type !== "group_added" || message.includes("· 倍率 ")) {
+    return message;
+  }
+
+  let value: unknown = change.new_value;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return message;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return message;
+  }
+
+  const ratio = ratioLabel(value as GroupItem);
+  return ratio === "-" ? message : `${message} · 倍率 ${ratio}`;
 }
 
 export function ratioLabel(item?: GroupItem | { ratio?: unknown; ratio_type?: string } | null): string {
@@ -58,7 +113,7 @@ export function ratioLabel(item?: GroupItem | { ratio?: unknown; ratio_type?: st
   const ratio = item.ratio;
   if (item.ratio_type === "text") return `${ratio}`;
   const n = Number(ratio);
-  if (Number.isFinite(n)) return `${n.toFixed(2)}x`;
+  if (Number.isFinite(n)) return `${ratioNumberFormat.format(n)}x`;
   return ratio == null ? "-" : `${ratio}`;
 }
 

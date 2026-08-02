@@ -1,0 +1,89 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  width: 280px;
+  margin: 0;
+  background: #f9f9f9;
+  color: #202829;
+}
+
+main {
+  padding: 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #5a6061;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.brand span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #45bf78;
+}
+
+h1 {
+  margin: 10px 0 6px;
+  font-size: 17px;
+  letter-spacing: 0;
+}
+
+p {
+  margin: 0 0 14px;
+  color: #5a6061;
+  font-size: 12px;
+}
+
+button {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #dfe4e5;
+  border-radius: 6px;
+  background: #202829;
+  color: #f8f8f8;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.actions {
+  display: grid;
+  gap: 8px;
+}
+
+button.secondary {
+  background: #ffffff;
+  color: #202829;
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #111718;
+    color: #d7e1de;
+  }
+
+  .brand,
+  p {
+    color: #9eaaa7;
+  }
+
+  button {
+    border-color: #334142;
+    background: #d7e1de;
+    color: #111718;
+  }
+
+  button.secondary {
+    background: #1a2324;
+    color: #d7e1de;
+  }
+}

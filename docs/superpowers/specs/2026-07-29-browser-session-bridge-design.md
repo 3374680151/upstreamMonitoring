@@ -145,16 +145,24 @@ session_synced_at VARCHAR(40)
 - `extension_unavailable`：页面没有检测到扩展。
 - `failed`：其他已脱敏失败。
 
-`auth_mode=browser` 的运行时取数行为与 `token` 模式一致：存在 AT 时使用 Bearer token，
-AT 失效时使用 RT 刷新并持久化轮换结果。AT 不存在时返回“没有登录态，请提前登录”，
-不回退到账号密码登录。
+`auth_mode=browser` 表示“浏览器登录态优先”，而不是与账号密码互斥：存在 AT 时先使用
+Bearer token；AT 失效时使用 RT 刷新并持久化轮换结果；刷新失败且站点仍保存有账号密码
+时，再执行一次账号密码登录作为兜底，并持久化新会话。密码登录遇到验证码、2FA 或其他
+交互式认证时，不覆盖最近一次成功倍率，返回“请先在浏览器登录并同步”的可恢复状态。
+浏览器同步成功和旧站点迁移都必须保留已有账号密码。
+
+定时检测只使用 MySQL 中已经保存的凭据，绝不在后台唤起 Chrome。只有添加、编辑和用户
+主动点击手动检测时，React 页面才允许在可恢复认证失败后调用扩展读取当前 Chrome 登录态，
+同步成功后自动重试一次检测。这样后台任务保持确定性，浏览器权限也只在明确的人工操作中
+使用。
 
 ### `browser_session_sync_requests`
 
 ```sql
 CREATE TABLE IF NOT EXISTS browser_session_sync_requests (
     id VARCHAR(64) PRIMARY KEY,
-    site_id INT NOT NULL,
+    site_id INT,
+    admin_site_id INT,
     platform VARCHAR(32) NOT NULL,
     target_origin VARCHAR(512) NOT NULL,
     secret_hash VARCHAR(64) NOT NULL,
@@ -166,13 +174,21 @@ CREATE TABLE IF NOT EXISTS browser_session_sync_requests (
     updated_at VARCHAR(40) NOT NULL,
     consumed_at VARCHAR(40),
     KEY idx_browser_sync_site_created (site_id, created_at),
+    KEY idx_browser_sync_admin_site_created (admin_site_id, created_at),
     CONSTRAINT fk_browser_sync_site FOREIGN KEY (site_id)
-        REFERENCES sites(id) ON DELETE CASCADE
+        REFERENCES sites(id) ON DELETE CASCADE,
+    CONSTRAINT fk_browser_sync_admin_site FOREIGN KEY (admin_site_id)
+        REFERENCES admin_sites(id) ON DELETE CASCADE,
+    CONSTRAINT chk_browser_sync_one_target CHECK (
+        (site_id IS NOT NULL) <> (admin_site_id IS NOT NULL)
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 ```
 
 表中只保存随机凭证的 SHA-256 摘要，不保存明文 secret 或临时令牌。过期请求可在创建新
-请求时顺便清理；不新增常驻清理线程。
+请求时顺便清理；不新增常驻清理线程。首阶段只创建 `site_id` 请求；第二阶段复用同一表
+为 `admin_sites` 创建 `admin_site_id` 请求。两个目标列必须且只能有一个非空，删除任一
+目标记录时由对应外键级联清理请求。
 
 ## API 契约
 

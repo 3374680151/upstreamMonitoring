@@ -404,6 +404,55 @@ class NewApiBrowserAuthExecutorTests(unittest.TestCase, _ExecutorFixtures):
         ):
             self.assertNotIn(secret, cache_key)
 
+    def test_sites_pricing_route_routes_through_browser_executor(self):
+        """The /api/sites/:id/pricing route must call the browser-aware fetcher.
+
+        We read the source of ``Handler.do_GET`` directly and assert that
+        the route block calls the browser-aware fetcher and not the legacy
+        plain-header fetcher.  This is a structural test that catches any
+        future regression where the route is rewired to the legacy
+        ``fetch_newapi_pricing`` (which uses bare access_token+user_id).
+        """
+        import inspect
+        source = inspect.getsource(app.Handler.do_GET)
+        # Locate the /api/sites/:id/pricing block.
+        idx = source.find('/api/sites/") and path.endswith("/pricing")')
+        self.assertGreater(idx, -1, "pricing route block missing")
+        # The block must use the browser-aware fetcher.
+        block_start = source.rfind("if", 0, idx)
+        block_end = source.find("/api/sites/", idx + 100)
+        if block_end == -1:
+            block_end = len(source)
+        block = source[block_start:block_end]
+        self.assertIn("fetch_newapi_pricing_for_site", block)
+        self.assertNotIn("fetch_newapi_pricing(", block)
+
+    def test_sites_perf_summary_route_routes_through_browser_executor(self):
+        import inspect
+        source = inspect.getsource(app.Handler.do_GET)
+        idx = source.find('/api/sites/") and path.endswith("/perf-metrics/summary")')
+        self.assertGreater(idx, -1, "perf-metrics summary route block missing")
+        block_start = source.rfind("if", 0, idx)
+        block_end = source.find("/api/sites/", idx + 100)
+        if block_end == -1:
+            block_end = len(source)
+        block = source[block_start:block_end]
+        self.assertIn("fetch_newapi_perf_summary_for_site", block)
+        self.assertNotIn("fetch_newapi_perf_summary(", block)
+
+    def test_sites_perf_detail_route_routes_through_browser_executor(self):
+        import inspect
+        source = inspect.getsource(app.Handler.do_GET)
+        idx = source.find('"/api/sites/") and ("/perf-metrics" in path)')
+        self.assertGreater(idx, -1, "perf-metrics detail route block missing")
+        block_start = source.rfind("if", 0, idx)
+        block_end = source.find("/api/sites/", idx + 100)
+        if block_end == -1:
+            block_end = len(source)
+        block = source[block_start:block_end]
+        self.assertIn("fetch_newapi_perf_detail_for_site", block)
+        self.assertNotIn("fetch_newapi_perf_detail(", block)
+
 
 if __name__ == "__main__":
     unittest.main()

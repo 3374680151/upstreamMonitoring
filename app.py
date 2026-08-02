@@ -9334,11 +9334,10 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, err, code)
             if (site.get("platform") or "newapi") != "newapi":
                 return json_response(self, {"success": False, "message": "pricing 仅支持 NewAPI 站点"}, 400)
-            ok, payload, error_message = fetch_newapi_pricing(
-                site["base_url"],
-                access_token=site.get("access_token") or "",
-                user_id=site.get("access_user_id") or "",
-            )
+            # Browser-aware: routes through the unified executor so browser-mode
+            # sites use Bearer + X-Auth-Session + Cookie, and 401/403 triggers
+            # exactly one forced refresh + retry.  Token mode stays unchanged.
+            ok, payload, error_message = fetch_newapi_pricing_for_site(site)
             if not ok:
                 return json_response(self, {"success": False, "message": error_message, "upstream": payload}, 502)
             # pass-through NewAPI body; annotate site context
@@ -9346,7 +9345,15 @@ class Handler(BaseHTTPRequestHandler):
                 payload = dict(payload)
                 payload["site_id"] = site_id
                 payload["base_url"] = site["base_url"]
-                payload["auth_used"] = bool(site.get("access_token") and site.get("access_user_id"))
+                auth_mode = str(site.get("auth_mode") or "token").strip().lower()
+                if auth_mode == "browser":
+                    payload["auth_used"] = bool(
+                        site.get("browser_access_token") and site.get("browser_session_id")
+                    )
+                else:
+                    payload["auth_used"] = bool(
+                        site.get("access_token") and site.get("access_user_id")
+                    )
             return json_response(self, payload)
 
         if path.startswith("/api/sites/") and path.endswith("/perf-metrics/summary"):
@@ -9361,11 +9368,8 @@ class Handler(BaseHTTPRequestHandler):
                 return json_response(self, {"success": False, "message": "perf-metrics 仅支持 NewAPI 站点"}, 400)
             params = parse_qs(parsed.query)
             hours = clamp_perf_hours((params.get("hours") or ["24"])[0], 24)
-            ok, payload, error_message = fetch_newapi_perf_summary(
-                site["base_url"],
-                hours=hours,
-                access_token=site.get("access_token") or "",
-                user_id=site.get("access_user_id") or "",
+            ok, payload, error_message = fetch_newapi_perf_summary_for_site(
+                site, hours=hours
             )
             if not ok:
                 return json_response(self, {"success": False, "message": error_message, "upstream": payload}, 502)
@@ -9400,13 +9404,11 @@ class Handler(BaseHTTPRequestHandler):
             hours = clamp_perf_hours((params.get("hours") or ["24"])[0], 24)
             if not model_name.strip():
                 return json_response(self, {"success": False, "message": "model is required"}, 400)
-            ok, payload, error_message = fetch_newapi_perf_detail(
-                site["base_url"],
+            ok, payload, error_message = fetch_newapi_perf_detail_for_site(
+                site,
                 model_name=model_name,
                 hours=hours,
                 group=group,
-                access_token=site.get("access_token") or "",
-                user_id=site.get("access_user_id") or "",
             )
             if not ok:
                 return json_response(self, {"success": False, "message": error_message, "upstream": payload}, 502)

@@ -8998,25 +8998,54 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
             import_body = {"items": pending}
             imported = 0
             import_error: Optional[str] = None
+            new_site_ids: List[int] = []
             try:
                 import_result = import_discovered_sites(admin, import_body)
                 if isinstance(import_result, list):
-                    imported = sum(
-                        1
-                        for item in import_result
-                        if isinstance(item, dict)
-                        and item.get("status") in {"created", "existing"}
-                    )
+                    for item in import_result:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("status") in {"created", "existing"}:
+                            imported += 1
+                        if item.get("status") == "created":
+                            try:
+                                sid = int(item.get("site_id") or 0)
+                            except (TypeError, ValueError):
+                                sid = 0
+                            if sid > 0:
+                                new_site_ids.append(sid)
                 elif isinstance(import_result, dict) and import_result.get("error"):
                     import_error = import_result.get("message") or "导入失败"
             except Exception as exc:  # noqa: BLE001
                 import_error = str(exc) or "导入失败"
+
+            # For brand-new sites, also kick off a browser session sync so the
+            # local site inherits the main-site admin's session without the
+            # user having to click "重新同步" manually.  Failures here are
+            # non-fatal — the imported site still works in token mode.
+            sync_requests: List[Dict[str, Any]] = []
+            for site_id in new_site_ids:
+                try:
+                    ok, payload, _err = create_site_session_sync_request(
+                        site_id
+                    )
+                    if ok and isinstance(payload, dict):
+                        sync_requests.append(
+                            {
+                                "site_id": site_id,
+                                "request_id": payload.get("request_id"),
+                                "expires_in": payload.get("expires_in"),
+                            }
+                        )
+                except Exception:
+                    pass
 
             results.append(
                 {
                     "admin_site_id": admin_site_id,
                     "status": "imported" if imported else "skipped",
                     "imported": imported,
+                    "session_sync_requests": sync_requests,
                     "message": import_error,
                 }
             )

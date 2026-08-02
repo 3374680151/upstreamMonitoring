@@ -79,6 +79,27 @@ export default function App() {
           setError(
             `已从主站自动同步 ${total} 个新渠道（共 ${imported.length} 个主站）`,
           );
+          // Newly imported sites ship with a session sync request so the
+          // upstream browser session gets attached without a manual click.
+          // Fire-and-forget; each request resolves on its own and refresh()
+          // will pick up the new session_sync_status when it succeeds.
+          for (const entry of imported) {
+            const requests = (
+              entry as { session_sync_requests?: unknown[] }
+            ).session_sync_requests;
+            if (!Array.isArray(requests)) continue;
+            for (const req of requests) {
+              if (
+                req &&
+                typeof req === "object" &&
+                typeof (req as { site_id?: unknown }).site_id === "number"
+              ) {
+                void syncSiteBrowserSession(
+                  (req as { site_id: number }).site_id,
+                );
+              }
+            }
+          }
         } else if (failed.length > 0) {
           const firstMessage =
             (failed[0] as { message?: string }).message || "读取失败";

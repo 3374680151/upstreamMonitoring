@@ -202,13 +202,6 @@ export default function App() {
   }
 
   async function handleSessionSync(site: Site) {
-    // 非 browser 模式的渠道没有「浏览器登录态」可同步——直接打开编辑框让用户
-    // 更新 Token 或账号密码。编辑保存后下一次 /api/sites 会刷新列表。
-    if (site.auth_mode !== "browser") {
-      setEditing(site);
-      setFormOpen(true);
-      return;
-    }
     try {
       const result = await syncSiteBrowserSession(site.id);
       await refresh();

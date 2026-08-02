@@ -193,14 +193,20 @@ export function SiteTable({
                         </td>
                         <td className="py-3 align-middle">
                           <div className="flex flex-nowrap items-center justify-end gap-1">
-                            {site.auth_mode === "browser" &&
+                            {site.auth_mode !== "browser" ||
                             isSessionSyncRetryable(site.session_sync_status) ? (
                               <Button
                                 variant="secondary"
                                 size="sm"
                                 className="shrink-0"
                                 aria-label="同步登录态"
-                                title="同步登录态"
+                                title={
+                                  site.auth_mode === "browser"
+                                    ? "从浏览器同步登录态"
+                                    : site.auth_mode === "token"
+                                      ? "更新 Token"
+                                      : "更新账号密码"
+                                }
                                 loading={syncingId === site.id}
                                 onClick={async () => {
                                   setSyncingId(site.id);

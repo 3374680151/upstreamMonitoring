@@ -8,6 +8,7 @@ import {
   normalizeNewApiInMemoryAuth,
   normalizeNewApiRefreshBundle,
   readNewApiLegacySessionValues,
+  selectNewApiBrowserCookie,
   selectNewApiRefreshCookie,
 } from "../adapters/newapi.js";
 
@@ -50,7 +51,38 @@ test("reads only allowlisted legacy NewAPI storage keys", () => {
     access_token: "legacy-access",
     access_user_id: "21",
   });
-  assert.deepEqual(reads, ["user", "access_token", "token", "user_id"]);
+  assert.deepEqual(reads, ["user", "access_token", "token", "user_id", "uid"]);
+});
+
+test("reads the uid-only storage shape used by cookie-authenticated NewAPI builds", () => {
+  const reads = [];
+  const values = new Map([
+    ["user", JSON.stringify({ username: "demo" })],
+    ["access_token", ""],
+    ["token", ""],
+    ["user_id", ""],
+    ["uid", "21"],
+  ]);
+  assert.deepEqual(
+    readNewApiLegacySessionValues((key) => {
+      reads.push(key);
+      return values.get(key);
+    }),
+    { access_user_id: "21" },
+  );
+  assert.deepEqual(reads, ["user", "access_token", "token", "user_id", "uid"]);
+});
+
+test("builds a deterministic cookie header without cookie metadata", () => {
+  assert.equal(
+    selectNewApiBrowserCookie([
+      { name: "sid", value: "session-value", httpOnly: true },
+      { name: "uid", value: "21" },
+      { name: "sid", value: "replaced" },
+      { name: "bad name", value: "ignored" },
+    ]),
+    "sid=replaced; uid=21",
+  );
 });
 
 test("extracts legacy user id from explicit separate keys", () => {

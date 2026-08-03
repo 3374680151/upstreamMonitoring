@@ -9,6 +9,7 @@ import {
   newApiCompletionPayload,
   normalizeNewApiInMemoryAuth,
   normalizeNewApiRefreshBundle,
+  selectNewApiBrowserCookie,
   selectNewApiRefreshCookie,
 } from "./adapters/newapi.js";
 import { classifyExtensionSyncFailure } from "./adapters/sync-errors.js";
@@ -31,7 +32,7 @@ function readSub2ApiSessionInPage() {
 }
 
 function readNewApiLegacySessionInPage() {
-  const keys = ["user", "access_token", "token", "user_id"];
+  const keys = ["user", "access_token", "token", "user_id", "uid"];
   const values = Object.fromEntries(
     keys.map((key) => [key, localStorage.getItem(key)]),
   );
@@ -49,10 +50,46 @@ function readNewApiLegacySessionInPage() {
     user.access_token || user.token || values.access_token || values.token || "",
   ).trim();
   const accessUserId = String(
-    user.id || user.user_id || user.userId || values.user_id || "",
+    user.id || user.user_id || user.userId || values.user_id || values.uid || "",
   ).trim();
-  if (!accessToken || !accessUserId) return null;
-  return { access_token: accessToken, access_user_id: accessUserId };
+  if (!accessUserId) return null;
+  return accessToken
+    ? { access_token: accessToken, access_user_id: accessUserId }
+    : { access_user_id: accessUserId };
+}
+
+async function verifyNewApiCookieSessionInPage() {
+  try {
+    const accountResponse = await fetch("/api/user/self", {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    const accountPayload = await accountResponse.json();
+    if (!accountResponse.ok || accountPayload?.success !== true) return null;
+    const account = accountPayload?.data;
+    const accessUserId = String(account?.id || "").trim();
+    if (!accessUserId) return null;
+    for (const path of ["/api/user/self/groups", "/api/user/groups"]) {
+      const groupsResponse = await fetch(path, {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      let groupsPayload = null;
+      try {
+        groupsPayload = await groupsResponse.json();
+      } catch {
+        continue;
+      }
+      if (groupsResponse.ok && groupsPayload?.success === true) {
+        return { access_user_id: accessUserId };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function readNewApiInMemorySessionInPage() {
@@ -186,7 +223,29 @@ async function readNewApiTargetSession(
       func: readNewApiLegacySessionInPage,
     });
     const legacySession = legacyResults?.[0]?.result || null;
-    if (legacySession) return { session: legacySession };
+    if (legacySession?.access_token) return { session: legacySession };
+    if (legacySession?.access_user_id) {
+      setDiagnosticStage("page_cookie_probe");
+      const verified = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: verifyNewApiCookieSessionInPage,
+        world: "MAIN",
+      });
+      const cookieIdentity = verified?.[0]?.result;
+      if (cookieIdentity?.access_user_id === legacySession.access_user_id) {
+        setDiagnosticStage("cookie_read");
+        const cookies = await chrome.cookies.getAll({ url: targetOrigin });
+        const browserCookie = selectNewApiBrowserCookie(cookies);
+        if (browserCookie) {
+          return {
+            session: {
+              access_user_id: cookieIdentity.access_user_id,
+              browser_cookie: browserCookie,
+            },
+          };
+        }
+      }
+    }
   }
 
   setDiagnosticStage("page_memory_read");

@@ -352,27 +352,13 @@ def enrich_channel_candidates_with_sites(
         row = by_url.get(base_url) if base_url else None
         if row:
             safe_candidate["existing_site_id"] = row.get("id")
-            sync_status = str(row.get("session_sync_status") or "not_requested").strip().lower()
-            raw_auth_mode = str(row.get("auth_mode") or "").strip().lower()
-            # Legacy test fixtures/rows may not have the incremental auth_mode
-            # column yet. A terminal browser-sync state is unambiguous, so keep
-            # its redacted status instead of degrading it to the generic DB
-            # health status.
-            auth_mode = raw_auth_mode or (
-                BROWSER_AUTH_MODE
-                if sync_status in SESSION_SYNC_TERMINAL_STATUSES
-                else "token"
-            )
-            safe_candidate["existing_site_auth_mode"] = auth_mode
+            # NewAPI local monitoring never inherits a browser session.  Keep
+            # discovery results token-oriented even for legacy rows that were
+            # created by the old browser-sync flow.
+            safe_candidate["existing_site_auth_mode"] = "token"
             safe_candidate["existing_site_enabled"] = bool(row.get("enabled", True))
-            safe_candidate["existing_site_session_sync_status"] = sync_status
-            safe_candidate["existing_site_status"] = (
-                sync_status
-                if auth_mode == BROWSER_AUTH_MODE
-                and sync_status not in {"", "not_requested"}
-                else row.get("status")
-                or "unknown"
-            )
+            safe_candidate["existing_site_session_sync_status"] = "not_requested"
+            safe_candidate["existing_site_status"] = row.get("status") or "unknown"
         else:
             safe_candidate["existing_site_id"] = None
             safe_candidate["existing_site_status"] = None
@@ -586,6 +572,7 @@ DDL_STATEMENTS = [
         session_sync_error TEXT,
         session_synced_at VARCHAR(40),
         browser_refresh_cookie TEXT,
+        browser_cookie TEXT,
         browser_session_id VARCHAR(255),
         browser_access_expires_at BIGINT,
         created_at VARCHAR(40) NOT NULL,
@@ -807,6 +794,7 @@ SITES_COLUMN_ADDITIONS = {
     "session_sync_error": "TEXT",
     "session_synced_at": "VARCHAR(40)",
     "browser_refresh_cookie": "TEXT",
+    "browser_cookie": "TEXT",
     "browser_session_id": "VARCHAR(255)",
     "browser_access_expires_at": "BIGINT",
 }
@@ -909,6 +897,22 @@ def init_db() -> None:
                         cur.execute(f"ALTER TABLE admin_sites ADD COLUMN {column_name} {column_type}")
 
                 run_sub2api_browser_first_migration_once(cur)
+
+                # Local NewAPI monitoring uses a manually configured system
+                # token + user ID.  Normalize legacy rows created by the old
+                # site-browser-sync flow without touching tokens, snapshots,
+                # groups, or change history.  NewAPI admin-site browser
+                # sessions live in admin_sites and are intentionally kept.
+                cur.execute(
+                    """
+                    UPDATE sites
+                    SET auth_mode = 'token',
+                        session_sync_status = 'not_requested',
+                        session_sync_error = NULL,
+                        session_synced_at = NULL
+                    WHERE platform = 'newapi' AND auth_mode = 'browser'
+                    """
+                )
 
                 cur.execute("SELECT id FROM notification_settings WHERE id = 1")
                 if not cur.fetchone():
@@ -1029,10 +1033,7 @@ def _site_session_sync_request_error(
     """
     normalized_platform = str(platform or "").strip().lower()
     normalized_origin = site_origin(expected_origin)
-    if not request_id or not normalized_origin or normalized_platform not in {
-        "sub2api",
-        "newapi",
-    }:
+    if not request_id or not normalized_origin or normalized_platform != "sub2api":
         return "同步请求无效，请重新发起同步"
 
     # Keep this target lookup before the request lookup.  Apart from producing
@@ -1079,60 +1080,37 @@ def _newapi_session_sync_request_error(
 ) -> Optional[str]:
     """Return a safe error when a claimed NewAPI sync is no longer current.
 
-    NewAPI has two target kinds: ``site`` (regular monitoring) and
-    ``admin_site`` (the master console).  Both must still be in NewAPI +
-    browser auth mode and still point at the same origin the request was
-    bound to.  The sync request itself must still be in ``validating`` state
-    so an older completion cannot race a newer replacement request.
+    NewAPI browser sync is reserved for ``admin_site`` (the master console).
+    Local monitoring sites use a manually configured system token and user ID.
+    The sync request itself must still be in ``validating`` state so an older
+    completion cannot race a newer replacement request.
     """
     normalized_origin = site_origin(expected_origin)
     if (
         not request_id
         or not normalized_origin
-        or target_kind not in {"site", "admin_site"}
+        or target_kind != "admin_site"
     ):
         return "同步请求无效，请重新发起同步"
 
-    if target_kind == "site":
-        target = db_query_one(
-            "SELECT id, base_url, platform, auth_mode FROM sites WHERE id = ?",
-            (int(target_id),),
-        )
-        if (
-            not target
-            or str(target.get("platform") or "").strip().lower() != "newapi"
-            or str(target.get("auth_mode") or "").strip().lower()
-            != BROWSER_AUTH_MODE
-            or site_origin(str(target.get("base_url") or "")) != normalized_origin
-        ):
-            return "同步目标已变更，请重新发起同步"
-        request = db_query_one(
-            """
-            SELECT id, site_id, admin_site_id, platform, target_origin, status
-            FROM browser_session_sync_requests
-            WHERE id = ? AND site_id = ? AND admin_site_id IS NULL
-            """,
-            (str(request_id), int(target_id)),
-        )
-    else:
-        target = db_query_one(
-            "SELECT id, base_url, platform FROM admin_sites WHERE id = ?",
-            (int(target_id),),
-        )
-        if (
-            not target
-            or str(target.get("platform") or "newapi").strip().lower() != "newapi"
-            or site_origin(str(target.get("base_url") or "")) != normalized_origin
-        ):
-            return "同步目标已变更，请重新发起同步"
-        request = db_query_one(
-            """
-            SELECT id, site_id, admin_site_id, platform, target_origin, status
-            FROM browser_session_sync_requests
-            WHERE id = ? AND admin_site_id = ? AND site_id IS NULL
-            """,
-            (str(request_id), int(target_id)),
-        )
+    target = db_query_one(
+        "SELECT id, base_url, platform FROM admin_sites WHERE id = ?",
+        (int(target_id),),
+    )
+    if (
+        not target
+        or str(target.get("platform") or "newapi").strip().lower() != "newapi"
+        or site_origin(str(target.get("base_url") or "")) != normalized_origin
+    ):
+        return "同步目标已变更，请重新发起同步"
+    request = db_query_one(
+        """
+        SELECT id, site_id, admin_site_id, platform, target_origin, status
+        FROM browser_session_sync_requests
+        WHERE id = ? AND admin_site_id = ? AND site_id IS NULL
+        """,
+        (str(request_id), int(target_id)),
+    )
 
     if (
         not request
@@ -1166,6 +1144,7 @@ def persist_newapi_site_browser_session_cas(
         expires_at = 0
     access_token = str(session.get("access_token") or "").strip()
     access_user_id = str(session.get("access_user_id") or "").strip()
+    browser_cookie = str(session.get("browser_cookie") or "").strip() or None
     refresh_cookie = str(session.get("browser_refresh_cookie") or "").strip() or None
     session_id = str(session.get("browser_session_id") or "").strip() or None
     now = utc_now_iso()
@@ -1175,7 +1154,7 @@ def persist_newapi_site_browser_session_cas(
         SET auth_mode = 'browser', login_enabled = 1,
             login_username = NULL, login_password = NULL,
             access_token = ?, access_user_id = ?,
-            browser_refresh_cookie = ?, browser_session_id = ?,
+            browser_cookie = ?, browser_refresh_cookie = ?, browser_session_id = ?,
             browser_access_expires_at = ?,
             session_sync_status = 'ready', session_sync_error = NULL,
             session_synced_at = ?, updated_at = ?
@@ -1196,6 +1175,7 @@ def persist_newapi_site_browser_session_cas(
         (
             access_token,
             access_user_id,
+            browser_cookie,
             refresh_cookie,
             session_id,
             expires_at,
@@ -1363,10 +1343,11 @@ def _create_session_sync_request(
     platform = str(target.get("platform") or "newapi").strip().lower()
     if platform not in {"sub2api", "newapi"}:
         return False, {}, "当前平台不支持浏览器登录态同步"
-    if target_kind == "site" and str(
-        target.get("auth_mode") or ""
-    ).strip().lower() != BROWSER_AUTH_MODE:
-        return False, {}, "当前渠道未启用浏览器自动同步"
+    if target_kind == "site" and (
+        platform != "sub2api"
+        or str(target.get("auth_mode") or "").strip().lower() != BROWSER_AUTH_MODE
+    ):
+        return False, {}, "NewAPI 本地渠道不支持浏览器登录态同步"
     if target_kind == "admin_site" and platform != "newapi":
         return False, {}, "当前管理站平台暂不支持浏览器登录态同步"
     origin = site_origin(str(target.get("base_url") or ""))
@@ -1779,6 +1760,7 @@ NEWAPI_SESSION_SYNC_FIELDS = frozenset(
     {
         "access_token",
         "access_user_id",
+        "browser_cookie",
         "browser_refresh_cookie",
         "browser_session_id",
         "browser_access_expires_at",
@@ -1787,10 +1769,23 @@ NEWAPI_SESSION_SYNC_FIELDS = frozenset(
 
 
 def _newapi_session_payload_error(session: Dict[str, Any]) -> Optional[str]:
+    browser_cookie = str(session.get("browser_cookie") or "").strip()
     refresh_cookie = str(session.get("browser_refresh_cookie") or "").strip()
     session_id = str(session.get("browser_session_id") or "").strip()
     raw_expires_at = session.get("browser_access_expires_at")
     has_expires_at = raw_expires_at not in (None, "", 0, "0")
+    if browser_cookie:
+        if len(browser_cookie) > SESSION_SYNC_MAX_TOKEN_LENGTH:
+            return "SESSION_COOKIE_INVALID"
+        cookie_parts = [part.strip() for part in browser_cookie.split(";")]
+        if not cookie_parts or any(
+            not re.fullmatch(r"[A-Za-z0-9_-]+=[^;\s]+", part)
+            for part in cookie_parts
+        ):
+            return "SESSION_COOKIE_INVALID"
+        if refresh_cookie or session_id or has_expires_at:
+            return "SESSION_FIELDS_INVALID"
+        return None
     if refresh_cookie and not re.fullmatch(r"new_api_refresh=[^\s;,]+", refresh_cookie):
         return "SESSION_COOKIE_INVALID"
     if bool(refresh_cookie) != bool(session_id):
@@ -1977,10 +1972,9 @@ def complete_session_sync_request(
             request_id=str(request_id),
             expected_origin=str(request_row.get("target_origin") or ""),
         )
-    elif platform == "newapi" and target_kind in {"site", "admin_site"}:
-        target_id = int(site_id if target_kind == "site" else admin_site_id)
-        table = "sites" if target_kind == "site" else "admin_sites"
-        target = db_query_one(f"SELECT * FROM {table} WHERE id = ?", (target_id,))
+    elif platform == "newapi" and target_kind == "admin_site":
+        target_id = int(admin_site_id)
+        target = db_query_one("SELECT * FROM admin_sites WHERE id = ?", (target_id,))
         if (
             not target
             or str(target.get("platform") or "newapi").strip().lower() != "newapi"
@@ -1996,10 +1990,9 @@ def complete_session_sync_request(
             applied, validation, apply_error = validate_newapi_site_browser_session(
                 str(target.get("base_url") or ""), session
             )
-            if applied and target_kind == "admin_site":
-                account = validation.get("account") if isinstance(validation, dict) else {}
-                if not isinstance(account, dict) or not _newapi_account_is_admin(account):
-                    applied, apply_error = False, "当前浏览器登录用户不是 NewAPI 管理员"
+            account = validation.get("account") if isinstance(validation, dict) else {}
+            if not isinstance(account, dict) or not _newapi_account_is_admin(account):
+                applied, apply_error = False, "当前浏览器登录用户不是 NewAPI 管理员"
             if applied:
                 # Re-check sync request before any credential write so an older
                 # completion can never overwrite a newer request or a manual
@@ -2009,13 +2002,7 @@ def complete_session_sync_request(
                 )
                 if sync_error:
                     applied, apply_error = False, sync_error
-            if applied and target_kind == "site":
-                persisted = persist_newapi_site_browser_session_cas(
-                    target_id, session, str(request_id), target_origin
-                )
-                if not persisted:
-                    applied, apply_error = False, "同步请求已失效，请重新发起同步"
-            elif applied:
+            if applied:
                 persisted = persist_admin_browser_auth_cas(
                     target,
                     request_id=str(request_id),
@@ -5516,7 +5503,7 @@ def _import_discovered_site_item(
                         (name, base_url, platform, enabled, interval_minutes,
                          login_enabled, auth_mode, status, next_check_at,
                          created_at, updated_at)
-                        VALUES (?, ?, 'newapi', 1, ?, 1, 'browser', 'unknown', ?, ?, ?)
+                        VALUES (?, ?, 'newapi', 1, ?, 0, 'token', 'unknown', ?, ?, ?)
                         """
                     ),
                     (
@@ -7131,7 +7118,11 @@ def newapi_site_browser_auth_headers(session: Dict[str, Any]) -> Dict[str, str]:
     token = str(session.get("access_token") or "").strip()
     user_id = str(session.get("access_user_id") or "").strip()
     session_id = str(session.get("browser_session_id") or "").strip()
-    refresh_cookie = str(session.get("browser_refresh_cookie") or "").strip()
+    refresh_cookie = str(
+        session.get("browser_cookie")
+        or session.get("browser_refresh_cookie")
+        or ""
+    ).strip()
     headers: Dict[str, str] = {}
     if token:
         normalized_token = token.removeprefix("Bearer ").removeprefix("bearer ").strip()
@@ -7187,7 +7178,7 @@ def newapi_browser_request(
         # honoured before we pick headers.
         latest = db_query_one(
             """
-            SELECT access_token, access_user_id, browser_refresh_cookie,
+            SELECT access_token, access_user_id, browser_cookie, browser_refresh_cookie,
                    browser_session_id, browser_access_expires_at, auth_mode
             FROM sites WHERE id = ?
             """,
@@ -7246,7 +7237,8 @@ def validate_newapi_site_browser_session(
 ) -> Tuple[bool, Dict[str, Any], Optional[str]]:
     access_token = str(session.get("access_token") or "").strip()
     access_user_id = str(session.get("access_user_id") or "").strip()
-    if not access_token:
+    browser_cookie = str(session.get("browser_cookie") or "").strip()
+    if not access_token and not browser_cookie:
         return False, {}, "没有登录态，请提前登录"
     if not access_user_id:
         return False, {}, "浏览器登录态缺少 NewAPI 用户 ID"
@@ -7276,6 +7268,7 @@ def persist_newapi_site_browser_session(
         expires_at = 0
     access_token = str(session.get("access_token") or "").strip()
     access_user_id = str(session.get("access_user_id") or "").strip()
+    browser_cookie = str(session.get("browser_cookie") or "").strip() or None
     refresh_cookie = str(session.get("browser_refresh_cookie") or "").strip() or None
     session_id = str(session.get("browser_session_id") or "").strip() or None
     now = utc_now_iso()
@@ -7285,7 +7278,7 @@ def persist_newapi_site_browser_session(
         SET auth_mode = 'browser', login_enabled = 1,
             login_username = NULL, login_password = NULL,
             access_token = ?, access_user_id = ?,
-            browser_refresh_cookie = ?, browser_session_id = ?,
+            browser_cookie = ?, browser_refresh_cookie = ?, browser_session_id = ?,
             browser_access_expires_at = ?,
             session_sync_status = 'ready', session_sync_error = NULL,
             session_synced_at = ?, updated_at = ?
@@ -7294,6 +7287,7 @@ def persist_newapi_site_browser_session(
         (
             access_token,
             access_user_id,
+            browser_cookie,
             refresh_cookie,
             session_id,
             expires_at,
@@ -7412,8 +7406,11 @@ def ensure_newapi_site_browser_session(
 ) -> Tuple[bool, Optional[str]]:
     access_token = str(site.get("access_token") or "").strip()
     access_user_id = str(site.get("access_user_id") or "").strip()
-    if not access_token or not access_user_id:
+    browser_cookie = str(site.get("browser_cookie") or "").strip()
+    if (not access_token and not browser_cookie) or not access_user_id:
         return False, "没有登录态，请提前登录"
+    if browser_cookie:
+        return True, None
     session_id = str(site.get("browser_session_id") or "").strip()
     refresh_cookie = str(site.get("browser_refresh_cookie") or "").strip()
     if not session_id and not refresh_cookie:
@@ -8809,21 +8806,39 @@ def site_summary(
         "enabled": bool(site["enabled"]),
         "interval_minutes": site["interval_minutes"],
         "login_enabled": bool(site.get("login_enabled")),
-        "auth_mode": site.get("auth_mode") or "password",
+        "auth_mode": (
+            "token"
+            if str(site.get("platform") or "newapi").strip().lower() == "newapi"
+            else site.get("auth_mode") or "password"
+        ),
         "login_username": site.get("login_username") or "",
         "has_login_password": bool(site.get("login_password")),
         "has_access_token": bool(site.get("access_token")),
         "has_refresh_token": bool(site.get("refresh_token")),
         "has_browser_session": bool(
-            site.get("access_token") and site.get("browser_session_id")
+            str(site.get("platform") or "newapi").strip().lower() == "sub2api"
+            and site.get("access_token")
+            and site.get("browser_session_id")
         ),
         "token_expires_at": site.get("token_expires_at") or "",
         "access_user_id": site.get("access_user_id") or "",
         "login_last_error": site.get("login_last_error"),
         "login_last_check_at": site.get("login_last_check_at"),
-        "session_sync_status": site.get("session_sync_status") or "not_requested",
-        "session_sync_error": site.get("session_sync_error"),
-        "session_synced_at": site.get("session_synced_at"),
+        "session_sync_status": (
+            site.get("session_sync_status") or "not_requested"
+            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
+            else "not_requested"
+        ),
+        "session_sync_error": (
+            site.get("session_sync_error")
+            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
+            else None
+        ),
+        "session_synced_at": (
+            site.get("session_synced_at")
+            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
+            else None
+        ),
         "status": site["status"],
         "last_error": site["last_error"],
         "last_check_at": site["last_check_at"],
@@ -8998,7 +9013,6 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
             import_body = {"items": pending}
             imported = 0
             import_error: Optional[str] = None
-            new_site_ids: List[int] = []
             try:
                 import_result = import_discovered_sites(admin, import_body)
                 if isinstance(import_result, list):
@@ -9007,45 +9021,17 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
                             continue
                         if item.get("status") in {"created", "existing"}:
                             imported += 1
-                        if item.get("status") == "created":
-                            try:
-                                sid = int(item.get("site_id") or 0)
-                            except (TypeError, ValueError):
-                                sid = 0
-                            if sid > 0:
-                                new_site_ids.append(sid)
                 elif isinstance(import_result, dict) and import_result.get("error"):
                     import_error = import_result.get("message") or "导入失败"
             except Exception as exc:  # noqa: BLE001
                 import_error = str(exc) or "导入失败"
-
-            # For brand-new sites, also kick off a browser session sync so the
-            # local site inherits the main-site admin's session without the
-            # user having to click "重新同步" manually.  Failures here are
-            # non-fatal — the imported site still works in token mode.
-            sync_requests: List[Dict[str, Any]] = []
-            for site_id in new_site_ids:
-                try:
-                    ok, payload, _err = create_site_session_sync_request(
-                        site_id
-                    )
-                    if ok and isinstance(payload, dict):
-                        sync_requests.append(
-                            {
-                                "site_id": site_id,
-                                "request_id": payload.get("request_id"),
-                                "expires_in": payload.get("expires_in"),
-                            }
-                        )
-                except Exception:
-                    pass
 
             results.append(
                 {
                     "admin_site_id": admin_site_id,
                     "status": "imported" if imported else "skipped",
                     "imported": imported,
-                    "session_sync_requests": sync_requests,
+                    "session_sync_requests": [],
                     "message": import_error,
                 }
             )
@@ -9986,9 +9972,10 @@ class Handler(BaseHTTPRequestHandler):
                     return json_response(self, {"success": False, "message": "platform invalid"}, 400)
                 if auth_mode not in {"password", "token", BROWSER_AUTH_MODE}:
                     return json_response(self, {"success": False, "message": "auth_mode invalid"}, 400)
-                if platform == "newapi" and auth_mode != BROWSER_AUTH_MODE:
-                    # Older clients used "password" for NewAPI even though the
-                    # credential has always been a system access token.
+                if platform == "newapi":
+                    # NewAPI local monitoring always uses a manually configured
+                    # system token + user ID; browser sync is for sub2api sites
+                    # only (NewAPI browser sessions remain an admin-site flow).
                     auth_mode = "token"
                 if not name or not base_url:
                     return json_response(self, {"success": False, "message": "name/base_url required"}, 400)
@@ -10004,60 +9991,82 @@ class Handler(BaseHTTPRequestHandler):
                 if platform == "sub2api" and auth_mode == "token" and not access_token:
                     return json_response(self, {"success": False, "message": "导入登录态时需要填写 auth_token"}, 400)
                 now = utc_now_iso()
-                site_id = db_execute(
-                    """
-                    INSERT INTO sites
-                    (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
-                    """,
-                    (
-                        name,
-                        base_url,
-                        platform,
-                        1 if enabled else 0,
-                        interval,
-                        1
-                        if (
-                            login_enabled
-                            or platform == "sub2api"
-                            or auth_mode == BROWSER_AUTH_MODE
-                        )
-                        else 0,
-                        auth_mode,
-                        login_username
-                        if platform == "sub2api"
-                        and auth_mode in {"password", BROWSER_AUTH_MODE}
-                        else "",
-                        login_password
-                        if platform == "sub2api"
-                        and auth_mode in {"password", BROWSER_AUTH_MODE}
-                        else "",
-                        access_token
-                        if (
-                            (platform == "newapi" and login_enabled and auth_mode == "token")
-                            or (
-                                platform == "sub2api"
-                                and auth_mode in {"token", BROWSER_AUTH_MODE}
+                try:
+                    site_id = db_execute(
+                        """
+                        INSERT INTO sites
+                        (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
+                        """,
+                        (
+                            name,
+                            base_url,
+                            platform,
+                            1 if enabled else 0,
+                            interval,
+                            1
+                            if (
+                                login_enabled
+                                or platform == "sub2api"
+                                or auth_mode == BROWSER_AUTH_MODE
                             )
+                            else 0,
+                            auth_mode,
+                            login_username
+                            if platform == "sub2api"
+                            and auth_mode in {"password", BROWSER_AUTH_MODE}
+                            else "",
+                            login_password
+                            if platform == "sub2api"
+                            and auth_mode in {"password", BROWSER_AUTH_MODE}
+                            else "",
+                            access_token
+                            if (
+                                (platform == "newapi" and login_enabled and auth_mode == "token")
+                                or (
+                                    platform == "sub2api"
+                                    and auth_mode in {"token", BROWSER_AUTH_MODE}
+                                )
+                            )
+                            else "",
+                            access_user_id
+                            if platform == "newapi" and login_enabled and auth_mode == "token"
+                            else "",
+                            refresh_token
+                            if platform == "sub2api"
+                            and auth_mode in {"token", BROWSER_AUTH_MODE}
+                            else "",
+                            token_expires_at
+                            if platform == "sub2api"
+                            and auth_mode in {"token", BROWSER_AUTH_MODE}
+                            else "",
+                            next_check_iso(interval),
+                            now,
+                            now,
+                        ),
+                    )
+                    return json_response(self, {"success": True, "id": site_id})
+                except Exception as insert_err:
+                    # MySQL 1062 (Duplicate entry) on sites.base_url UNIQUE: a row with the
+                    # same base_url already exists.  Return that row's id instead of
+                    # failing, so a "从主站同步" call that re-posts a known base_url just
+                    # becomes a no-op rather than a hard error.
+                    err_text = str(insert_err).lower()
+                    if "1062" in err_text or "duplicate" in err_text:
+                        existing = db_query_one(
+                            "SELECT id FROM sites WHERE base_url = ? LIMIT 1",
+                            (base_url,),
                         )
-                        else "",
-                        access_user_id
-                        if platform == "newapi" and login_enabled and auth_mode == "token"
-                        else "",
-                        refresh_token
-                        if platform == "sub2api"
-                        and auth_mode in {"token", BROWSER_AUTH_MODE}
-                        else "",
-                        token_expires_at
-                        if platform == "sub2api"
-                        and auth_mode in {"token", BROWSER_AUTH_MODE}
-                        else "",
-                        next_check_iso(interval),
-                        now,
-                        now,
-                    ),
-                )
-                return json_response(self, {"success": True, "id": site_id})
+                        if existing and "id" in existing:
+                            return json_response(
+                                self,
+                                {
+                                    "success": True,
+                                    "id": int(existing["id"]),
+                                    "existed": True,
+                                },
+                            )
+                    raise
 
             sync_create_match = re.fullmatch(
                 r"/api/sites/([0-9]+)/session-sync/requests", path
@@ -10467,7 +10476,7 @@ class Handler(BaseHTTPRequestHandler):
                 existing_password = site.get("login_password") or ""
                 existing_platform = str(site.get("platform") or "newapi").strip().lower()
                 existing_auth_mode = str(site.get("auth_mode") or "password").strip().lower()
-                if target_platform == "newapi" and auth_mode != BROWSER_AUTH_MODE:
+                if target_platform == "newapi":
                     auth_mode = "token"
                 if existing_platform == "newapi" and existing_auth_mode != BROWSER_AUTH_MODE:
                     existing_auth_mode = "token"
@@ -10560,6 +10569,8 @@ class Handler(BaseHTTPRequestHandler):
                     fields.append("access_user_id = ?")
                     params.append("")
                     if existing_platform == "newapi":
+                        fields.append("browser_cookie = ?")
+                        params.append(None)
                         fields.append("browser_refresh_cookie = ?")
                         params.append(None)
                         fields.append("browser_session_id = ?")
@@ -10606,6 +10617,8 @@ class Handler(BaseHTTPRequestHandler):
                             fields.append("access_user_id = ?")
                             params.append(access_user_id)
                     if auth_mode != BROWSER_AUTH_MODE:
+                        fields.append("browser_cookie = ?")
+                        params.append(None)
                         fields.append("browser_refresh_cookie = ?")
                         params.append(None)
                         fields.append("browser_session_id = ?")

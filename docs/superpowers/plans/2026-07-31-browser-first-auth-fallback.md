@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.9 stdlib HTTP server, PyMySQL, React 19, TypeScript, Vite, Chrome Manifest V3, Python `unittest`, Node built-in test runner.
 
-**Worktree note:** Execute in `/Users/wang/Desktop/upstream`. Preserve all existing MySQL data and dirty worktree changes. Do not commit without explicit approval.
+**Worktree note:** Execute in the repository root. Preserve all existing MySQL data and dirty worktree changes. Do not commit without explicit approval.
 
 ---
 

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
-  ExternalLink,
   Link2,
   RefreshCw,
   Search,
 } from "lucide-react";
-import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
 import { api } from "@/lib/api";
 import { errorText, useToast } from "@/components/Toast";
 import type {
@@ -31,51 +29,27 @@ function candidateKey(candidate: ChannelDiscoveryCandidate): string {
 
 function sessionLabel(status: string): string {
   return {
-    ready: "登录态已同步",
-    syncing: "同步中",
-    pending: "等待扩展",
-    validating: "验证中",
-    no_session: "没有登录态",
-    expired: "登录态已失效",
-    permission_required: "需要站点权限",
-    extension_unavailable: "扩展未连接",
-    failed: "同步失败",
     existing: "已监控",
-    created: "已创建，待同步",
+    created: "已创建，待配置登录",
   }[status] || status || "待处理";
 }
 
 function sessionTone(
   status: string,
 ): "neutral" | "success" | "warning" | "danger" | "info" {
-  if (status === "ready" || status === "existing") return "success";
-  if (status === "syncing" || status === "created") return "info";
-  if (
-    status === "no_session" ||
-    status === "expired" ||
-    status === "permission_required"
-  )
-    return "warning";
-  if (status === "failed" || status === "extension_unavailable") return "danger";
+  if (status === "existing") return "success";
+  if (status === "created") return "info";
+  if (status === "failed" || status === "conflict" || status === "invalid") return "danger";
   return "neutral";
 }
 
 function initialRowState(candidate: ChannelDiscoveryCandidate): RowState {
   if (candidate.existing_site_id) {
-    const authMode = candidate.existing_site_auth_mode || null;
-    const syncStatus = candidate.existing_site_session_sync_status || "";
-    const browserStatus =
-      authMode === "browser" && syncStatus && syncStatus !== "not_requested"
-        ? syncStatus
-        : "existing";
     return {
-      status:
-        browserStatus === "existing" && candidate.existing_site_status === "ready"
-          ? "ready"
-          : browserStatus,
+      status: "existing",
       siteId: candidate.existing_site_id,
-      authMode,
-      canSync: authMode === "browser",
+      authMode: "token",
+      canSync: false,
     };
   }
   return { status: "" };
@@ -230,7 +204,7 @@ export function ChannelDiscoveryPanel({
     setRowStates((previous) => ({ ...previous, [key]: state }));
   }
 
-  async function syncImportedRow(
+  function applyImportedRow(
     candidate: ChannelDiscoveryCandidate,
     result: ChannelDiscoveryImportResult,
   ) {
@@ -244,47 +218,13 @@ export function ChannelDiscoveryPanel({
       });
       return;
     }
-    const existingBrowserSite =
-      result.status === "existing" &&
-      candidate.existing_site_auth_mode === "browser" &&
-      candidate.existing_site_session_sync_status !== "ready";
-    if (result.status === "existing" && !existingBrowserSite) {
-      setRowState(key, {
-        status:
-          candidate.existing_site_auth_mode === "browser" &&
-          candidate.existing_site_session_sync_status === "ready"
-            ? "ready"
-            : "existing",
-        siteId: result.site_id,
-        authMode: candidate.existing_site_auth_mode || null,
-        canSync: candidate.existing_site_auth_mode === "browser",
-      });
-      return;
-    }
     setRowState(key, {
-      status: "syncing",
+      status: result.status === "created" ? "created" : "existing",
       siteId: result.site_id,
-      authMode: candidate.existing_site_auth_mode || "browser",
-      canSync: true,
+      authMode: "token",
+      canSync: false,
+      message: result.message || undefined,
     });
-    try {
-      const syncResult = await syncSiteBrowserSession(result.site_id);
-      setRowState(key, {
-        status: syncResult.status,
-        siteId: result.site_id,
-        authMode: candidate.existing_site_auth_mode || "browser",
-        canSync: true,
-        message: syncResult.message || syncResult.error_code || undefined,
-      });
-    } catch (err) {
-      setRowState(key, {
-        status: "failed",
-        siteId: result.site_id,
-        authMode: candidate.existing_site_auth_mode || "browser",
-        canSync: true,
-        message: errorText(err, "登录态同步失败"),
-      });
-    }
   }
 
   async function importSelected() {
@@ -314,13 +254,13 @@ export function ChannelDiscoveryPanel({
         if (!result) {
           setRowState(candidateKey(candidate), {
             status: "failed",
-            authMode: candidate.existing_site_auth_mode || "browser",
-            canSync: candidate.existing_site_auth_mode === "browser" || !candidate.existing_site_id,
+            authMode: "token",
+            canSync: false,
             message: "后端未返回该候选结果",
           });
           continue;
         }
-        await syncImportedRow(candidate, result);
+        applyImportedRow(candidate, result);
       }
       setSelected(new Set());
       await onImported();
@@ -340,33 +280,6 @@ export function ChannelDiscoveryPanel({
       setProgress(null);
       setBusy(false);
     }
-  }
-
-  async function retry(candidate: ChannelDiscoveryCandidate) {
-    const state = rowStates[candidateKey(candidate)];
-    if (!state?.siteId || busy) return;
-    setRowState(candidateKey(candidate), { ...state, status: "syncing" });
-    try {
-      const result = await syncSiteBrowserSession(state.siteId);
-      setRowState(candidateKey(candidate), {
-        status: result.status,
-        siteId: state.siteId,
-        authMode: state.authMode,
-        canSync: state.canSync,
-        message: result.message || result.error_code || undefined,
-      });
-      await onImported();
-    } catch (err) {
-      setRowState(candidateKey(candidate), {
-        ...state,
-        status: "failed",
-        message: errorText(err, "登录态同步失败"),
-      });
-    }
-  }
-
-  function openLogin(candidate: ChannelDiscoveryCandidate) {
-    window.open(candidate.base_url, "_blank", "noopener,noreferrer");
   }
 
   if (!open) return null;
@@ -483,7 +396,7 @@ export function ChannelDiscoveryPanel({
         <div className="flex min-w-0 items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-accent)]/25 bg-success-bg px-3 py-2 text-[12.5px] text-success-fg">
           <Spinner />
           <span className="min-w-0 truncate">
-            正在同步登录态 {progress.current}/{progress.total} · {progress.baseUrl}
+            正在创建监控渠道 {progress.current}/{progress.total} · {progress.baseUrl}
           </span>
         </div>
       ) : null}
@@ -533,16 +446,6 @@ export function ChannelDiscoveryPanel({
               filteredCandidates.map((candidate) => {
                 const key = candidateKey(candidate);
                 const state = rowStates[key] || initialRowState(candidate);
-                const retryable = [
-                  "no_session",
-                  "expired",
-                  "permission_required",
-                  "failed",
-                  "extension_unavailable",
-                ].includes(state.status);
-                const canRetryExisting =
-                  Boolean(state.siteId && state.canSync) &&
-                  (state.status === "existing" || retryable);
                 return (
                   <tr
                     key={key}
@@ -592,32 +495,7 @@ export function ChannelDiscoveryPanel({
                             编辑认证
                           </Button>
                         ) : null}
-                        {canRetryExisting ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="h-8"
-                            onClick={() => void retry(candidate)}
-                            disabled={busy}
-                            aria-label="重新同步"
-                          >
-                            <RefreshCw size={13} />
-                            {state.status === "existing" ? "同步登录态" : "重新同步"}
-                          </Button>
-                        ) : null}
-                        {retryable ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8"
-                            onClick={() => openLogin(candidate)}
-                            aria-label="打开登录页"
-                          >
-                            <ExternalLink size={13} />
-                            打开登录页
-                          </Button>
-                        ) : null}
-                        {state.status === "ready" ? <Check size={16} className="mt-1 text-accent" aria-label="已同步" /> : null}
+                        {state.siteId ? <Check size={16} className="mt-1 text-accent" aria-label="已创建" /> : null}
                       </div>
                     </td>
                   </tr>
@@ -641,16 +519,6 @@ export function ChannelDiscoveryPanel({
           filteredCandidates.map((candidate) => {
             const key = candidateKey(candidate);
             const state = rowStates[key] || initialRowState(candidate);
-            const retryable = [
-              "no_session",
-              "expired",
-              "permission_required",
-              "failed",
-              "extension_unavailable",
-            ].includes(state.status);
-            const canRetryExisting =
-              Boolean(state.siteId && state.canSync) &&
-              (state.status === "existing" || retryable);
             return (
               <div
                 key={`mobile-${key}`}
@@ -692,7 +560,7 @@ export function ChannelDiscoveryPanel({
                     ) : null}
                   </div>
                 </div>
-                {canRetryExisting || retryable || state.siteId ? (
+                {state.siteId ? (
                   <div className="flex flex-wrap gap-1.5 pl-6">
                     {state.siteId ? (
                       <Button
@@ -703,31 +571,6 @@ export function ChannelDiscoveryPanel({
                         aria-label="编辑认证"
                       >
                         编辑认证
-                      </Button>
-                    ) : null}
-                    {canRetryExisting ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="h-8"
-                        onClick={() => void retry(candidate)}
-                        disabled={busy}
-                        aria-label="重新同步"
-                      >
-                        <RefreshCw size={13} />
-                        {state.status === "existing" ? "同步登录态" : "重新同步"}
-                      </Button>
-                    ) : null}
-                    {retryable ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8"
-                        onClick={() => openLogin(candidate)}
-                        aria-label="打开登录页"
-                      >
-                        <ExternalLink size={13} />
-                        打开登录页
                       </Button>
                     ) : null}
                   </div>
@@ -755,7 +598,7 @@ export function ChannelDiscoveryPanel({
             disabled={!selectedCandidates.length || adminSiteId == null}
           >
             {!busy ? <Link2 size={13} /> : null}
-            添加并同步
+            添加渠道
           </Button>
         </div>
       </div>

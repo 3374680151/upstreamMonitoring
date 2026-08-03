@@ -1,7 +1,7 @@
 # Upstream — Agent 全局规则
 
-> 路径：`/Users/wang/Desktop/upstream`  
-> 自 `Documents/上游配置/upstream-ratio-watch` 迁移；功能以 `app.py` 为准，UI 以 PriceAI 风格 React 为准。
+> 路径：当前仓库根目录
+> 功能以 `app.py` 为准，UI 以 PriceAI 风格 React 为准。
 
 ---
 

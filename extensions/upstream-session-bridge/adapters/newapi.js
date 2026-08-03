@@ -1,6 +1,6 @@
 import { normalizeOrigin } from "./sub2api.js";
 
-const LEGACY_STORAGE_KEYS = ["user", "access_token", "token", "user_id"];
+const LEGACY_STORAGE_KEYS = ["user", "access_token", "token", "user_id", "uid"];
 
 function text(value) {
   return String(value ?? "").trim();
@@ -24,13 +24,27 @@ export function readNewApiLegacySessionValues(getItem) {
     user.access_token || user.token || values.access_token || values.token,
   );
   const accessUserId = text(
-    user.id || user.user_id || user.userId || values.user_id,
+    user.id || user.user_id || user.userId || values.user_id || values.uid,
   );
-  if (!accessToken || !accessUserId) return null;
-  return {
-    access_token: accessToken,
-    access_user_id: accessUserId,
-  };
+  if (!accessUserId) return null;
+  return accessToken
+    ? { access_token: accessToken, access_user_id: accessUserId }
+    : { access_user_id: accessUserId };
+}
+
+export function selectNewApiBrowserCookie(cookies) {
+  if (!Array.isArray(cookies)) return "";
+  const values = new Map();
+  for (const cookie of cookies) {
+    const name = text(cookie?.name);
+    const value = text(cookie?.value);
+    if (!/^[A-Za-z0-9_-]+$/.test(name) || !value) continue;
+    values.set(name, value);
+  }
+  return [...values]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
 }
 
 export function selectNewApiRefreshCookie(cookies) {

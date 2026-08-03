@@ -144,13 +144,12 @@ test("manual check syncs only after a recoverable browser auth failure and retri
   assert.doesNotMatch(appSource, /while\s*\([^)]*browser_sync_required/);
 });
 
-test("NewAPI form offers browser sync while preserving manual system token mode", async () => {
+test("NewAPI form uses manual token mode and has no browser sync option", async () => {
   const source = await read("apps/web/src/components/SiteFormDialog.tsx");
-  assert.match(source, /<option value="browser">浏览器自动同步（推荐）<\/option>/);
   assert.match(source, /<option value="token">手动系统访问令牌<\/option>/);
-  assert.match(source, /扩展 0\.1\.2 加载时已统一申请站点和 NewAPI Cookie 权限/);
-  assert.match(source, /auth_mode: form\.auth_mode/);
-  assert.doesNotMatch(source, /auth_mode: isSub2api \? form\.auth_mode : "password"/);
+  assert.doesNotMatch(source, /NewAPI Cookie/);
+  assert.match(source, /auth_mode: isSub2api \? form\.auth_mode : "token"/);
+  assert.doesNotMatch(source, /platform === "newapi"[\s\S]{0,500}syncSiteBrowserSession/);
 });
 
 test("admin form can save then sync browser state without replacing token or 2FA", async () => {
@@ -172,11 +171,22 @@ test("site table shows compact retry only for retryable browser states", async (
   assert.match(source, /同步登录态/);
   assert.match(source, /session_sync_status/);
   assert.match(source, /site\.auth_mode === "browser"/);
-  assert.match(source, /h-8/);
+  assert.match(source, /site\.platform === "sub2api"/);
+  assert.match(source, /未登录，需要配置登录/);
+  assert.doesNotMatch(source, /aria-label="配置登录"/);
+  assert.match(source, /className="shrink-0"/);
   assert.doesNotMatch(
     source,
     /\["pending",\s*"validating"[^\]]*\][^\n]*isSessionSyncRetryable/s,
   );
+});
+
+test("site list puts browser sync before main-site sync and scopes it to sub2api", async () => {
+  const source = await read("apps/web/src/pages/SitesPage.tsx");
+  assert.match(source, /syncSub2ApiBrowserSessions/);
+  assert.match(source, /site\.platform === "sub2api" && site\.auth_mode === "browser"/);
+  assert.match(source, /仅同步 sub2api 渠道的浏览器登录态/);
+  assert.ok(source.indexOf("同步登录态") < source.indexOf("从主站同步"));
 });
 
 test("app wires session retry through overview and sites pages", async () => {

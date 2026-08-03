@@ -172,7 +172,18 @@ export function SiteTable({
                                 无
                               </span>
                             )}
-                            {site.auth_mode === "browser" ? (
+                            {site.platform === "newapi" ? (
+                              site.access_user_id && site.has_access_token ? (
+                                <Badge tone="info">用户登录</Badge>
+                              ) : (
+                                <Badge
+                                  tone="warning"
+                                  title="NewAPI 不使用浏览器同步，请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
+                                >
+                                  未登录，需要配置登录
+                                </Badge>
+                              )
+                            ) : site.auth_mode === "browser" ? (
                               <Badge
                                 tone={sessionSyncTone(site.session_sync_status)}
                               >
@@ -193,49 +204,50 @@ export function SiteTable({
                         </td>
                         <td className="py-3 align-middle">
                           <div className="flex flex-nowrap items-center justify-end gap-1">
-                            {site.auth_mode === "browser"
-                              ? isSessionSyncRetryable(
-                                  site.session_sync_status,
-                                ) && (
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    className="shrink-0"
-                                    aria-label="同步登录态"
-                                    title="从浏览器同步登录态"
-                                    loading={syncingId === site.id}
-                                    onClick={async () => {
-                                      setSyncingId(site.id);
-                                      try {
-                                        await onSyncSession(site);
-                                      } finally {
-                                        setSyncingId(null);
-                                      }
-                                    }}
-                                  >
-                                    {syncingId === site.id ? null : (
-                                      <RefreshCw size={12} />
-                                    )}
-                                    同步
-                                  </Button>
-                                )
-                              : (
-                                  <Button
-                                    variant="secondary"
-                                    size="sm"
-                                    className="shrink-0"
-                                    aria-label="同步凭证"
-                                    title={
-                                      site.auth_mode === "token"
-                                        ? "更新 Token"
-                                        : "更新账号密码"
-                                    }
-                                    onClick={() => onEdit(site)}
-                                  >
-                                    <Pencil size={12} />
-                                    同步
-                                  </Button>
+                            {site.platform === "sub2api" &&
+                            site.auth_mode === "browser" &&
+                            isSessionSyncRetryable(
+                              site.session_sync_status,
+                            ) ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="shrink-0"
+                                aria-label="同步登录态"
+                                title="从浏览器同步登录态"
+                                loading={syncingId === site.id}
+                                onClick={async () => {
+                                  setSyncingId(site.id);
+                                  try {
+                                    await onSyncSession(site);
+                                  } finally {
+                                    setSyncingId(null);
+                                  }
+                                }}
+                              >
+                                {syncingId === site.id ? null : (
+                                  <RefreshCw size={12} />
                                 )}
+                                同步
+                              </Button>
+                            ) : site.platform === "sub2api" &&
+                              site.auth_mode !== "browser" ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="shrink-0"
+                                aria-label="同步凭证"
+                                title={
+                                  site.auth_mode === "token"
+                                    ? "更新 Token"
+                                    : "更新账号密码"
+                                }
+                                onClick={() => onEdit(site)}
+                              >
+                                <Pencil size={12} />
+                                同步
+                              </Button>
+                            ) : null}
                             <Button
                               variant="brand"
                               size="sm"

@@ -27,4 +27,6 @@ data/**
 recover_full.sql
 # 本地工具配置（launch.json / settings.local.json 等），不进公开仓库
 .claude/
+.agents/
+.superpowers/
 apps/web/tsconfig.tsbuildinfo

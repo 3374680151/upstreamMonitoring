@@ -70,7 +70,7 @@ export function SiteFormDialog({
         interval_minutes: site.interval_minutes || 3,
         login_enabled: !!site.login_enabled,
         auth_mode:
-          site.platform === "newapi" && site.auth_mode !== "browser"
+          site.platform === "newapi"
             ? "token"
             : ((site.auth_mode as AuthMode) || "password"),
         login_username: site.login_username || "",
@@ -121,14 +121,13 @@ export function SiteFormDialog({
 
   const isSub2api = form.platform === "sub2api";
   const tokenMode = form.auth_mode === "token";
-  const browserMode = form.auth_mode === "browser";
+  const browserMode = isSub2api && form.auth_mode === "browser";
   const passwordMode = isSub2api && form.auth_mode === "password";
   const sameSavedPlatform = Boolean(site && site.platform === form.platform);
   const sameSavedAuthMode = Boolean(
     sameSavedPlatform &&
-      (site?.platform === "newapi" && site.auth_mode !== "browser"
-        ? "token"
-        : site?.auth_mode || "password") === form.auth_mode,
+      (site?.platform === "newapi" ? "token" : site?.auth_mode || "password") ===
+        form.auth_mode,
   );
   const hasSavedNewApiToken = Boolean(
     sameSavedAuthMode && !isSub2api && tokenMode && site?.has_access_token,
@@ -176,8 +175,8 @@ export function SiteFormDialog({
     try {
       const payload: SiteFormPayload = {
         ...form,
-        login_enabled: isSub2api || browserMode ? true : form.login_enabled,
-        auth_mode: form.auth_mode,
+        login_enabled: isSub2api ? true : form.login_enabled,
+        auth_mode: isSub2api ? form.auth_mode : "token",
       };
       let targetSiteId = site?.id ?? savedSiteId;
       if (site || savedSiteId) {
@@ -406,42 +405,28 @@ export function SiteFormDialog({
                       set("auth_mode", event.target.value as AuthMode)
                     }
                   >
-                    <option value="browser">浏览器自动同步（推荐）</option>
                     <option value="token">手动系统访问令牌</option>
                   </Select>
                 </Field>
-                {browserMode ? (
-                  <div className="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg">
-                    扩展 0.1.2 加载时已统一申请站点和 NewAPI Cookie 权限。保存后会读取同一 Origin 中已登录的普通用户会话。
-                    {site?.session_synced_at ? (
-                      <span className="mt-1 block text-[11px] opacity-80">
-                        最近同步：{site.session_synced_at}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <>
-                    <Field
-                      label="系统访问令牌（普通用户即可）"
-                      help={hasSavedNewApiToken ? savedTokenHelp : "尚未配置，填写后可读取余额与隐藏分组"}
-                    >
-                      <Input
-                        type="password"
-                        value={form.access_token}
-                        onChange={(e) => set("access_token", e.target.value)}
-                        autoComplete="off"
-                        placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写普通用户令牌"}
-                      />
-                    </Field>
-                    <Field label="NewAPI 用户 ID">
-                      <Input
-                        value={form.access_user_id}
-                        onChange={(e) => set("access_user_id", e.target.value)}
-                        placeholder="例如：4"
-                      />
-                    </Field>
-                  </>
-                )}
+                <Field
+                  label="系统访问令牌（普通用户即可）"
+                  help={hasSavedNewApiToken ? savedTokenHelp : "尚未配置，填写后可读取余额与隐藏分组"}
+                >
+                  <Input
+                    type="password"
+                    value={form.access_token}
+                    onChange={(e) => set("access_token", e.target.value)}
+                    autoComplete="off"
+                    placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写普通用户令牌"}
+                  />
+                </Field>
+                <Field label="NewAPI 用户 ID">
+                  <Input
+                    value={form.access_user_id}
+                    onChange={(e) => set("access_user_id", e.target.value)}
+                    placeholder="例如：4"
+                  />
+                </Field>
               </div>
             ) : null}
           </div>

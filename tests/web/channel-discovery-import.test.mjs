@@ -18,13 +18,13 @@ test("discovery client exposes candidates and idempotent import", async () => {
   assert.match(apiSource, /discovery-import/);
   assert.match(typeSource, /export type ChannelDiscoveryCandidate/);
   assert.match(panelSource, /从主站发现/);
-  assert.match(panelSource, /添加并同步/);
+  assert.match(panelSource, /添加渠道/);
   assert.match(panelSource, /interval_minutes: intervalMinutes/);
   assert.match(panelSource, /新建渠道监控间隔/);
-  assert.match(panelSource, /session_sync_status|existing_site_status/);
+  assert.match(panelSource, /existing_site_id/);
 });
 
-test("add flow keeps manual mode and orchestrates imported browser sessions", async () => {
+test("add flow keeps manual mode and does not sync NewAPI browser sessions", async () => {
   const form = await read(
     "apps/web/src/components/SiteFormDialog.tsx",
   );
@@ -35,16 +35,16 @@ test("add flow keeps manual mode and orchestrates imported browser sessions", as
   assert.match(form, /ChannelDiscoveryPanel/);
   assert.match(panelSource, /api\.importDiscoveredSites/);
   assert.match(appSource, /SiteFormDialog/);
-  assert.match(form, /syncSiteBrowserSession/);
+  assert.doesNotMatch(panelSource, /syncSiteBrowserSession/);
 });
 
-test("discovery UI keeps explicit retry and no-session states", async () => {
+test("discovery UI directs imported NewAPI sites to manual configuration", async () => {
   const panelSource = await read(
     "apps/web/src/components/ChannelDiscoveryPanel.tsx",
   );
-  assert.match(panelSource, /没有登录态/);
-  assert.match(panelSource, /重新同步/);
-  assert.match(panelSource, /打开登录页/);
+  assert.match(panelSource, /待配置登录/);
+  assert.doesNotMatch(panelSource, /重新同步/);
+  assert.doesNotMatch(panelSource, /打开登录页/);
   assert.match(panelSource, /aria-label/);
   assert.match(panelSource, /existing_site_auth_mode/);
   assert.match(panelSource, /sm:hidden/);

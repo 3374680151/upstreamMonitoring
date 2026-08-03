@@ -137,17 +137,19 @@ export function OverviewPage({
               </label>
             }
           >
-            <SiteTable
-              sites={overviewSites.slice(0, 6)}
-              selectedId={selectedId}
-              onView={onView}
-              onRatios={onRatios}
-              onCheck={onCheck}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onSyncSession={onSyncSession}
-              groupByPlatform
-            />
+            <div className="priceai-scrollbar min-h-0 max-h-[430px] overflow-y-auto pr-1">
+              <SiteTable
+                sites={overviewSites}
+                selectedId={selectedId}
+                onView={onView}
+                onRatios={onRatios}
+                onCheck={onCheck}
+                onEdit={onEdit}
+                onDelete={onDelete}
+                onSyncSession={onSyncSession}
+                groupByPlatform
+              />
+            </div>
           </Panel>
         </div>
 

@@ -61,7 +61,7 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         self.assertIn("browser_refresh_cookie = ?", sql)
         self.assertEqual(params[0], "legacy-system-token")
         self.assertEqual(params[1], "21")
-        self.assertEqual(params[2:5], (None, None, 0))
+        self.assertEqual(params[2:6], (None, None, None, 0))
 
     def test_modern_session_persistence_keeps_refresh_session_and_expiry(self):
         session = {
@@ -78,9 +78,10 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         self.assertIn("browser_refresh_cookie = ?", sql)
         self.assertIn("browser_session_id = ?", sql)
         self.assertIn("browser_access_expires_at = ?", sql)
-        self.assertEqual(params[2], "new_api_refresh=rotating-cookie")
-        self.assertEqual(params[3], "session-21")
-        self.assertEqual(params[4], 4102444800)
+        self.assertEqual(params[2], None)
+        self.assertEqual(params[3], "new_api_refresh=rotating-cookie")
+        self.assertEqual(params[4], "session-21")
+        self.assertEqual(params[5], 4102444800)
 
     def test_validation_requires_user_id_then_checks_self_and_groups(self):
         missing_ok, _payload, missing_error = app.validate_newapi_site_browser_session(
@@ -131,6 +132,66 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("不匹配", error)
         groups.assert_not_called()
+
+    def test_validation_accepts_cookie_uid_session_without_access_token(self):
+        session = {
+            "access_user_id": "21",
+            "browser_cookie": "session=browser-session; uid=21",
+        }
+        with patch.object(
+            app, "fetch_newapi_account_with_headers", return_value=(True, {"id": 21}, None)
+        ) as account, patch.object(
+            app,
+            "fetch_newapi_groups_with_headers",
+            return_value=(True, {"success": True, "data": {"default": 1}}, None),
+        ) as groups:
+            ok, payload, error = app.validate_newapi_site_browser_session(
+                "https://newapi.example", session
+            )
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        self.assertEqual(payload["account"]["id"], 21)
+        headers = account.call_args.args[1]
+        self.assertEqual(headers["Cookie"], "session=browser-session; uid=21")
+        self.assertEqual(headers["New-Api-User"], "21")
+        self.assertNotIn("Authorization", headers)
+        self.assertEqual(groups.call_args.args[1], headers)
+
+    def test_cookie_uid_payload_is_accepted_and_refresh_fields_are_rejected(self):
+        self.assertIsNone(
+            app._newapi_session_payload_error(
+                {
+                    "access_user_id": "21",
+                    "browser_cookie": "session=browser-session; uid=21",
+                }
+            )
+        )
+        self.assertEqual(
+            app._newapi_session_payload_error(
+                {
+                    "access_user_id": "21",
+                    "browser_cookie": "session=browser-session",
+                    "browser_session_id": "sid",
+                }
+            ),
+            "SESSION_FIELDS_INVALID",
+        )
+
+    def test_cookie_uid_persistence_does_not_keep_old_modern_session_fields(self):
+        session = {
+            "access_user_id": "21",
+            "browser_cookie": "session=browser-session; uid=21",
+        }
+        with patch.object(app, "db_execute", return_value=1) as execute:
+            app.persist_newapi_site_browser_session(7, session)
+
+        sql, params = execute.call_args.args
+        self.assertIn("browser_cookie = ?", sql)
+        self.assertEqual(params[0], "")
+        self.assertEqual(params[1], "21")
+        self.assertEqual(params[2], "session=browser-session; uid=21")
+        self.assertEqual(params[3:6], (None, None, 0))
 
     def test_refresh_uses_exact_site_origin_and_persists_rotated_bundle(self):
         site = {
@@ -243,7 +304,7 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         self.assertEqual(headers["Cookie"], "new_api_refresh=refresh-token")
         self.assertEqual(headers["New-Api-User"], "21")
 
-    def test_site_summary_exposes_only_redacted_browser_state(self):
+    def test_site_summary_does_not_expose_newapi_browser_sync_state(self):
         site = {
             "id": 7,
             "name": "NewAPI",
@@ -268,7 +329,9 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
             payload = app.site_summary(site)
 
         self.assertTrue(payload["has_access_token"])
-        self.assertTrue(payload["has_browser_session"])
+        self.assertEqual(payload["auth_mode"], "token")
+        self.assertFalse(payload["has_browser_session"])
+        self.assertEqual(payload["session_sync_status"], "not_requested")
         rendered = repr(payload)
         self.assertNotIn("secret-access-token", rendered)
         self.assertNotIn("secret-refresh", rendered)
@@ -320,10 +383,10 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
                 "newapi-request", "secret", body
             )
 
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["status"], "ready")
-        validate.assert_called_once_with(site["base_url"], body["session"])
-        persist.assert_called_once_with(7, body["session"], "newapi-request", "https://newapi.example")
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["code"], "UNSUPPORTED_TARGET")
+        validate.assert_not_called()
+        persist.assert_not_called()
         self.assertNotIn("legacy-access", repr(payload))
 
     def test_completion_accepts_modern_newapi_site_session(self):
@@ -359,10 +422,10 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
                 "newapi-request", "secret", body
             )
 
-        self.assertEqual(status, 200)
-        self.assertTrue(payload["detected"])
-        validate.assert_called_once_with(site["base_url"], body["session"])
-        persist.assert_called_once_with(7, body["session"], "newapi-request", "https://newapi.example")
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["code"], "UNSUPPORTED_TARGET")
+        validate.assert_not_called()
+        persist.assert_not_called()
 
     def test_completion_rejects_non_exact_newapi_refresh_cookie_before_claim(self):
         for cookie in (
@@ -511,14 +574,14 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
                 "newapi-request", "secret", body
             )
 
-        self.assertEqual(status, 401)
-        self.assertEqual(payload["code"], "SESSION_INVALID")
+        self.assertEqual(status, 400)
+        self.assertEqual(payload["code"], "UNSUPPORTED_TARGET")
         persist.assert_not_called()
         finish.assert_called_once_with(
             "newapi-request",
-            "expired",
-            "SESSION_INVALID",
-            "登录态已过期，请重新登录",
+            "failed",
+            "UNSUPPORTED_TARGET",
+            "当前同步目标暂不支持",
         )
 
     def test_newapi_origin_mismatch_is_redacted_and_consumes_request(self):
@@ -579,14 +642,9 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         ) as response:
             app.Handler.do_POST(handler)
 
-        self.assertTrue(execute.called, response.call_args.args[1])
-        sql, params = execute.call_args.args
-        self.assertIn("INSERT INTO sites", sql)
-        self.assertEqual(params[5], 1)
-        self.assertEqual(params[6], "browser")
-        self.assertEqual(params[9], "")
-        self.assertEqual(params[10], "")
-        self.assertEqual(response.call_args.args[1], {"success": True, "id": 77})
+        execute.assert_not_called()
+        self.assertEqual(response.call_args.args[1]["success"], False)
+        self.assertIn("用户 ID", response.call_args.args[1]["message"])
 
     def test_create_newapi_manual_token_site_keeps_token_mode(self):
         handler = object.__new__(app.Handler)
@@ -643,14 +701,9 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
         ), patch.object(app, "json_response") as response:
             app.Handler.do_PUT(handler)
 
-        sql, params = execute.call_args.args
-        self.assertIn("auth_mode = ?", sql)
-        self.assertIn("browser", params)
-        self.assertNotRegex(sql, r"(?<!browser_)access_token\s*=\s*\?")
-        self.assertNotIn("access_user_id = ?", sql)
-        self.assertNotIn("browser_refresh_cookie = ?", sql)
-        self.assertNotIn("browser_session_id = ?", sql)
-        self.assertEqual(response.call_args.args[1], {"success": True})
+        execute.assert_not_called()
+        self.assertEqual(response.call_args.args[1]["success"], False)
+        self.assertIn("用户 ID", response.call_args.args[1]["message"])
 
     def test_switching_newapi_token_site_to_browser_clears_manual_auth(self):
         handler = object.__new__(app.Handler)
@@ -681,13 +734,11 @@ class NewApiBrowserSessionSyncTests(unittest.TestCase):
             app.Handler.do_PUT(handler)
 
         sql, params = execute.call_args.args
-        self.assertRegex(sql, r"(?<!browser_)access_token\s*=\s*\?")
-        self.assertIn("access_user_id = ?", sql)
+        self.assertIn("auth_mode = ?", sql)
+        self.assertIn("token", params)
         self.assertIn("browser_refresh_cookie = ?", sql)
         self.assertIn("browser_session_id = ?", sql)
-        self.assertIn("session_sync_status = ?", sql)
-        self.assertIn("not_requested", params)
-        self.assertNotIn("system-access", params)
+        self.assertNotIn("session_sync_status = ?", sql)
         self.assertEqual(response.call_args.args[1], {"success": True})
 
     def test_switching_newapi_browser_site_to_token_requires_manual_auth(self):

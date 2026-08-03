@@ -77,12 +77,12 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
             result = app.enrich_channel_candidates_with_sites(candidates)
 
         self.assertEqual(result[0]["existing_site_id"], 7)
-        self.assertEqual(result[0]["existing_site_status"], "ready")
+        self.assertEqual(result[0]["existing_site_status"], "ok")
         self.assertTrue(result[0]["importable"])
         self.assertNotIn("access_token", result[0])
         self.assertNotIn("login_password", result[0])
 
-    def test_enrich_exposes_only_non_sensitive_browser_retry_metadata(self):
+    def test_enrich_exposes_token_metadata_for_newapi_sites(self):
         with patch.object(
             app,
             "db_query_all",
@@ -112,8 +112,8 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
                 ]
             )
         candidate = result[0]
-        self.assertEqual(candidate["existing_site_auth_mode"], "browser")
-        self.assertEqual(candidate["existing_site_session_sync_status"], "no_session")
+        self.assertEqual(candidate["existing_site_auth_mode"], "token")
+        self.assertEqual(candidate["existing_site_session_sync_status"], "not_requested")
         self.assertTrue(candidate["existing_site_enabled"])
         self.assertNotIn("browser_refresh_cookie", candidate)
         self.assertNotIn("access_token", candidate)

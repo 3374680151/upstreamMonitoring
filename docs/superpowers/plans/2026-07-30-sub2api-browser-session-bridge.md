@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3 stdlib HTTP server, PyMySQL, React 19, TypeScript, Chrome Manifest V3, Node built-in test runner.
 
-**Worktree note:** Execute in `/Users/wang/Desktop/upstream`. The current dirty files contain the user's active baseline, so do not create a clean worktree or commit shared dirty files without explicit approval.
+**Worktree note:** Execute in the repository root. The current dirty files contain the user's active baseline, so do not create a clean worktree or commit shared dirty files without explicit approval.
 
 ---
 
@@ -352,4 +352,3 @@ Use `https://api.stpatrickschoolgnv.org` to verify logged-in, no-session, permis
 - [ ] **Step 5: Capture desktop/mobile UI verification**
 
 Use Playwright screenshots for the add form, no-session state, and site table at desktop and mobile widths. Confirm no overlap, stable button sizing, PriceAI tokens, and dark theme readability.
-

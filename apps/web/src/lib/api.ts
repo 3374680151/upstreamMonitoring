@@ -80,6 +80,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   overview: () => request<Overview>("/api/overview"),
   sites: () => request<{ data: Site[] }>("/api/sites"),
+  /** 手动触发主站渠道同步：新增 + 停用/重新启用，返回本次结果统计 */
+  syncMainSites: () =>
+    request<{
+      success: boolean;
+      data?: unknown[];
+      imported?: number;
+      disabled?: number;
+      reenabled?: number;
+      deleted?: number;
+      failed?: number;
+    }>("/api/sites/sync", { method: "POST", body: "{}" }),
   changes: (limit = 100) =>
     request<{ data: Change[] }>(`/api/changes?limit=${limit}`),
   siteChanges: (siteId: number, limit = 50) =>
@@ -121,6 +132,17 @@ export const api = {
   },
   notificationSettings: () =>
     request<{ data: NotificationSettings }>("/api/notifications/settings"),
+  /** 全局设置：目前含 main_site_reconcile_mode(disable|delete) */
+  getSettings: () =>
+    request<{ success: boolean; data?: { main_site_reconcile_mode?: string } }>(
+      "/api/settings",
+    ),
+  saveSettings: (patch: { main_site_reconcile_mode?: string }) =>
+    request<{
+      success: boolean;
+      data?: { main_site_reconcile_mode?: string };
+      message?: string;
+    }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
   saveNotificationSettings: (payload: Record<string, unknown>) =>
     request<{ success: boolean; data: NotificationSettings }>(
       "/api/notifications/settings",

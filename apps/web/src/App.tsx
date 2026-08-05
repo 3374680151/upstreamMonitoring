@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
-import { Plus, RefreshCw } from "lucide-react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Plus, RefreshCw, Cloud } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { SiteFormDialog } from "@/components/SiteFormDialog";
 import { RatiosDialog } from "@/components/RatiosDialog";
 import { LoginPage } from "@/components/LoginPage";
-import { Button, ConfirmDialog } from "@/components/ui";
+import { Button, ConfirmDialog, Select } from "@/components/ui";
 import { errorText, useToast } from "@/components/Toast";
 import { api, setConsoleToken } from "@/lib/api";
 import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
@@ -20,7 +20,13 @@ import { NotificationsPage } from "@/pages/NotificationsPage";
 
 export default function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
+  const [syncing, setSyncing] = useState(false);
+  const [reconcileMode, setReconcileMode] = useState<"disable" | "delete">(
+    "disable",
+  );
+  const [pendingDeleteMode, setPendingDeleteMode] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Site | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
@@ -124,6 +130,18 @@ export default function App() {
   useEffect(() => {
     if (!authReady) return;
     if (authRequired && !authed) return;
+    api
+      .getSettings()
+      .then((s) => {
+        const mode = s.data?.main_site_reconcile_mode;
+        if (mode === "delete" || mode === "disable") setReconcileMode(mode);
+      })
+      .catch(() => {});
+  }, [authReady, authRequired, authed]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (authRequired && !authed) return;
     refresh();
     const timer = window.setInterval(() => {
       refresh().catch(() => {});
@@ -142,6 +160,58 @@ export default function App() {
     setConsoleToken("");
     setAuthed(false);
     setAuthRequired(true);
+  }
+
+  async function persistReconcileMode(mode: "disable" | "delete") {
+    const prev = reconcileMode;
+    setReconcileMode(mode);
+    try {
+      await api.saveSettings({ main_site_reconcile_mode: mode });
+      toast.success(
+        mode === "delete"
+          ? "已切换：消失渠道将被删除"
+          : "已切换：消失渠道将被停用",
+      );
+    } catch (err) {
+      setReconcileMode(prev);
+      toast.error(errorText(err, "设置保存失败"));
+    }
+  }
+
+  function handleReconcileModeChange(next: "disable" | "delete") {
+    if (next === reconcileMode) return;
+    if (next === "delete") {
+      setPendingDeleteMode(true);
+      return;
+    }
+    void persistReconcileMode("disable");
+  }
+
+  async function handleSyncMainSites() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const result = await api.syncMainSites();
+      await refresh();
+      const parts: string[] = [];
+      if (result.imported) parts.push(`新增 ${result.imported}`);
+      if (result.reenabled) parts.push(`恢复 ${result.reenabled}`);
+      if (result.disabled) parts.push(`停用 ${result.disabled}`);
+      if (result.deleted) parts.push(`删除 ${result.deleted}`);
+      if (result.failed) {
+        toast.info(
+          `主站同步完成${parts.length ? "：" + parts.join(" · ") : ""}，${result.failed} 个主站读取失败`,
+        );
+      } else if (parts.length) {
+        toast.success(`主站同步完成：${parts.join(" · ")}`);
+      } else {
+        toast.success("主站同步完成，渠道已是最新");
+      }
+    } catch (err) {
+      toast.error(errorText(err, "主站同步失败"));
+    } finally {
+      setSyncing(false);
+    }
   }
 
   async function handleCheck(site: Site) {
@@ -263,6 +333,37 @@ export default function App() {
       onLogout={authRequired ? handleLogout : undefined}
       actions={
         <>
+          {location.pathname === "/" ? (
+            <label className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
+              <span className="hidden lg:inline">消失渠道</span>
+              <Select
+                className="w-[4.5rem]"
+                value={reconcileMode}
+                onChange={(event) =>
+                  handleReconcileModeChange(
+                    event.target.value as "disable" | "delete",
+                  )
+                }
+                aria-label="上游消失渠道的处理方式"
+                title="主站同步时,上游已消失的监控渠道如何处理"
+              >
+                <option value="disable">停用</option>
+                <option value="delete">删除</option>
+              </Select>
+            </label>
+          ) : null}
+          {location.pathname === "/" ? (
+            <Button
+              variant="secondary"
+              aria-label="同步主站渠道"
+              title="从主站同步渠道：新增、停用已消失、恢复重现"
+              onClick={handleSyncMainSites}
+              loading={syncing}
+            >
+              {!syncing ? <Cloud size={13} /> : null}
+              <span className="hidden sm:inline">同步主站</span>
+            </Button>
+          ) : null}
           <Button
             variant="secondary"
             aria-label="刷新数据"
@@ -408,6 +509,25 @@ export default function App() {
           setDeleteTarget(null);
           setDeleteError("");
         }}
+      />
+      <ConfirmDialog
+        open={pendingDeleteMode}
+        title="切换为删除模式"
+        message={
+          <>
+            开启后，主站同步时<b>上游已消失</b>的监控渠道会被<b>永久删除</b>，
+            连带其历史快照与变化记录一并删除，且不可恢复。
+            <br />
+            确认切换为删除模式？
+          </>
+        }
+        confirmLabel="切换为删除"
+        danger
+        onConfirm={async () => {
+          setPendingDeleteMode(false);
+          await persistReconcileMode("delete");
+        }}
+        onCancel={() => setPendingDeleteMode(false)}
       />
     </AppShell>
   );

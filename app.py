@@ -564,6 +564,7 @@ DDL_STATEMENTS = [
         last_check_at VARCHAR(40),
         next_check_at VARCHAR(40),
         consecutive_failures INT NOT NULL DEFAULT 0,
+        auto_disabled TINYINT NOT NULL DEFAULT 0,
         current_groups_json LONGTEXT,
         current_login_groups_json LONGTEXT,
         login_last_error TEXT,
@@ -769,6 +770,13 @@ DDL_STATEMENTS = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
+    CREATE TABLE IF NOT EXISTS app_settings (
+        name VARCHAR(128) PRIMARY KEY,
+        value TEXT,
+        updated_at VARCHAR(40) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
     CREATE TABLE IF NOT EXISTS app_schema_migrations (
         name VARCHAR(128) PRIMARY KEY,
         applied_at VARCHAR(40) NOT NULL
@@ -780,6 +788,7 @@ DDL_STATEMENTS = [
 SITES_COLUMN_ADDITIONS = {
     "focus_keywords": "TEXT",
     "login_enabled": "TINYINT NOT NULL DEFAULT 0",
+    "auto_disabled": "TINYINT NOT NULL DEFAULT 0",
     "auth_mode": "VARCHAR(32) NOT NULL DEFAULT 'password'",
     "login_username": "VARCHAR(255)",
     "login_password": "TEXT",
@@ -8916,27 +8925,74 @@ def list_sites_payload(
     return summaries, auto_sync_results
 
 
+RECONCILE_MODE_DISABLE = "disable"
+RECONCILE_MODE_DELETE = "delete"
+RECONCILE_MODES = {RECONCILE_MODE_DISABLE, RECONCILE_MODE_DELETE}
+SETTING_RECONCILE_MODE = "main_site_reconcile_mode"
+
+
+def get_app_setting(name: str, default: str = "") -> str:
+    try:
+        row = db_query_one("SELECT value FROM app_settings WHERE name = ?", (name,))
+    except Exception:
+        return default
+    if not isinstance(row, dict):
+        return default
+    value = row.get("value")
+    return str(value) if value is not None else default
+
+
+def set_app_setting(name: str, value: str) -> None:
+    db_execute(
+        "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) "
+        "ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)",
+        (name, value, utc_now_iso()),
+    )
+
+
+def get_main_site_reconcile_mode() -> str:
+    """User-selected handling for monitoring sites whose upstream channel vanished.
+
+    ``disable`` (default) flips them to enabled=0 and keeps their history;
+    ``delete`` physically removes the site (cascading snapshots + changes).
+    """
+    mode = (
+        get_app_setting(SETTING_RECONCILE_MODE, RECONCILE_MODE_DISABLE)
+        .strip()
+        .lower()
+    )
+    return mode if mode in RECONCILE_MODES else RECONCILE_MODE_DISABLE
+
+
 def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
-    """Pull channels from each NewAPI admin site and import any new upstream URL.
+    """Two-way reconcile of monitoring sites against NewAPI admin-site channels.
 
     Behaviour:
     * Only NewAPI admin sites are considered; sub2api sites have no upstream
       "discover from admin" concept (their channels ARE the monitoring sites).
+    * Phase 1 (per admin site): read the channel list; on a complete, successful
+      read, import any upstream base_url that has no local monitoring site yet.
+      The union of live upstream base_urls and the ids of admin sites that read
+      successfully are accumulated across every NewAPI admin site.
+    * Phase 2 (once, after the loop): a monitoring site discovered from a NewAPI
+      admin site whose base_url disappeared from the live set is DISABLED
+      (enabled=0, auto_disabled=1) — never deleted, so its snapshots and change
+      history survive.  A site that reappears is re-enabled only if it was
+      auto-disabled, so a manual disable is respected.  Disabling only happens
+      when every admin site managing that site read successfully this cycle, so a
+      transient upstream / paging failure can never wipe out monitoring.
     * Per-site errors are swallowed — they must never break the page that
-      triggered the auto-sync.  Each site contributes its own summary row.
-    * Reuses the existing ``import_discovered_sites`` path so the local
-      ``sites`` row and the ``site_discovery_links`` rows are written in one
-      transaction per import, identical to the manual flow.
-    * Runs without blocking: the surrounding request returns immediately
-      after the synchronous fetch + import loop.  The discovery panel's
-      keyword filter still applies, so users who want a manual re-discovery
-      keep that path.
+      triggered the auto-sync.  Each admin site contributes its own summary row.
     """
     results: List[Dict[str, Any]] = []
     try:
         admin_sites = db_query_all("SELECT * FROM admin_sites")
     except Exception:
         return results
+
+    live_base_urls: set = set()
+    read_ok_admin_ids: set = set()
+
     for admin in admin_sites or []:
         if not isinstance(admin, dict):
             continue
@@ -8958,6 +9014,18 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
                 )
                 continue
             source_channels = channels if isinstance(channels, list) else []
+            candidates = aggregate_newapi_channel_candidates(source_channels)
+
+            # A complete, successful read: this admin site's live channels are
+            # authoritative for the disable/re-enable reconcile after the loop.
+            read_ok_admin_ids.add(admin_site_id)
+            for candidate in candidates:
+                normalized = normalize_base_url(
+                    str(candidate.get("base_url") or "")
+                )
+                if normalized:
+                    live_base_urls.add(normalized)
+
             if not source_channels:
                 results.append(
                     {
@@ -8967,13 +9035,6 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
                     }
                 )
                 continue
-            candidates = aggregate_newapi_channel_candidates(source_channels)
-            # Reconcile provenance first so channels removed upstream stop
-            # leaving dangling discovery rows.
-            try:
-                reconcile_site_discovery_links(admin_site_id, candidates)
-            except Exception:
-                pass
 
             # Find which candidates still need a local site.
             existing_urls: set = set()
@@ -8984,9 +9045,7 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
                 for row in existing_rows or []:
                     if not isinstance(row, dict):
                         continue
-                    normalized, _err = _normalize_discovery_base_url(
-                        row.get("base_url")
-                    )
+                    normalized = normalize_base_url(str(row.get("base_url") or ""))
                     if normalized:
                         existing_urls.add(normalized)
             except Exception:
@@ -8994,7 +9053,7 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
 
             pending: List[Dict[str, Any]] = []
             for candidate in candidates:
-                base_url = str(candidate.get("base_url") or "").strip()
+                base_url = normalize_base_url(str(candidate.get("base_url") or ""))
                 if not base_url or base_url in existing_urls:
                     continue
                 pending.append(candidate)
@@ -9045,7 +9104,102 @@ def auto_sync_admin_site_channels_to_sites() -> List[Dict[str, Any]]:
                     "imported": 0,
                 }
             )
+
+    mode = get_main_site_reconcile_mode()
+    disabled, reenabled, deleted = reconcile_monitoring_site_enable_state(
+        live_base_urls, read_ok_admin_ids, mode
+    )
+    results.append(
+        {
+            "status": "reconcile",
+            "mode": mode,
+            "disabled": disabled,
+            "reenabled": reenabled,
+            "deleted": deleted,
+        }
+    )
     return results
+
+
+def reconcile_monitoring_site_enable_state(
+    live_base_urls: set,
+    read_ok_admin_ids: set,
+    mode: str = RECONCILE_MODE_DISABLE,
+) -> Tuple[int, int, int]:
+    """Reconcile monitored sites whose upstream channel vanished.
+
+    Only sites discovered from a NewAPI admin site (i.e. having at least one
+    ``site_discovery_links`` row) participate, and only when EVERY admin site
+    that manages a site read successfully this cycle — so a transient upstream
+    failure can never wipe out monitoring.  Handling of a vanished site depends
+    on ``mode``:
+    * ``disable`` — flip to ``enabled=0, auto_disabled=1``; snapshots and change
+      history survive, and the site is re-enabled automatically if it reappears.
+    * ``delete`` — physically remove the site (cascading snapshots + changes);
+      if it reappears it is re-imported fresh on the next sync.
+    Re-enable of a reappeared site only touches rows we previously auto-disabled,
+    so a user's manual disable is respected.  Returns ``(disabled, reenabled,
+    deleted)``.
+    """
+    if not read_ok_admin_ids:
+        return 0, 0, 0
+    try:
+        rows = db_query_all(
+            "SELECT s.id AS id, s.base_url AS base_url, s.enabled AS enabled, "
+            "s.auto_disabled AS auto_disabled, "
+            "GROUP_CONCAT(DISTINCT l.admin_site_id) AS admin_ids "
+            "FROM sites s "
+            "JOIN site_discovery_links l ON l.site_id = s.id "
+            "WHERE s.platform = 'newapi' "
+            "GROUP BY s.id, s.base_url, s.enabled, s.auto_disabled"
+        )
+    except Exception:
+        return 0, 0, 0
+
+    disabled = 0
+    reenabled = 0
+    deleted = 0
+    now = utc_now_iso()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        try:
+            site_id = int(row.get("id"))
+        except (TypeError, ValueError):
+            continue
+        base_url = normalize_base_url(str(row.get("base_url") or ""))
+        if not base_url:
+            continue
+        enabled = int(row.get("enabled") or 0)
+        auto_disabled = int(row.get("auto_disabled") or 0)
+        managing_ids = {
+            int(part)
+            for part in str(row.get("admin_ids") or "").split(",")
+            if part.strip().isdigit()
+        }
+        if base_url in live_base_urls:
+            # Came back upstream: undo an earlier auto-disable, never a manual one.
+            if auto_disabled == 1:
+                reenabled += db_execute_rowcount(
+                    "UPDATE sites SET enabled = 1, auto_disabled = 0, "
+                    "updated_at = ? WHERE id = ?",
+                    (now, site_id),
+                )
+            continue
+        # Absent upstream: only act when every managing admin site read OK.
+        if not managing_ids or not managing_ids.issubset(read_ok_admin_ids):
+            continue
+        if mode == RECONCILE_MODE_DELETE:
+            deleted += db_execute_rowcount(
+                "DELETE FROM sites WHERE id = ?", (site_id,)
+            )
+        elif enabled == 1:
+            disabled += db_execute_rowcount(
+                "UPDATE sites SET enabled = 0, auto_disabled = 1, "
+                "updated_at = ? WHERE id = ?",
+                (now, site_id),
+            )
+    return disabled, reenabled, deleted
 
 
 def list_snapshots(site_id: int) -> List[Dict[str, Any]]:
@@ -9468,6 +9622,14 @@ class Handler(BaseHTTPRequestHandler):
             params = parse_qs(parsed.query)
             limit = int(params.get("limit", ["100"])[0] or 100)
             return json_response(self, {"data": list_changes(limit)})
+        if path == "/api/settings":
+            return json_response(
+                self,
+                {
+                    "success": True,
+                    "data": {SETTING_RECONCILE_MODE: get_main_site_reconcile_mode()},
+                },
+            )
         if path == "/api/notifications/settings":
             return json_response(self, {"data": notification_settings_payload()})
         if path == "/api/notifications/logs":
@@ -9908,6 +10070,46 @@ class Handler(BaseHTTPRequestHandler):
                     "groups_count": len(groups),
                     "groups": groups,
                 })
+
+            # POST /api/sites/sync
+            # Manually trigger the same main-site reconcile that runs on every
+            # /api/sites poll: import new upstream channels and disable/re-enable
+            # monitoring sites to match the current admin-site channel lists.
+            if path == "/api/sites/sync":
+                results = auto_sync_admin_site_channels_to_sites()
+                imported = sum(
+                    int(entry.get("imported") or 0)
+                    for entry in results
+                    if isinstance(entry, dict)
+                )
+                reconcile = next(
+                    (
+                        entry
+                        for entry in results
+                        if isinstance(entry, dict)
+                        and entry.get("status") == "reconcile"
+                    ),
+                    {},
+                )
+                failed = [
+                    entry
+                    for entry in results
+                    if isinstance(entry, dict)
+                    and entry.get("status") == "fetch_failed"
+                ]
+                return json_response(
+                    self,
+                    {
+                        "success": True,
+                        "data": results,
+                        "mode": reconcile.get("mode") or RECONCILE_MODE_DISABLE,
+                        "imported": imported,
+                        "disabled": int(reconcile.get("disabled") or 0),
+                        "reenabled": int(reconcile.get("reenabled") or 0),
+                        "deleted": int(reconcile.get("deleted") or 0),
+                        "failed": len(failed),
+                    },
+                )
 
             # POST /api/sites/discovery-import
             # Create/reuse local NewAPI monitoring sites from candidates returned
@@ -10647,6 +10849,25 @@ class Handler(BaseHTTPRequestHandler):
             invalidate_site_model_cache(site_id)
             schedule_model_cache_refresh(site_id)
             return json_response(self, {"success": True})
+
+        if path == "/api/settings":
+            body = read_json_body(self)
+            body = body if isinstance(body, dict) else {}
+            mode = str(body.get(SETTING_RECONCILE_MODE) or "").strip().lower()
+            if mode not in RECONCILE_MODES:
+                return json_response(
+                    self,
+                    {"success": False, "message": "reconcile mode 无效"},
+                    400,
+                )
+            set_app_setting(SETTING_RECONCILE_MODE, mode)
+            return json_response(
+                self,
+                {
+                    "success": True,
+                    "data": {SETTING_RECONCILE_MODE: get_main_site_reconcile_mode()},
+                },
+            )
 
         if path == "/api/notifications/settings":
             body = read_json_body(self)

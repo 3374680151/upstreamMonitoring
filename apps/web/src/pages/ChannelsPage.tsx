@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Cloud, RefreshCw } from "lucide-react";
+import { Cloud, KeyRound, RefreshCw } from "lucide-react";
 import { AdminSiteFormDialog } from "@/components/AdminSiteFormDialog";
 import { Badge } from "@/components/Badge";
 import { ChannelPriorityDialog } from "@/components/ChannelPriorityDialog";
@@ -173,6 +173,9 @@ export function ChannelsPage({
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
   const [selectedChannelId, setSelectedChannelId] = useState<number | null>(null);
   const [matching, setMatching] = useState<Set<number>>(() => new Set());
+  const [refreshingKeyIds, setRefreshingKeyIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   const [rowNote, setRowNote] = useState<
     Record<number, { ok: boolean; text: string }>
   >({});
@@ -366,7 +369,7 @@ export function ChannelsPage({
     setSelectedChannelId(null);
     setSub2ApiChannel(null);
     setRowNote({});
-    await load("", { refreshMatches: true, waitForMatches: true });
+    await load("");
   }
 
   const allowedGroupNames = useMemo(
@@ -516,6 +519,52 @@ export function ChannelsPage({
         next.delete(ch.id);
         return next;
       });
+    }
+  }
+
+  async function refreshChannelKey(ch: Channel) {
+    if (siteId == null || refreshingKeyIds.size > 0) return;
+    setRefreshingKeyIds(new Set([ch.id]));
+    setActionError("");
+    try {
+      const response = await api.refreshChannelKey(siteId, ch.id);
+      const data = response.data;
+      if (!response.success || !data) {
+        throw new Error(response.message || "渠道 key 刷新失败");
+      }
+      if (data.binding) {
+        setUpstreamBindings((previous) => ({
+          ...previous,
+          [String(ch.id)]: data.binding!,
+        }));
+      }
+      const keyMessage = data.first_fetch
+        ? "真实 key 已保存"
+        : data.changed
+          ? "key 已更新"
+          : "key 已是最新";
+      const text = data.match_success
+        ? `${keyMessage}，倍率已刷新`
+        : `${keyMessage}，但倍率刷新失败：${data.match_message || "未知错误"}`;
+      setRowNote((previous) => ({
+        ...previous,
+        [ch.id]: { ok: data.match_success, text },
+      }));
+      if (data.match_success) toast.success(`渠道「${ch.name || `#${ch.id}`}」${text}`);
+      else toast.info(`渠道「${ch.name || `#${ch.id}`}」${text}`);
+    } catch (err) {
+      const message = errorText(err, "渠道 key 刷新失败");
+      const explained = explainUpstreamError(message);
+      setRowNote((previous) => ({
+        ...previous,
+        [ch.id]: { ok: false, text: `刷新 key 失败：${explained.summary}` },
+      }));
+      setActionError(
+        `渠道「${ch.name || `#${ch.id}`}」刷新 key 失败：${explained.summary}。原始错误：${explained.raw}`,
+      );
+      toast.error(`渠道「${ch.name || `#${ch.id}`}」刷新 key 失败：${explained.summary}`);
+    } finally {
+      setRefreshingKeyIds(new Set());
     }
   }
 
@@ -849,7 +898,7 @@ export function ChannelsPage({
               />
             ) : (
               <div className="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-[var(--radius-sm)]">
-                <table className="w-full min-w-[980px] table-fixed text-left text-sm">
+                <table className="w-full min-w-[1040px] table-fixed text-left text-sm">
                   <colgroup>
                     <col className="w-[170px]" />
                     <col className="w-[112px]" />
@@ -857,8 +906,7 @@ export function ChannelsPage({
                     <col className="w-[72px]" />
                     <col className="w-[72px]" />
                     <col className="w-[92px]" />
-                    <col className="w-[126px]" />
-                    <col className="w-[190px]" />
+                    <col className="w-[270px]" />
                   </colgroup>
                   <thead className="sticky top-0 z-10 bg-panel">
                     <tr className="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
@@ -868,7 +916,6 @@ export function ChannelsPage({
                       <th className="pb-2">权重</th>
                       <th className="pb-2">优先级</th>
                       <th className="pb-2">状态</th>
-                      <th className="pb-2">密钥</th>
                       <th className="pb-2">操作</th>
                     </tr>
                   </thead>
@@ -888,6 +935,7 @@ export function ChannelsPage({
                         allowedGroupNames,
                       );
                       const isMatching = matching.has(channel.id);
+                      const isRefreshingKey = refreshingKeyIds.has(channel.id);
                       const isSelected = selectedChannelId === channel.id;
                       return (
                         <tr
@@ -1006,19 +1054,12 @@ export function ChannelsPage({
                               {meta.label}
                             </Badge>
                           </td>
-                          <td className="max-w-0 py-3 pr-3">
-                            <code
-                              className="block max-w-28 truncate rounded-[var(--radius-sm)] bg-sunken px-1.5 py-0.5 text-[11px]"
-                              title={channel.key || "—"}
-                            >
-                              {channel.key || "—"}
-                            </code>
-                          </td>
                           <td className="py-3">
                             <div className="flex flex-nowrap items-center gap-1.5">
                               <Button
                                 variant="secondary"
                                 size="sm"
+                                className="whitespace-nowrap"
                                 onClick={() => void matchUpstream(channel)}
                                 loading={isMatching}
                               >
@@ -1028,6 +1069,19 @@ export function ChannelsPage({
                               <Button
                                 variant="secondary"
                                 size="sm"
+                                className="whitespace-nowrap"
+                                onClick={() => void refreshChannelKey(channel)}
+                                loading={isRefreshingKey}
+                                disabled={refreshingKeyIds.size > 0 && !isRefreshingKey}
+                                title="强制读取当前渠道真实 key，并重新匹配倍率"
+                              >
+                                {!isRefreshingKey ? <KeyRound size={13} /> : null}
+                                刷新 key
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                className="whitespace-nowrap"
                                 onClick={() => setPriorityChannel(channel)}
                               >
                                 编辑优先级
@@ -1153,7 +1207,7 @@ export function ChannelsPage({
         onClose={() => setAdminFormOpen(false)}
         onSaved={loadAdminSites}
         onVerified={async () => {
-          await load("", { refreshMatches: true });
+          await load("");
         }}
       />
     </div>

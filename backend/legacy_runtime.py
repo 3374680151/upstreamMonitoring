@@ -94,9 +94,6 @@ SLOW_REQUEST_THRESHOLD_MS = _env_int(
     "SLOW_REQUEST_THRESHOLD_MS", 500, 0, 60000
 )
 SCAN_INTERVAL_SECONDS = 10
-ADMIN_KEY_SYNC_INTERVAL_SECONDS = _env_int(
-    "ADMIN_KEY_SYNC_INTERVAL_SECONDS", 180, 60, 3600
-)
 SERVER_HOST = os.getenv("HOST", "127.0.0.1")
 SERVER_PORT = int(os.getenv("PORT", "8000"))
 # 控制台登录密码：留空则不启用鉴权（本地/内网直连场景）。设置后所有 /api/* 需先登录。
@@ -135,6 +132,7 @@ MAIN_CHANNEL_KEY_LAST_REQUEST_AT: Dict[str, float] = {}
 MAIN_CHANNEL_KEY_RATE_LIMIT_UNTIL: Dict[str, float] = {}
 MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS = 2.0
 MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS = 30.0
+ADMIN_KEY_SYNC_PROOF_BATCH_SIZE = 3
 # 主站 key 在同一页面刷新周期内不会变化。短期缓存可避免 React 开发模式重复加载、
 # 页面重绘或多个调用方重复读取同一个渠道时再次触发主站的保护接口限流。
 MAIN_CHANNEL_KEY_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -786,6 +784,7 @@ DDL_STATEMENTS = [
         access_token TEXT,
         access_user_id VARCHAR(255),
         security_proof TEXT,
+        security_proof_verified_at VARCHAR(40),
         login_username VARCHAR(255),
         login_password TEXT,
         browser_access_token TEXT,
@@ -797,6 +796,13 @@ DDL_STATEMENTS = [
         sub2api_access_token TEXT,
         sub2api_refresh_token TEXT,
         sub2api_access_expires_at BIGINT,
+        key_sync_enabled TINYINT NOT NULL DEFAULT 0,
+        key_sync_interval_minutes INT NOT NULL DEFAULT 5,
+        key_sync_last_at VARCHAR(40),
+        key_sync_next_at VARCHAR(40),
+        key_sync_last_error TEXT,
+        key_sync_backoff_until VARCHAR(40),
+        key_sync_failure_count INT NOT NULL DEFAULT 0,
         created_at VARCHAR(40) NOT NULL,
         updated_at VARCHAR(40) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -964,6 +970,7 @@ NOTIFICATION_COLUMN_ADDITIONS = {
 ADMIN_SITE_COLUMN_ADDITIONS = {
     "platform": "VARCHAR(32) NOT NULL DEFAULT 'newapi'",
     "security_proof": "TEXT",
+    "security_proof_verified_at": "VARCHAR(40)",
     "login_username": "VARCHAR(255)",
     "login_password": "TEXT",
     "browser_access_token": "TEXT",
@@ -975,6 +982,13 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
     "sub2api_access_token": "TEXT",
     "sub2api_refresh_token": "TEXT",
     "sub2api_access_expires_at": "BIGINT",
+    "key_sync_enabled": "TINYINT NOT NULL DEFAULT 0",
+    "key_sync_interval_minutes": "INT NOT NULL DEFAULT 5",
+    "key_sync_last_at": "VARCHAR(40)",
+    "key_sync_next_at": "VARCHAR(40)",
+    "key_sync_last_error": "TEXT",
+    "key_sync_backoff_until": "VARCHAR(40)",
+    "key_sync_failure_count": "INT NOT NULL DEFAULT 0",
 }
 
 
@@ -3513,6 +3527,14 @@ def list_admin_sites_payload() -> List[Dict[str, Any]]:
             "login_last_error": r.get("browser_login_last_error"),
             "login_last_check_at": r.get("browser_login_last_check_at"),
             "has_security_proof": bool(r.get("security_proof")),
+            "security_proof_verified_at": r.get("security_proof_verified_at"),
+            "key_sync_enabled": bool(r.get("key_sync_enabled")),
+            "key_sync_interval_minutes": int(r.get("key_sync_interval_minutes") or 5),
+            "key_sync_last_at": r.get("key_sync_last_at"),
+            "key_sync_next_at": r.get("key_sync_next_at"),
+            "key_sync_last_error": r.get("key_sync_last_error"),
+            "key_sync_backoff_until": r.get("key_sync_backoff_until"),
+            "key_sync_failure_count": int(r.get("key_sync_failure_count") or 0),
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }
@@ -3534,6 +3556,11 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
     access_user_id = str(body.get("access_user_id") or "").strip()
     login_username = str(body.get("login_username") or "").strip()
     login_password = str(body.get("login_password") or "")
+    key_sync_enabled = 1 if body.get("key_sync_enabled") and platform == "newapi" else 0
+    try:
+        key_sync_interval = max(5, min(1440, int(body.get("key_sync_interval_minutes") or 5)))
+    except (TypeError, ValueError):
+        return False, None, "key 自动更新间隔无效"
     if not name or not base_url:
         return False, None, "请填写管理站点名称和 Base URL"
     if platform == "newapi" and (not access_token or not access_user_id):
@@ -3561,9 +3588,10 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             login_username, login_password, sub2api_access_token,
             sub2api_refresh_token, sub2api_access_expires_at,
             browser_login_last_error, browser_login_last_check_at,
+            key_sync_enabled, key_sync_interval_minutes, key_sync_next_at,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -3577,6 +3605,9 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             str(auth.get("refresh_token") or ""),
             int(auth.get("access_expires_at") or 0),
             now if platform == "sub2api" else None,
+            key_sync_enabled,
+            key_sync_interval,
+            now if key_sync_enabled else None,
             now,
             now,
         ),
@@ -3598,6 +3629,29 @@ def update_admin_site(admin_site_id: int, body: Dict[str, Any]) -> Tuple[bool, O
 
     fields: List[str] = []
     params: List[Any] = []
+    if "key_sync_enabled" in body or "key_sync_interval_minutes" in body:
+        enabled = (
+            1 if body.get("key_sync_enabled", existing.get("key_sync_enabled")) and platform == "newapi" else 0
+        )
+        try:
+            interval = max(
+                5,
+                min(
+                    1440,
+                    int(body.get("key_sync_interval_minutes") or existing.get("key_sync_interval_minutes") or 5),
+                ),
+            )
+        except (TypeError, ValueError):
+            return False, "key 自动更新间隔无效"
+        fields.extend([
+            "key_sync_enabled = ?",
+            "key_sync_interval_minutes = ?",
+            "key_sync_next_at = ?",
+            "key_sync_last_error = NULL",
+            "key_sync_backoff_until = NULL",
+            "key_sync_failure_count = 0",
+        ])
+        params.extend([enabled, interval, utc_now_iso() if enabled else None])
     if "name" in body:
         name = str(body.get("name") or "").strip()
         if not name:
@@ -3710,6 +3764,7 @@ def update_admin_site(admin_site_id: int, body: Dict[str, Any]) -> Tuple[bool, O
             "browser_access_expires_at = NULL",
             "browser_login_last_error = NULL",
             "security_proof = NULL",
+            "security_proof_verified_at = NULL",
         ])
     if not fields:
         return False, "没有要更新的字段"
@@ -3832,9 +3887,69 @@ def verify_admin_site_channel_key_access(
     if not isinstance(payload, dict) or not payload.get("success") or not proof:
         message = str(payload.get("message")) if isinstance(payload, dict) else "主站安全验证失败"
         return False, message or "主站安全验证失败"
+    verified_at = utc_now_iso()
+    verification_guard_until = (
+        app_now() + timedelta(seconds=60)
+    ).isoformat(timespec="seconds")
     db_execute(
-        "UPDATE admin_sites SET security_proof = ?, updated_at = ? WHERE id = ?",
-        (str(proof).strip(), utc_now_iso(), admin_site_id),
+        """
+        UPDATE admin_sites SET security_proof = ?, security_proof_verified_at = ?,
+            key_sync_next_at = CASE WHEN key_sync_enabled = 1 THEN ? ELSE key_sync_next_at END,
+            key_sync_last_error = NULL,
+            key_sync_backoff_until = CASE WHEN key_sync_enabled = 1 THEN ? ELSE NULL END,
+            key_sync_failure_count = 0, updated_at = ? WHERE id = ?
+        """,
+        (
+            str(proof).strip(),
+            verified_at,
+            verified_at,
+            verification_guard_until,
+            verified_at,
+            admin_site_id,
+        ),
+    )
+    refreshed_site = db_query_one(
+        "SELECT * FROM admin_sites WHERE id = ?", (admin_site_id,)
+    )
+    refresh_result = refresh_next_admin_site_channel_key(refreshed_site or site)
+    if not refresh_result.get("success"):
+        db_execute(
+            """
+            UPDATE admin_sites SET key_sync_last_at = ?, key_sync_last_error = ?,
+                updated_at = ? WHERE id = ?
+            """,
+            (
+                utc_now_iso(),
+                str(refresh_result.get("message") or "读取渠道 key 失败"),
+                utc_now_iso(),
+                admin_site_id,
+            ),
+        )
+        return False, (
+            "2FA 验证已通过，但读取渠道 key 失败："
+            f"{refresh_result.get('message') or '未知错误'}"
+        )
+    completed_at = utc_now_iso()
+    refreshed_admin = refreshed_site or site
+    if refreshed_admin.get("key_sync_enabled"):
+        interval = max(
+            5,
+            min(1440, int(refreshed_admin.get("key_sync_interval_minutes") or 5)),
+        )
+        next_at = (
+            completed_at
+            if int(refresh_result.get("batch_remaining") or 0) > 0
+            else (app_now() + timedelta(minutes=interval)).isoformat(timespec="seconds")
+        )
+    else:
+        next_at = refreshed_admin.get("key_sync_next_at")
+    db_execute(
+        """
+        UPDATE admin_sites SET key_sync_last_at = ?, key_sync_next_at = ?,
+            key_sync_last_error = NULL, key_sync_backoff_until = NULL,
+            key_sync_failure_count = 0, updated_at = ? WHERE id = ?
+        """,
+        (completed_at, next_at, completed_at, admin_site_id),
     )
     return True, None
 
@@ -4021,7 +4136,11 @@ def fetch_newapi_channel_key(
                 if raw_code in {"SECURITY_PROOF_REQUIRED", "SECURITY_PROOF_INVALID", "SECURITY_PROOF_EXPIRED"}:
                     if clear_admin_proof:
                         db_execute(
-                            "UPDATE admin_sites SET security_proof = NULL, updated_at = ? WHERE id = ?",
+                            """
+                            UPDATE admin_sites SET security_proof = NULL,
+                                security_proof_verified_at = NULL, updated_at = ?
+                            WHERE id = ?
+                            """,
                             (utc_now_iso(), int(site["id"])),
                         )
                     with MAIN_CHANNEL_KEY_REQUEST_LOCK:
@@ -8865,7 +8984,6 @@ def detect_site(site_id: int) -> Dict[str, Any]:
 
 
 def schedule_worker() -> None:
-    last_admin_key_sync = 0.0
     while not STOP_EVENT.is_set():
         try:
             now = app_now()
@@ -8912,15 +9030,7 @@ def schedule_worker() -> None:
                             site["id"],
                         ),
                     )
-            now_monotonic = time.monotonic()
-            if now_monotonic - last_admin_key_sync >= ADMIN_KEY_SYNC_INTERVAL_SECONDS:
-                last_admin_key_sync = now_monotonic
-                try:
-                    auto_sync_admin_site_channels_to_sites()
-                except Exception:
-                    # Site monitoring must continue even when a protected key
-                    # refresh needs renewed 2FA or an upstream is unavailable.
-                    pass
+            run_due_admin_key_syncs(now)
         except Exception:
             pass
         STOP_EVENT.wait(SCAN_INTERVAL_SECONDS)
@@ -9530,46 +9640,135 @@ def _sync_admin_site_snapshot_in_connection(
     }
 
 
-def refresh_admin_site_channel_keys(
-    admin: Dict[str, Any], channels: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Force-refresh NewAPI channel keys during an explicit/scheduled sync.
-
-    The protected key endpoint is deliberately called outside the snapshot
-    transaction. A failed refresh leaves the last known key available, while
-    successful changes trigger a fresh upstream match below.
-    """
-    if admin_site_platform(admin) != "newapi":
-        return {"refreshed": 0, "changed": 0, "failed": 0, "errors": []}
-    refreshed = changed = failed = 0
-    errors: List[str] = []
+def refresh_next_admin_site_channel_key(admin: Dict[str, Any]) -> Dict[str, Any]:
+    """Refresh one key, prioritizing channels not covered by the current proof batch."""
+    admin_site_id = int(admin.get("id") or 0)
+    ok, raw_channels, _meta, error = fetch_admin_site_channels(admin, "")
+    if not ok:
+        return {"success": False, "message": error or "读取主站渠道失败"}
+    channels, normalize_error = normalize_admin_sync_channels(raw_channels)
+    if normalize_error:
+        return {"success": False, "message": normalize_error}
+    fetched_rows = db_query_all(
+        "SELECT channel_id, fetched_at FROM admin_channel_keys WHERE admin_site_id = ?",
+        (admin_site_id,),
+    )
+    fetched_at = {int(row["channel_id"]): str(row.get("fetched_at") or "") for row in fetched_rows}
+    candidates: List[int] = []
     for channel in channels:
         try:
             channel_id = int(channel.get("id") or 0)
         except (TypeError, ValueError):
             continue
-        if channel_id <= 0:
+        if channel_id > 0:
+            candidates.append(channel_id)
+    if not candidates:
+        return {
+            "success": True,
+            "batch_remaining": 0,
+            "message": "主站暂无可更新 key 的渠道",
+        }
+    proof_verified_at = str(admin.get("security_proof_verified_at") or "")
+    batch_candidates = (
+        [
+            value
+            for value in candidates
+            if not fetched_at.get(value) or fetched_at[value] < proof_verified_at
+        ]
+        if proof_verified_at
+        else []
+    )
+    selection = batch_candidates or candidates
+    channel_id = min(
+        selection,
+        key=lambda value: (
+            bool(fetched_at.get(value)),
+            fetched_at.get(value, ""),
+            value,
+        ),
+    )
+    previous = get_cached_admin_channel_key(admin_site_id, channel_id)
+    key_ok, key, key_error = fetch_newapi_channel_key(admin, channel_id, force_refresh=True)
+    if not key_ok:
+        return {
+            "success": False,
+            "channel_id": channel_id,
+            "message": key_error or "读取渠道 key 失败",
+        }
+    changed = key != previous
+    if changed:
+        try:
+            match_channel_upstream_binding(admin, channel_id, force_refresh=False)
+        except Exception:
+            pass
+    return {
+        "success": True,
+        "channel_id": channel_id,
+        "changed": changed,
+        "batch_remaining": max(0, len(batch_candidates) - 1),
+        "message": "渠道 key 已更新并重新匹配" if changed else "渠道 key 无变化",
+    }
+
+
+def run_due_admin_key_syncs(now: Optional[datetime] = None) -> None:
+    current = now or app_now()
+    now_iso = current.isoformat(timespec="seconds")
+    admins = db_query_all(
+        """
+        SELECT * FROM admin_sites
+        WHERE platform = 'newapi' AND key_sync_enabled = 1
+          AND (key_sync_next_at IS NULL OR key_sync_next_at <= ?)
+          AND (key_sync_backoff_until IS NULL OR key_sync_backoff_until <= ?)
+        ORDER BY COALESCE(key_sync_next_at, '') ASC, id ASC
+        """,
+        (now_iso, now_iso),
+    )
+    for admin in admins:
+        result = refresh_next_admin_site_channel_key(admin)
+        attempts = 1
+        while (
+            result.get("success")
+            and int(result.get("batch_remaining") or 0) > 0
+            and attempts < ADMIN_KEY_SYNC_PROOF_BATCH_SIZE
+        ):
+            result = refresh_next_admin_site_channel_key(admin)
+            attempts += 1
+        interval = max(5, min(1440, int(admin.get("key_sync_interval_minutes") or 5)))
+        if result.get("success"):
+            batch_remaining = int(result.get("batch_remaining") or 0)
+            next_at = (
+                current + (
+                    timedelta(seconds=SCAN_INTERVAL_SECONDS)
+                    if batch_remaining > 0
+                    else timedelta(minutes=interval)
+                )
+            ).isoformat(timespec="seconds")
+            db_execute(
+                """
+                UPDATE admin_sites SET key_sync_last_at = ?, key_sync_next_at = ?,
+                    key_sync_last_error = NULL, key_sync_backoff_until = NULL,
+                    key_sync_failure_count = 0, updated_at = ? WHERE id = ?
+                """,
+                (now_iso, next_at, now_iso, int(admin["id"])),
+            )
             continue
-        previous = get_cached_admin_channel_key(int(admin["id"]), channel_id)
-        ok, key, error = fetch_newapi_channel_key(
-            admin, channel_id, force_refresh=True
+        message = str(result.get("message") or "渠道 key 自动更新失败")
+        failures = int(admin.get("key_sync_failure_count") or 0) + 1
+        if "429" in message or "限流" in message:
+            delay_minutes = (1, 2, 5, 15, 30)[min(failures - 1, 4)]
+        elif any(marker in message for marker in ("安全验证", "2FA", "proof")):
+            delay_minutes = 30
+        else:
+            delay_minutes = min(30, max(interval, 5))
+        backoff_until = (current + timedelta(minutes=delay_minutes)).isoformat(timespec="seconds")
+        db_execute(
+            """
+            UPDATE admin_sites SET key_sync_last_at = ?, key_sync_next_at = ?,
+                key_sync_last_error = ?, key_sync_backoff_until = ?,
+                key_sync_failure_count = ?, updated_at = ? WHERE id = ?
+            """,
+            (now_iso, backoff_until, message, backoff_until, failures, now_iso, int(admin["id"])),
         )
-        if not ok:
-            failed += 1
-            message = error or "读取渠道 key 失败"
-            channel["key_sync_error"] = message
-            if message not in errors:
-                errors.append(message)
-            continue
-        refreshed += 1
-        if previous and previous != key:
-            changed += 1
-            channel["key_changed"] = True
-            try:
-                match_channel_upstream_binding(admin, channel_id, force_refresh=True)
-            except Exception as exc:
-                channel["key_sync_error"] = f"key 已更新，但重新匹配失败：{exc}"
-    return {"refreshed": refreshed, "changed": changed, "failed": failed, "errors": errors[:3]}
 
 
 def _sync_one_admin_site(
@@ -9593,17 +9792,12 @@ def _sync_one_admin_site(
         if groups_error:
             raise RuntimeError(groups_error)
 
-        key_refresh = refresh_admin_site_channel_keys(admin, channels)
         with db_connection() as connection:
             try:
                 result = _sync_admin_site_snapshot_in_connection(
                     connection, admin, channels, groups, mode
                 )
                 connection.commit()
-                result["keys_changed"] = key_refresh["changed"]
-                result["keys_refreshed"] = key_refresh["refreshed"]
-                result["keys_failed"] = key_refresh["failed"]
-                result["key_errors"] = key_refresh["errors"]
                 print(
                     "[主站同步] "
                     f"admin_site_id={admin_site_id} "
@@ -9638,9 +9832,6 @@ def _sync_one_admin_site(
             "disabled": 0,
             "reenabled": 0,
             "deleted": 0,
-            "keys_changed": 0,
-            "keys_refreshed": 0,
-            "keys_failed": 0,
         }
 
 
@@ -11007,6 +11198,94 @@ class Handler(BaseHTTPRequestHandler):
                                     (admin_site_id, result.get("id")),
                                 )
                     return json_response(self, {"success": True, "data": payload})
+                if (
+                    len(parts) == 8
+                    and parts[4] == "channels"
+                    and parts[6] == "key"
+                    and parts[7] == "refresh"
+                ):
+                    if admin_site_platform(site) != "newapi":
+                        return json_response(
+                            self,
+                            {"success": False, "message": "仅 NewAPI 主站支持刷新渠道 key"},
+                            405,
+                        )
+                    try:
+                        channel_id = int(parts[5])
+                    except Exception:
+                        return json_response(
+                            self, {"success": False, "message": "invalid channel id"}, 400
+                        )
+                    previous_key = get_cached_admin_channel_key(
+                        admin_site_id, channel_id
+                    )
+                    key_ok, channel_key, key_error = fetch_newapi_channel_key(
+                        site, channel_id, force_refresh=True
+                    )
+                    if not key_ok:
+                        message = key_error or "读取渠道真实 key 失败"
+                        status = 429 if "429" in message or "限流" in message else 400
+                        return json_response(
+                            self,
+                            {
+                                "success": False,
+                                "code": (
+                                    "rate_limited"
+                                    if status == 429
+                                    else "security_verification_required"
+                                    if any(marker in message for marker in ("安全验证", "2FA", "proof"))
+                                    else "key_refresh_failed"
+                                ),
+                                "message": message,
+                            },
+                            status,
+                        )
+                    changed = channel_key != previous_key
+                    match_ok, match_payload, match_error = (
+                        match_channel_upstream_binding(
+                            site, channel_id, force_refresh=False
+                        )
+                    )
+                    binding_row = get_channel_upstream_binding(
+                        admin_site_id, channel_id
+                    )
+                    binding_payload = (
+                        match_payload
+                        if match_ok and isinstance(match_payload, dict)
+                        else channel_upstream_binding_payload(binding_row)
+                    )
+                    match_status = str(binding_payload.get("match_status") or "")
+                    match_success = match_ok and match_status in {
+                        "matched",
+                        "matched_partial",
+                    }
+                    match_message = (
+                        match_error
+                        or binding_payload.get("match_message")
+                        or (None if match_success else "未匹配到上游分组倍率")
+                    )
+                    return json_response(
+                        self,
+                        {
+                            "success": True,
+                            "data": {
+                                "channel_id": channel_id,
+                                "changed": changed,
+                                "first_fetch": not bool(previous_key),
+                                "fetched_at": utc_now_iso(),
+                                "match_success": match_success,
+                                "match_message": match_message,
+                                "binding": binding_payload,
+                            },
+                            "message": (
+                                "渠道 key 已刷新，倍率已重新匹配"
+                                if match_success and changed
+                                else "渠道 key 已是最新，倍率已刷新"
+                                if match_success
+                                else "渠道 key 已保存，但倍率刷新失败"
+                            ),
+                        },
+                    )
                 if len(parts) == 7 and parts[4] == "channels" and parts[6] == "match":
                     if admin_site_platform(site) == "sub2api":
                         return json_response(

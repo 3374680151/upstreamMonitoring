@@ -324,6 +324,24 @@ export const api = {
       `/api/admin/sites/${adminSiteId}/channels/${channelId}/match${forceRefresh ? "?refresh=1" : ""}`,
       { method: "POST", body: "{}" },
     ),
+  refreshChannelKey: (adminSiteId: number, channelId: number) =>
+    request<{
+      success: boolean;
+      message?: string;
+      code?: string;
+      data?: {
+        channel_id: number;
+        changed: boolean;
+        first_fetch: boolean;
+        fetched_at: string;
+        match_success: boolean;
+        match_message?: string;
+        binding?: ChannelUpstreamBinding;
+      };
+    }>(`/api/admin/sites/${adminSiteId}/channels/${channelId}/key/refresh`, {
+      method: "POST",
+      body: "{}",
+    }),
   createChannel: (adminSiteId: number, payload: Partial<Channel>) =>
     request<{ success: boolean; id?: number; message?: string }>(
       `/api/admin/sites/${adminSiteId}/channels`,

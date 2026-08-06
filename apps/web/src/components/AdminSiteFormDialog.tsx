@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { errorText, useToast } from "@/components/Toast";
+import { fmtTime } from "@/lib/format";
 import type { AdminSite, AdminSiteFormPayload } from "@/lib/types";
-import { Button, Field, Input, Modal, Select } from "./ui";
+import { Button, Field, Input, Modal, Select, SwitchRow } from "./ui";
 
 const empty: AdminSiteFormPayload = {
   platform: "newapi",
@@ -12,6 +13,8 @@ const empty: AdminSiteFormPayload = {
   access_user_id: "",
   login_username: "",
   login_password: "",
+  key_sync_enabled: false,
+  key_sync_interval_minutes: 5,
 };
 
 function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
@@ -25,6 +28,8 @@ function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
       form.platform === "newapi" ? form.access_user_id.trim() : "",
     login_username: form.login_username.trim(),
     login_password: form.login_password,
+    key_sync_enabled: form.platform === "newapi" && form.key_sync_enabled,
+    key_sync_interval_minutes: Math.max(5, Math.min(1440, Number(form.key_sync_interval_minutes) || 5)),
   };
 }
 
@@ -49,9 +54,11 @@ export function AdminSiteFormDialog({
   const [testing, setTesting] = useState(false);
   const [securityCode, setSecurityCode] = useState("");
   const [verifyingSecurity, setVerifyingSecurity] = useState(false);
+  const [liveSite, setLiveSite] = useState<AdminSite | null>(site);
 
   useEffect(() => {
     if (!open) return;
+    setLiveSite(site);
     setMsg("");
     setSecurityCode("");
     setForm(
@@ -64,9 +71,31 @@ export function AdminSiteFormDialog({
             access_user_id: site.access_user_id || "",
             login_username: site.login_username || "",
             login_password: "",
+            key_sync_enabled: !!site.key_sync_enabled,
+            key_sync_interval_minutes: site.key_sync_interval_minutes || 5,
           }
         : { ...empty },
     );
+  }, [open, site?.id]);
+
+  useEffect(() => {
+    if (!open || !site?.id) return;
+    let cancelled = false;
+    const refreshStatus = async () => {
+      try {
+        const response = await api.adminSites();
+        const latest = response.data?.find((item) => item.id === site.id) || null;
+        if (!cancelled && latest) setLiveSite(latest);
+      } catch {
+        // 状态轮询失败不应打断正在编辑的表单。
+      }
+    };
+    void refreshStatus();
+    const timer = window.setInterval(() => void refreshStatus(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [open, site?.id]);
 
   const set = <K extends keyof AdminSiteFormPayload>(
@@ -187,6 +216,9 @@ export function AdminSiteFormDialog({
       toast.success("主站 key 读取权限已验证");
       await onSaved();
       await onVerified?.();
+      const response = await api.adminSites();
+      const latest = response.data?.find((item) => item.id === site.id);
+      if (latest) setLiveSite(latest);
     } catch (error) {
       const message = errorText(error, "主站安全验证失败");
       setMsg(message);
@@ -219,6 +251,8 @@ export function AdminSiteFormDialog({
                   access_user_id: "",
                   login_username: "",
                   login_password: "",
+                  key_sync_enabled: false,
+                  key_sync_interval_minutes: 5,
                 }));
               }}
             >
@@ -318,6 +352,67 @@ export function AdminSiteFormDialog({
                   </Button>
                 </div>
               </Field>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-line-soft pt-4">
+              <SwitchRow
+                label="自动更新渠道 key"
+                checked={form.key_sync_enabled}
+                onChange={(checked) => set("key_sync_enabled", checked)}
+              />
+              {form.key_sync_enabled ? (
+                <Field
+                  label="每次更新间隔（分钟）"
+                  help="每次只更新 fetched_at 最旧的一个渠道；允许 5–1440 分钟"
+                >
+                  <Input
+                    type="number"
+                    min={5}
+                    max={1440}
+                    step={1}
+                    value={form.key_sync_interval_minutes}
+                    onChange={(event) =>
+                      set("key_sync_interval_minutes", Number(event.target.value))
+                    }
+                  />
+                </Field>
+              ) : null}
+              {liveSite?.key_sync_enabled ? (
+                <div
+                  className="rounded-[var(--radius-md)] border border-line bg-panel-soft px-3 py-2 text-[12px] leading-relaxed text-ink-muted"
+                  aria-live="polite"
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        liveSite.key_sync_last_error
+                          ? "bg-danger-bg text-danger-fg"
+                          : liveSite.key_sync_last_at
+                            ? "bg-success-bg text-success-fg"
+                            : "bg-sunken text-ink-muted"
+                      }`}
+                    >
+                      {liveSite.key_sync_last_error
+                        ? "更新失败"
+                        : liveSite.key_sync_last_at
+                          ? "更新成功"
+                          : "等待首次尝试"}
+                    </span>
+                    <span className="tabular-nums">
+                      最近尝试：{fmtTime(liveSite.key_sync_last_at)} · 下次尝试：
+                      {fmtTime(liveSite.key_sync_next_at)}
+                    </span>
+                  </div>
+                  {liveSite.key_sync_last_error ? (
+                    <div className="mt-1 text-danger-fg">
+                      失败原因：{liveSite.key_sync_last_error}
+                      {liveSite.key_sync_backoff_until
+                        ? ` · 暂停至 ${fmtTime(liveSite.key_sync_backoff_until)}`
+                        : ""}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </>
         ) : (

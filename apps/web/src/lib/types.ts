@@ -407,6 +407,14 @@ export type AdminSite = {
   login_last_error?: string | null;
   login_last_check_at?: string | null;
   has_security_proof?: boolean;
+  security_proof_verified_at?: string | null;
+  key_sync_enabled?: boolean;
+  key_sync_interval_minutes?: number;
+  key_sync_last_at?: string | null;
+  key_sync_next_at?: string | null;
+  key_sync_last_error?: string | null;
+  key_sync_backoff_until?: string | null;
+  key_sync_failure_count?: number;
   created_at?: string;
   updated_at?: string;
 };
@@ -422,6 +430,8 @@ export type AdminSiteFormPayload = {
   login_username: string;
   /** 编辑时留空表示不修改 */
   login_password: string;
+  key_sync_enabled: boolean;
+  key_sync_interval_minutes: number;
 };
 
 export type AdminSiteListResponse = {

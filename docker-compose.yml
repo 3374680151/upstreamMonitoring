@@ -58,6 +58,10 @@ services:
       # 控制台登录密码（留空 = 不启用登录）；对公网暴露时务必设置。
       CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-}
       CONSOLE_SESSION_TTL: ${CONSOLE_SESSION_TTL:-604800}
+      # FastAPI 进程级调度器；保持单进程时启用。
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-1}
+      # 默认关闭 Swagger/OpenAPI，避免对外暴露内部接口。
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-0}
     ports:
       - "${PORT:-8000}:8000"
     volumes:

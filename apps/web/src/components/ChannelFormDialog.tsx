@@ -132,6 +132,12 @@ export function ChannelFormDialog({
   const hasSavedNewApiToken = Boolean(
     sameBindingPlatform && form.upstream_platform === "newapi" && binding?.has_access_token,
   );
+  const hasSavedNewApiPassword = Boolean(
+    sameBindingAuthMode &&
+      form.upstream_platform === "newapi" &&
+      form.upstream_auth_mode === "password" &&
+      binding?.has_login_password,
+  );
   const hasSavedSub2ApiPassword = Boolean(
     sameBindingAuthMode && form.upstream_auth_mode === "password" && binding?.has_login_password,
   );
@@ -313,28 +319,65 @@ export function ChannelFormDialog({
             </Field>
             {form.upstream_platform === "newapi" ? (
               <>
-                <Field
-                  label="上游普通用户系统访问令牌"
-                  help={hasSavedNewApiToken ? "当前已保存，留空保持原令牌" : "尚未配置，用于读取该用户自己的 API 密钥列表，不需要管理员权限"}
-                >
-                  <Input
-                    type="password"
-                    value={form.upstream_access_token}
-                    onChange={(e) => patch("upstream_access_token", e.target.value)}
-                    autoComplete="off"
-                    placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写上游令牌"}
-                  />
+                <Field label="上游认证方式">
+                  <Select
+                    value={form.upstream_auth_mode}
+                    onChange={(e) =>
+                      patch("upstream_auth_mode", e.target.value as AuthMode)
+                    }
+                  >
+                    <option value="token">系统访问令牌</option>
+                    <option value="password">用户名密码</option>
+                  </Select>
                 </Field>
-                <Field
-                  label="上游用户 ID"
-                  help={sameBindingPlatform && binding?.access_user_id ? "当前已配置，留空保持不变" : undefined}
-                >
-                  <Input
-                    value={form.upstream_access_user_id}
-                    onChange={(e) => patch("upstream_access_user_id", e.target.value)}
-                    placeholder="例如：1"
-                  />
-                </Field>
+                {form.upstream_auth_mode === "password" ? (
+                  <>
+                    <Field label="上游 NewAPI 用户名">
+                      <Input
+                        value={form.upstream_login_username}
+                        onChange={(e) => patch("upstream_login_username", e.target.value)}
+                        autoComplete="username"
+                      />
+                    </Field>
+                    <Field
+                      label="上游 NewAPI 密码"
+                      help={hasSavedNewApiPassword ? "当前已保存，留空保持原密码" : "用于按当前用户读取 API 密钥分组"}
+                    >
+                      <Input
+                        type="password"
+                        value={form.upstream_login_password}
+                        onChange={(e) => patch("upstream_login_password", e.target.value)}
+                        autoComplete="current-password"
+                        placeholder={hasSavedNewApiPassword ? "已保存，留空不修改" : "填写上游密码"}
+                      />
+                    </Field>
+                  </>
+                ) : (
+                  <>
+                    <Field
+                      label="上游普通用户系统访问令牌"
+                      help={hasSavedNewApiToken ? "当前已保存，留空保持原令牌" : "尚未配置，用于读取该用户自己的 API 密钥列表，不需要管理员权限"}
+                    >
+                      <Input
+                        type="password"
+                        value={form.upstream_access_token}
+                        onChange={(e) => patch("upstream_access_token", e.target.value)}
+                        autoComplete="off"
+                        placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写上游令牌"}
+                      />
+                    </Field>
+                    <Field
+                      label="上游用户 ID"
+                      help={sameBindingPlatform && binding?.access_user_id ? "当前已配置，留空保持不变" : undefined}
+                    >
+                      <Input
+                        value={form.upstream_access_user_id}
+                        onChange={(e) => patch("upstream_access_user_id", e.target.value)}
+                        placeholder="例如：1"
+                      />
+                    </Field>
+                  </>
+                )}
               </>
             ) : (
               <>

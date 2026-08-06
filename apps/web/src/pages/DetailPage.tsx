@@ -23,7 +23,8 @@ import {
   fmtTime,
   platformLabel,
   ratioLabel,
-  statusTone,
+  siteStatusLabel,
+  siteStatusTone,
   truthy,
 } from "@/lib/format";
 import { explainUpstreamError } from "@/lib/upstreamError";
@@ -85,10 +86,10 @@ export function DetailPage({
   }
 
   useEffect(() => {
-    if (routeId && routeId !== selectedId) {
+    if (routeId) {
       onSelect(routeId);
     }
-  }, [routeId, selectedId, onSelect]);
+  }, [routeId, onSelect]);
 
   useEffect(() => {
     // 切换站点时清空账户面板，避免串号展示
@@ -222,15 +223,10 @@ export function DetailPage({
             <h2 className="font-serif text-[22px] font-semibold tracking-[-0.015em] text-ink-strong">
               {site.name}
             </h2>
-            <Badge tone={statusTone(site.status)} dot>
-              {site.status}
+            <Badge tone={siteStatusTone(site)} dot>
+              {siteStatusLabel(site)}
             </Badge>
             <Badge tone="neutral">{platformLabel(site)}</Badge>
-            {truthy(site.enabled) ? (
-              <Badge tone="success">启用中</Badge>
-            ) : (
-              <Badge tone="warning">已停用</Badge>
-            )}
           </div>
           <p className="mt-1 font-mono text-[11.5px] text-ink-soft">
             {site.base_url}

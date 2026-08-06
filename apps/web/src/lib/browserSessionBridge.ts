@@ -1,6 +1,5 @@
 import type {
   SessionSyncStatus,
-  SessionSyncTargetKind,
   SiteSessionSyncRequest,
   SiteSessionSyncState,
 } from "./types";
@@ -163,8 +162,7 @@ function fallbackState(
 }
 
 async function reportBridgeFailure(
-  targetKind: SessionSyncTargetKind,
-  targetId: number,
+  siteId: number,
   request: SiteSessionSyncRequest,
   code:
     | "EXTENSION_UNAVAILABLE"
@@ -174,15 +172,8 @@ async function reportBridgeFailure(
   messageOverride?: string,
 ): Promise<SiteSessionSyncState> {
   try {
-    if (targetKind === "admin_site") {
-      await api.failAdminSiteSessionSync(targetId, request.request_id, code);
-    } else {
-      await api.failSiteSessionSync(targetId, request.request_id, code);
-    }
-    const response =
-      targetKind === "admin_site"
-        ? await api.getAdminSiteSessionSync(targetId, request.request_id)
-        : await api.getSiteSessionSync(targetId, request.request_id);
+    await api.failSiteSessionSync(siteId, request.request_id, code);
+    const response = await api.getSiteSessionSync(siteId, request.request_id);
     return {
       ...response.data,
       message: messageOverride || response.data.message,
@@ -218,25 +209,16 @@ export async function syncSiteBrowserSession(
   siteId: number,
 ): Promise<SiteSessionSyncState> {
   const created = await api.createSiteSessionSync(siteId);
-  return syncTargetBrowserSession("site", siteId, created.data);
+  return syncSiteSession(siteId, created.data);
 }
 
-export async function syncAdminSiteBrowserSession(
-  adminSiteId: number,
-): Promise<SiteSessionSyncState> {
-  const created = await api.createAdminSiteSessionSync(adminSiteId);
-  return syncTargetBrowserSession("admin_site", adminSiteId, created.data);
-}
-
-async function syncTargetBrowserSession(
-  targetKind: SessionSyncTargetKind,
-  targetId: number,
+async function syncSiteSession(
+  siteId: number,
   request: SiteSessionSyncRequest,
 ): Promise<SiteSessionSyncState> {
   if (!(await probeSessionBridge())) {
     return reportBridgeFailure(
-      targetKind,
-      targetId,
+      siteId,
       request,
       "EXTENSION_UNAVAILABLE",
       EXTENSION_REQUIRED_MESSAGE,
@@ -247,28 +229,25 @@ async function syncTargetBrowserSession(
   try {
     bridgeResult = await startSessionBridgeRequest(request);
   } catch {
-    return reportBridgeFailure(targetKind, targetId, request, "SYNC_FAILED");
+    return reportBridgeFailure(siteId, request, "SYNC_FAILED");
   }
   if (bridgeResult.code === "ORIGIN_PERMISSION_REQUIRED") {
     return reportBridgeFailure(
-      targetKind,
-      targetId,
+      siteId,
       request,
       "ORIGIN_PERMISSION_REQUIRED",
     );
   }
   if (bridgeResult.code === "COOKIE_PERMISSION_REQUIRED") {
     return reportBridgeFailure(
-      targetKind,
-      targetId,
+      siteId,
       request,
       "COOKIE_PERMISSION_REQUIRED",
     );
   }
   if (bridgeResult.code === "SYNC_FAILED") {
     return reportBridgeFailure(
-      targetKind,
-      targetId,
+      siteId,
       request,
       "SYNC_FAILED",
       bridgeResult.message,
@@ -277,16 +256,13 @@ async function syncTargetBrowserSession(
 
   const deadline = Date.now() + Math.max(5000, request.expires_in * 1000 + 3000);
   while (Date.now() < deadline) {
-    const response =
-      targetKind === "admin_site"
-        ? await api.getAdminSiteSessionSync(targetId, request.request_id)
-        : await api.getSiteSessionSync(targetId, request.request_id);
+    const response = await api.getSiteSessionSync(siteId, request.request_id);
     if (SESSION_SYNC_TERMINAL_STATUSES.has(response.data.status)) {
       return response.data;
     }
     await delay(400);
   }
-  return reportBridgeFailure(targetKind, targetId, request, "SYNC_FAILED");
+  return reportBridgeFailure(siteId, request, "SYNC_FAILED");
 }
 
 export function isSessionSyncRetryable(status?: SessionSyncStatus): boolean {

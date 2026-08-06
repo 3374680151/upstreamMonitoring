@@ -406,9 +406,6 @@ export type AdminSite = {
   has_sub2api_session?: boolean;
   login_last_error?: string | null;
   login_last_check_at?: string | null;
-  has_browser_session?: boolean;
-  browser_login_last_error?: string | null;
-  browser_login_last_check_at?: string | null;
   has_security_proof?: boolean;
   created_at?: string;
   updated_at?: string;

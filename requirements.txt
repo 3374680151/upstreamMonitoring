@@ -1,2 +1,5 @@
-# 后端仅依赖一个纯 Python 的 MySQL 驱动；其余全部走标准库。
-PyMySQL>=1.1
+# FastAPI/Uvicorn 提供 ASGI Web 层；业务数据库仍直接使用 PyMySQL，
+# 不引入 SQLAlchemy、异步 HTTP 客户端或任务队列。
+fastapi>=0.128,<1
+uvicorn>=0.39,<1
+PyMySQL>=1.1,<2

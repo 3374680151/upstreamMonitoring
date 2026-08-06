@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Plus, RefreshCw, Cloud } from "lucide-react";
+import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { Plus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { SiteFormDialog } from "@/components/SiteFormDialog";
 import { RatiosDialog } from "@/components/RatiosDialog";
 import { LoginPage } from "@/components/LoginPage";
-import { Button, ConfirmDialog, Select } from "@/components/ui";
+import { Button, ConfirmDialog } from "@/components/ui";
 import { errorText, useToast } from "@/components/Toast";
 import { api, setConsoleToken } from "@/lib/api";
 import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
@@ -20,7 +20,6 @@ import { NotificationsPage } from "@/pages/NotificationsPage";
 
 export default function App() {
   const navigate = useNavigate();
-  const location = useLocation();
   const toast = useToast();
   const [syncing, setSyncing] = useState(false);
   const [reconcileMode, setReconcileMode] = useState<"disable" | "delete">(
@@ -59,38 +58,6 @@ export default function App() {
         return nextSites[0]?.id ?? null;
       });
       setError("");
-      // Surface auto-sync results so the user can see when new main-site
-      // channels were imported.  The backend fires this on every /api/sites
-      // call; we only show a toast when something actually changed.
-      const autoSync = (sitesResp as { auto_sync?: unknown }).auto_sync;
-      if (Array.isArray(autoSync)) {
-        const imported = autoSync.filter(
-          (entry) =>
-            entry &&
-            typeof entry === "object" &&
-            (entry as { imported?: number }).imported,
-        );
-        const failed = autoSync.filter(
-          (entry) =>
-            entry &&
-            typeof entry === "object" &&
-            (entry as { status?: string }).status === "fetch_failed",
-        );
-        if (imported.length > 0) {
-          const total = imported.reduce(
-            (sum, entry) =>
-              sum + ((entry as { imported?: number }).imported || 0),
-            0,
-          );
-          setError(
-            `已从主站自动同步 ${total} 个新渠道（共 ${imported.length} 个主站）`,
-          );
-        } else if (failed.length > 0) {
-          const firstMessage =
-            (failed[0] as { message?: string }).message || "读取失败";
-          setError(`主站渠道自动同步失败：${firstMessage}`);
-        }
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -187,17 +154,30 @@ export default function App() {
     void persistReconcileMode("disable");
   }
 
-  async function handleSyncMainSites() {
-    if (syncing) return;
+  async function handleSyncMainSites(adminSiteId: number): Promise<boolean> {
+    if (syncing) return false;
     setSyncing(true);
     try {
-      const result = await api.syncMainSites();
+      const result = await api.syncMainSites(adminSiteId);
       await refresh();
       const parts: string[] = [];
       if (result.imported) parts.push(`新增 ${result.imported}`);
       if (result.reenabled) parts.push(`恢复 ${result.reenabled}`);
       if (result.disabled) parts.push(`停用 ${result.disabled}`);
       if (result.deleted) parts.push(`删除 ${result.deleted}`);
+      if (result.conflicts) parts.push(`平台冲突 ${result.conflicts}`);
+      if (result.channels_changed) parts.push("渠道数据已更新");
+      if (result.groups_changed) parts.push("分组数据已更新");
+      if (result.keys_refreshed) {
+        parts.push(`已刷新 ${result.keys_refreshed} 个渠道 key`);
+      }
+      if (result.keys_changed) {
+        parts.push(`${result.keys_changed} 个 key 已变化并重新匹配`);
+      }
+      if (result.keys_failed) {
+        parts.push(`${result.keys_failed} 个 key 刷新失败`);
+        if (result.key_errors?.[0]) parts.push(result.key_errors[0]);
+      }
       if (result.failed) {
         toast.info(
           `主站同步完成${parts.length ? "：" + parts.join(" · ") : ""}，${result.failed} 个主站读取失败`,
@@ -207,8 +187,12 @@ export default function App() {
       } else {
         toast.success("主站同步完成，渠道已是最新");
       }
+      // A 200 response can still contain per-site sync failures. Do not let
+      // the channel page replace its state as if the snapshot were current.
+      return result.success !== false && !result.failed;
     } catch (err) {
       toast.error(errorText(err, "主站同步失败"));
+      return false;
     } finally {
       setSyncing(false);
     }
@@ -289,6 +273,14 @@ export default function App() {
     navigate(`/detail/${site.id}`);
   }
 
+  const handleDetailSelect = useCallback(
+    (id: number) => {
+      setSelectedId(id);
+      navigate(`/detail/${id}`);
+    },
+    [navigate],
+  );
+
   const tableHandlers = {
     onView: handleView,
     onRatios: (site: Site) => setRatiosSite(site),
@@ -333,37 +325,6 @@ export default function App() {
       onLogout={authRequired ? handleLogout : undefined}
       actions={
         <>
-          {location.pathname === "/" ? (
-            <label className="flex items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
-              <span className="hidden lg:inline">消失渠道</span>
-              <Select
-                className="w-[4.5rem]"
-                value={reconcileMode}
-                onChange={(event) =>
-                  handleReconcileModeChange(
-                    event.target.value as "disable" | "delete",
-                  )
-                }
-                aria-label="上游消失渠道的处理方式"
-                title="主站同步时,上游已消失的监控渠道如何处理"
-              >
-                <option value="disable">停用</option>
-                <option value="delete">删除</option>
-              </Select>
-            </label>
-          ) : null}
-          {location.pathname === "/" ? (
-            <Button
-              variant="secondary"
-              aria-label="同步主站渠道"
-              title="从主站同步渠道：新增、停用已消失、恢复重现"
-              onClick={handleSyncMainSites}
-              loading={syncing}
-            >
-              {!syncing ? <Cloud size={13} /> : null}
-              <span className="hidden sm:inline">同步主站</span>
-            </Button>
-          ) : null}
           <Button
             variant="secondary"
             aria-label="刷新数据"
@@ -425,6 +386,7 @@ export default function App() {
                 sites={sites}
                 selectedId={selectedId}
                 {...tableHandlers}
+                onRefresh={refresh}
               />
             }
           />
@@ -434,10 +396,7 @@ export default function App() {
               <DetailPage
                 sites={sites}
                 selectedId={selectedId}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  navigate(`/detail/${id}`);
-                }}
+                onSelect={handleDetailSelect}
               />
             }
           />
@@ -447,10 +406,7 @@ export default function App() {
               <DetailPage
                 sites={sites}
                 selectedId={selectedId}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  navigate(`/detail/${id}`);
-                }}
+                onSelect={handleDetailSelect}
               />
             }
           />
@@ -459,7 +415,17 @@ export default function App() {
             element={<ChangesPage changes={changes} sites={sites} />}
           />
           <Route path="/balance" element={<BalancePage sites={sites} />} />
-          <Route path="/channels" element={<ChannelsPage />} />
+          <Route
+            path="/channels"
+            element={
+              <ChannelsPage
+                reconcileMode={reconcileMode}
+                onReconcileModeChange={handleReconcileModeChange}
+                onSyncMainSites={handleSyncMainSites}
+                syncing={syncing}
+              />
+            }
+          />
           <Route
             path="/notifications"
             element={

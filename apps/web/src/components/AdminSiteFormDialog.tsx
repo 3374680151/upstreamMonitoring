@@ -1,13 +1,7 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
-import { syncAdminSiteBrowserSession } from "@/lib/browserSessionBridge";
 import { errorText, useToast } from "@/components/Toast";
-import type {
-  AdminSite,
-  AdminSiteFormPayload,
-  SiteSessionSyncState,
-} from "@/lib/types";
+import type { AdminSite, AdminSiteFormPayload } from "@/lib/types";
 import { Button, Field, Input, Modal, Select } from "./ui";
 
 const empty: AdminSiteFormPayload = {
@@ -55,15 +49,11 @@ export function AdminSiteFormDialog({
   const [testing, setTesting] = useState(false);
   const [securityCode, setSecurityCode] = useState("");
   const [verifyingSecurity, setVerifyingSecurity] = useState(false);
-  const [savedAdminSiteId, setSavedAdminSiteId] = useState<number | null>(null);
-  const [syncResult, setSyncResult] = useState<SiteSessionSyncState | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setMsg("");
     setSecurityCode("");
-    setSavedAdminSiteId(site?.id ?? null);
-    setSyncResult(null);
     setForm(
       site
         ? {
@@ -133,20 +123,15 @@ export function AdminSiteFormDialog({
     }
   }
 
-  async function persistAdminSite(
-    payload: AdminSiteFormPayload,
-  ): Promise<number> {
-    const targetAdminSiteId = site?.id ?? savedAdminSiteId;
-    if (targetAdminSiteId) {
-      await api.updateAdminSite(targetAdminSiteId, payload);
+  async function persistAdminSite(payload: AdminSiteFormPayload): Promise<void> {
+    if (site?.id) {
+      await api.updateAdminSite(site.id, payload);
       await onSaved();
-      return targetAdminSiteId;
+      return;
     }
     const created = await api.createAdminSite(payload);
     if (!created.id) throw new Error("后端未返回新主站 ID");
-    setSavedAdminSiteId(created.id);
     await onSaved();
-    return created.id;
   }
 
   function validatedPayload(): AdminSiteFormPayload | null {
@@ -181,43 +166,6 @@ export function AdminSiteFormDialog({
     } finally {
       setBusy(false);
     }
-  }
-
-  async function syncBrowserLogin() {
-    if (form.platform !== "newapi") return;
-    const payload = validatedPayload();
-    if (!payload) return;
-    setBusy(true);
-    setMsg("正在保存主站并查找浏览器登录态");
-    setSyncResult(null);
-    try {
-      const targetAdminSiteId = await persistAdminSite(payload);
-      const result = await syncAdminSiteBrowserSession(targetAdminSiteId);
-      setSyncResult(result);
-      await onSaved();
-      if (result.status === "ready") {
-        setMsg("主站浏览器登录态已同步");
-        toast.success(`主站「${payload.name}」浏览器登录态已同步`);
-        return;
-      }
-      const message =
-        result.error_code === "COOKIE_PERMISSION_REQUIRED"
-          ? "扩展需要读取 NewAPI 登录 Cookie 的权限，请允许后重新同步"
-          : result.message || result.error_code || "浏览器登录态同步失败";
-      setMsg(message);
-      toast.info(`主站已保存：${message}`);
-    } catch (error) {
-      const message = errorText(error, "浏览器登录态同步失败");
-      setMsg(message);
-      toast.error(message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function openMainSiteLogin() {
-    const url = form.base_url.trim().replace(/\/+$/, "");
-    if (url) window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function verifyKeyAccess() {
@@ -347,19 +295,6 @@ export function AdminSiteFormDialog({
                   placeholder={site?.has_login_password ? "已保存" : "登录密码"}
                 />
               </Field>
-              {site?.has_browser_session ? (
-                <div className="text-[12.5px] text-success-fg sm:col-span-2">
-                  网页登录态可用
-                </div>
-              ) : site?.browser_login_last_error ? (
-                <div className="text-[12.5px] text-danger-fg sm:col-span-2">
-                  最近登录失败：{site.browser_login_last_error}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg">
-              扩展 0.1.2 加载时已统一申请站点和 NewAPI Cookie 权限。可从当前 Chrome 同步管理员会话，系统访问令牌和 2FA 验证状态不会被覆盖。
             </div>
 
             <div className="border-t border-line-soft pt-4">
@@ -432,46 +367,7 @@ export function AdminSiteFormDialog({
           <Button onClick={save} loading={busy} disabled={testing}>
             保存
           </Button>
-          {form.platform === "newapi" ? (
-            <Button
-              variant="brand"
-              onClick={syncBrowserLogin}
-              loading={busy}
-              disabled={testing || verifyingSecurity}
-            >
-              {busy ? null : <RefreshCw size={14} />}
-              {site || savedAdminSiteId
-                ? "同步浏览器登录态"
-                : "保存并同步登录态"}
-            </Button>
-          ) : null}
         </div>
-        {form.platform === "newapi" && syncResult && syncResult.status !== "ready" ? (
-          <div className="flex flex-wrap gap-2 rounded-[var(--radius-md)] border border-line bg-panel-soft p-3">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-8"
-              onClick={openMainSiteLogin}
-              disabled={busy}
-            >
-              <ExternalLink size={13} />
-              打开主站登录页
-            </Button>
-            <Button
-              type="button"
-              variant="brand"
-              size="sm"
-              className="h-8"
-              onClick={syncBrowserLogin}
-              loading={busy}
-            >
-              {busy ? null : <RefreshCw size={13} />}
-              重新同步
-            </Button>
-          </div>
-        ) : null}
         {msg ? (
           <div className="rounded-[var(--radius-md)] bg-sunken px-3 py-2 text-[12.5px] text-ink-muted">
             {msg}

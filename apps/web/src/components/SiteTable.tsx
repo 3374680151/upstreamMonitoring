@@ -14,8 +14,8 @@ import { isSessionSyncRetryable } from "@/lib/browserSessionBridge";
 import {
   fmtTimeParts,
   platformLabel,
-  statusLabel,
-  statusTone,
+  siteStatusLabel,
+  siteStatusTone,
   truthy,
 } from "@/lib/format";
 import { Badge } from "./Badge";
@@ -131,6 +131,7 @@ export function SiteTable({
                     const publicCount = Number(site.current_groups_count || 0);
                     const hiddenCount = Math.max(0, authCount - publicCount);
                     const selected = site.id === selectedId;
+                    const enabled = truthy(site.enabled);
                     return (
                       <tr
                         key={site.id}
@@ -159,42 +160,46 @@ export function SiteTable({
                           </div>
                         </td>
                         <td className="py-3 pr-3 align-middle">
-                          <Badge tone={statusTone(site.status)} dot>
-                            {statusLabel(site.status)}
+                          <Badge tone={siteStatusTone(site)} dot>
+                            {siteStatusLabel(site)}
                           </Badge>
                         </td>
                         <td className="py-3 pr-3 align-middle">
-                          <div className="flex flex-wrap gap-1">
-                            {hiddenCount ? (
-                              <Badge tone="warning">{hiddenCount} 隐藏</Badge>
-                            ) : (
-                              <span className="text-[11.5px] text-ink-faint">
-                                无
-                              </span>
-                            )}
-                            {site.platform === "newapi" ? (
-                              site.access_user_id && site.has_access_token ? (
-                                <Badge tone="info">用户登录</Badge>
+                          {enabled ? (
+                            <div className="flex flex-wrap gap-1">
+                              {hiddenCount ? (
+                                <Badge tone="warning">{hiddenCount} 隐藏</Badge>
                               ) : (
+                                <span className="text-[11.5px] text-ink-faint">
+                                  无
+                                </span>
+                              )}
+                              {site.platform === "newapi" ? (
+                                site.access_user_id && site.has_access_token ? (
+                                  <Badge tone="info">用户登录</Badge>
+                                ) : (
+                                  <Badge
+                                    tone="warning"
+                                    title="NewAPI 不使用浏览器同步，请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
+                                  >
+                                    未登录，需要配置登录
+                                  </Badge>
+                                )
+                              ) : site.auth_mode === "browser" ? (
                                 <Badge
-                                  tone="warning"
-                                  title="NewAPI 不使用浏览器同步，请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
+                                  tone={sessionSyncTone(site.session_sync_status)}
                                 >
-                                  未登录，需要配置登录
+                                  {sessionSyncLabel(site.session_sync_status)}
                                 </Badge>
-                              )
-                            ) : site.auth_mode === "browser" ? (
-                              <Badge
-                                tone={sessionSyncTone(site.session_sync_status)}
-                              >
-                                {sessionSyncLabel(site.session_sync_status)}
-                              </Badge>
-                            ) : site.platform === "sub2api" ? (
-                              <Badge tone="info">用户登录</Badge>
-                            ) : truthy(site.login_enabled) ? (
-                              <Badge tone="info">认证增强</Badge>
-                            ) : null}
-                          </div>
+                              ) : site.platform === "sub2api" ? (
+                                <Badge tone="info">用户登录</Badge>
+                              ) : truthy(site.login_enabled) ? (
+                                <Badge tone="info">认证增强</Badge>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-[11.5px] text-ink-faint">—</span>
+                          )}
                         </td>
                         <td className="py-3 pr-3 align-middle tabular text-ink-strong">
                           {site.current_groups_count || 0}
@@ -204,7 +209,8 @@ export function SiteTable({
                         </td>
                         <td className="py-3 align-middle">
                           <div className="flex flex-nowrap items-center justify-end gap-1">
-                            {site.platform === "sub2api" &&
+                            {enabled &&
+                            site.platform === "sub2api" &&
                             site.auth_mode === "browser" &&
                             isSessionSyncRetryable(
                               site.session_sync_status,
@@ -230,7 +236,8 @@ export function SiteTable({
                                 )}
                                 同步
                               </Button>
-                            ) : site.platform === "sub2api" &&
+                            ) : enabled &&
+                              site.platform === "sub2api" &&
                               site.auth_mode !== "browser" ? (
                               <Button
                                 variant="secondary"

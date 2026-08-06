@@ -5,7 +5,17 @@ import { SiteTable } from "@/components/SiteTable";
 import { Button, Input, Select } from "@/components/ui";
 import { useToast } from "@/components/Toast";
 import { api } from "@/lib/api";
+import { truthy } from "@/lib/format";
 import type { Site } from "@/lib/types";
+
+type MainSiteSyncRow = {
+  admin_site_id?: number;
+  platform?: string;
+  status?: string;
+  channels_count?: number;
+  groups_count?: number;
+  message?: string;
+};
 
 export function SitesPage({
   sites,
@@ -16,6 +26,7 @@ export function SitesPage({
   onEdit,
   onDelete,
   onSyncSession,
+  onRefresh,
 }: {
   sites: Site[];
   selectedId: number | null;
@@ -25,6 +36,7 @@ export function SitesPage({
   onEdit: (site: Site) => void;
   onDelete: (site: Site) => void;
   onSyncSession: (site: Site) => void | Promise<void>;
+  onRefresh: () => void | Promise<void>;
 }) {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
@@ -40,7 +52,15 @@ export function SitesPage({
       if (q && !`${site.name} ${site.base_url}`.toLowerCase().includes(q)) {
         return false;
       }
-      if (status && site.status !== status) return false;
+      const enabled = truthy(site.enabled);
+      if (status === "disabled" && enabled) return false;
+      if (
+        status &&
+        status !== "disabled" &&
+        (!enabled || site.status !== status)
+      ) {
+        return false;
+      }
       if (platform !== "all" && site.platform !== platform) return false;
       return true;
     });
@@ -51,99 +71,47 @@ export function SitesPage({
     setSyncingAll(true);
     setSyncResult("");
     try {
-      const [adminsRes, sitesRes] = await Promise.all([
-        api.adminSites(),
-        api.sites(),
-      ]);
-      const admins = adminsRes.data || [];
-      const localSites = sitesRes.data || [];
-      if (!admins.length) {
-        const message = "还没有主站，请先在「主站监控」添加主站";
-        setSyncResult(message);
-        toast.info(message);
-        return;
+      const result = await api.syncMainSites();
+      if (result.success === false) {
+        throw new Error("主站同步失败");
       }
-      const localByPlatformUrl = new Map<string, Map<string, Site>>();
-      for (const s of localSites) {
-        const platform = String(s.platform || "");
-        const url = String(s.base_url || "").replace(/\/+$/, "").toLowerCase();
-        if (!url) continue;
-        if (!localByPlatformUrl.has(platform)) {
-          localByPlatformUrl.set(platform, new Map());
-        }
-        localByPlatformUrl.get(platform)!.set(url, s);
-      }
+      await onRefresh();
+
+      const rows = (result.data || []) as MainSiteSyncRow[];
+      const syncedRows = rows.filter((row) => row.status === "synced");
+      const failedRows = rows.filter(
+        (row) =>
+          row.status === "sync_failed" ||
+          row.status === "fetch_failed" ||
+          row.status === "error",
+      );
       const summary: string[] = [];
-      const failureDetails: string[] = [];
-      let totalCreated = 0;
-      let totalSkipped = 0;
-      let totalFailed = 0;
-      for (const admin of admins) {
-        const platform = String(admin.platform || "");
-        const localByUrl = localByPlatformUrl.get(platform) || new Map();
-        const res = await api.channelCandidates(admin.id);
-        const candidates = res.data || [];
-        const created: string[] = [];
-        const skipped: string[] = [];
-        const failed: string[] = [];
-        for (const cand of candidates) {
-          const url = String(cand.base_url || "")
-            .replace(/\/+$/, "")
-            .toLowerCase();
-          if (!url) continue;
-          if (localByUrl.has(url)) {
-            skipped.push(url);
-            continue;
-          }
-          try {
-            const createdRes = await api.createSite({
-              name: cand.name || url,
-              platform: platform as "newapi" | "sub2api",
-              base_url: url,
-              interval_minutes: 60,
-              login_enabled: false,
-              auth_mode: platform === "sub2api" ? "browser" : "token",
-              login_username: "",
-              login_password: "",
-              access_token: "",
-              refresh_token: "",
-              token_expires_at: "",
-              access_user_id: "",
-              enabled: true,
-            });
-            if (createdRes.success && createdRes.id) {
-              if ((createdRes as { existed?: boolean }).existed) {
-                skipped.push(`#${createdRes.id}`);
-              } else {
-                created.push(`#${createdRes.id}`);
-              }
-              localByUrl.set(url, { id: createdRes.id } as Site);
-            } else {
-              failed.push(url);
-              failureDetails.push(
-                `${admin.name || `#${admin.id}`} ${cand.name || url}：未返回 ID（后端 success=false）`,
-              );
-            }
-          } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err);
-            failed.push(url);
-            failureDetails.push(
-              `${admin.name || `#${admin.id}`} ${cand.name || url}：${reason}`,
-            );
-          }
-        }
-        totalCreated += created.length;
-        totalSkipped += skipped.length;
-        totalFailed += failed.length;
-        summary.push(
-          `${admin.name || `#${admin.id}`}：新增 ${created.length}、已存在 ${skipped.length}、失败 ${failed.length}`,
-        );
+      if (result.channels_changed) summary.push("渠道数据已更新");
+      if (result.groups_changed) summary.push("分组数据已更新");
+      if (result.imported) summary.push(`新增监控 ${result.imported}`);
+      if (result.reenabled) summary.push(`恢复 ${result.reenabled}`);
+      if (result.disabled) summary.push(`停用 ${result.disabled}`);
+      if (result.deleted) summary.push(`删除 ${result.deleted}`);
+      if (result.conflicts) summary.push(`平台冲突 ${result.conflicts}`);
+      if (!summary.length) summary.push("渠道和分组已是最新");
+
+      const siteDetails = syncedRows.map(
+        (row) =>
+          `主站 #${row.admin_site_id ?? "-"}：${row.channels_count ?? 0} 个渠道、${row.groups_count ?? 0} 个分组`,
+      );
+      const failureDetails = failedRows.map(
+        (row) => `主站 #${row.admin_site_id ?? "-"}：${row.message || "读取失败"}`,
+      );
+      setSyncResult(
+        [...summary, ...siteDetails, ...failureDetails].join("\n"),
+      );
+      if (result.failed) {
+        toast.info(`主站同步完成，但有 ${result.failed} 个主站读取失败`);
+      } else if (result.conflicts) {
+        toast.info(`主站同步完成，但有 ${result.conflicts} 个平台冲突`);
+      } else {
+        toast.success(`主站同步完成：${summary.join("、")}`);
       }
-      const detailMessage = `新增 ${totalCreated}、已存在 ${totalSkipped}、失败 ${totalFailed}\n` +
-        summary.join("\n") +
-        (failureDetails.length ? `\n\n失败明细：\n${failureDetails.join("\n")}` : "");
-      setSyncResult(detailMessage);
-      toast.success(`主站同步完成：${summary.join("；")}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setSyncResult(`主站同步失败：${message}`);
@@ -157,7 +125,9 @@ export function SitesPage({
     if (syncingBrowser) return;
     const targets = sites.filter(
       (site) =>
-        site.platform === "sub2api" && site.auth_mode === "browser",
+        truthy(site.enabled) &&
+        site.platform === "sub2api" &&
+        site.auth_mode === "browser",
     );
     if (!targets.length) {
       toast.info("暂无配置浏览器登录态的 sub2api 渠道");
@@ -183,7 +153,9 @@ export function SitesPage({
           <div className="flex flex-wrap items-center gap-2">
             {sites.some(
               (site) =>
-                site.platform === "sub2api" && site.auth_mode === "browser",
+                truthy(site.enabled) &&
+                site.platform === "sub2api" &&
+                site.auth_mode === "browser",
             ) ? (
               <Button
                 variant="secondary"
@@ -198,9 +170,9 @@ export function SitesPage({
               variant="brand"
               onClick={() => void syncAllFromMain()}
               loading={syncingAll}
-              title="按主站所有渠道的 base_url 增量创建本地监控站点"
+              title="同步所有主站的完整渠道、分组和本地来源关联"
             >
-              从主站同步
+              同步主站
             </Button>
           </div>
         }
@@ -244,6 +216,7 @@ export function SitesPage({
               <option value="ok">正常</option>
               <option value="warning">警告</option>
               <option value="failed">异常</option>
+              <option value="disabled">停用</option>
               <option value="unknown">未知</option>
             </Select>
             <Select

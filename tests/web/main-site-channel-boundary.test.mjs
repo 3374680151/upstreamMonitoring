@@ -6,6 +6,7 @@ const channelsPageUrl = new URL(
   "../../apps/web/src/pages/ChannelsPage.tsx",
   import.meta.url,
 );
+const appPageUrl = new URL("../../apps/web/src/App.tsx", import.meta.url);
 const priorityDialogUrl = new URL(
   "../../apps/web/src/components/ChannelPriorityDialog.tsx",
   import.meta.url,
@@ -54,6 +55,21 @@ test("NewAPI updates stay priority-only while sub2api uses its dedicated editor"
   assert.match(source, /ChannelPriorityDialog/);
   assert.match(source, /Sub2ApiChannelDialog/);
   assert.match(source, /currentAdminSite\?\.platform === "sub2api"/);
+});
+
+test("main-site sync reloads channel data and waits for ratio rematching", async () => {
+  const source = await readFile(channelsPageUrl, "utf8");
+
+  assert.match(
+    source,
+    /const synced = await onSyncMainSites\(siteId\);[\s\S]*?await load\("", \{ refreshMatches: true, waitForMatches: true \}\)/,
+  );
+});
+
+test("failed main-site sync is not reported as current data", async () => {
+  const source = await readFile(appPageUrl, "utf8");
+
+  assert.match(source, /return result\.success !== false && !result\.failed/);
 });
 
 test("priority dialog contains no other channel settings", async () => {

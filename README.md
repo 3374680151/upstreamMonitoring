@@ -8,7 +8,7 @@
 
 | 层 | 实现 | 说明 |
 |----|------|------|
-| 后端 | 根目录 `app.py` | Python 标准库 HTTP 服务 + **MySQL**（唯一第三方依赖 PyMySQL） |
+| 后端 | `backend/` + 根目录 `app.py` | FastAPI/Uvicorn + **MySQL**（PyMySQL，直连不使用 ORM） |
 | 前端 | `apps/web/` | React 19 + Vite 7 + Tailwind 4（PriceAI 风格） |
 | 数据 | **MySQL** 数据库 | 站点 / 快照 / 变化 / 推送日志（连接信息走 `.env`） |
 | 部署 | `python3 app.py` 或 Docker Compose | 后端直接托管前端 `dist` |
@@ -20,7 +20,7 @@
 先安装依赖并配置数据库连接：
 
 ```bash
-pip install -r requirements.txt          # 唯一后端依赖：PyMySQL
+pip install -r requirements.txt          # FastAPI/Uvicorn + PyMySQL
 cp .env.example .env                      # 填入 DB_PASSWORD 等（.env 已被 gitignore）
 # 在 MySQL 中建库：CREATE DATABASE upstream CHARACTER SET utf8mb4;
 ```
@@ -46,7 +46,12 @@ cd apps/web && npm run build   # 产出 apps/web/dist
 cd ../.. && python3 app.py     # 访问 http://127.0.0.1:8000
 ```
 
-`app.py` 启动时若检测到 `apps/web/dist` 即托管它，否则回退到 `static/`。
+`app.py` 是兼容启动入口，内部启动 `backend.main:app`。生产镜像会托管
+`apps/web/dist` 中的前端构建产物。也可以直接运行：
+
+```bash
+uvicorn backend.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
 
 ### 方式三 · Docker
 
@@ -91,6 +96,8 @@ docker compose run --rm upstream python scripts/migrate_sqlite_to_mysql.py --tru
 | `APP_TIMEZONE` / `TZ` | `Asia/Shanghai` | 展示时区（`APP_TIMEZONE` 优先） |
 | `CONSOLE_PASSWORD` | 空（不启用） | 控制台登录密码。设置后所有 `/api/*` 需登录 |
 | `CONSOLE_SESSION_TTL` | `604800`（7 天） | 登录会话有效期（秒，最小 300） |
+| `SCHEDULER_ENABLED` | `1` | 是否启动进程内定时检测线程 |
+| `ENABLE_API_DOCS` | `0` | 是否开放 `/docs` 和 `/openapi.json` |
 
 > ⚠️ MySQL 中含密码 / token / webhook 等密钥；数据库连接密码只放本地 `.env`（已 `.gitignore`），**请勿把 `.env` 或数据库导出提交到公开仓库**。
 
@@ -117,7 +124,14 @@ docker compose run --rm upstream python scripts/migrate_sqlite_to_mysql.py --tru
 
 ```text
 upstream/
-├── app.py                    # 后端服务 + 采集调度 + 前端托管
+├── app.py                    # FastAPI 兼容启动入口
+├── backend/                  # FastAPI 应用、路由、服务、数据库和集成层
+│   ├── main.py               # lifespan、调度器和静态文件托管
+│   ├── api/                  # APIRouter、鉴权依赖和兼容路由
+│   ├── services/             # 业务 Service 和迁移适配层
+│   ├── integrations/         # NewAPI / sub2api 集成门面
+│   ├── db/                   # PyMySQL 连接和迁移入口
+│   └── core/                 # 配置、鉴权、错误处理
 ├── data/                     # 本地备份 / 迁移残留（gitignore，仅留 .gitkeep；运行期数据在 MySQL）
 ├── apps/web/                 # React 控制台
 │   ├── src/                  # 页面 / 组件 / lib / tokens

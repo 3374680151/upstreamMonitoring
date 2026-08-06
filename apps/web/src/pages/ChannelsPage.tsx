@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Cloud, RefreshCw } from "lucide-react";
 import { AdminSiteFormDialog } from "@/components/AdminSiteFormDialog";
 import { Badge } from "@/components/Badge";
 import { ChannelPriorityDialog } from "@/components/ChannelPriorityDialog";
@@ -44,11 +44,15 @@ function splitGroups(group?: string): string[] {
     .filter(Boolean);
 }
 
-function channelGroupNames(channel: Channel): string[] {
-  if (channel.source_platform === "sub2api") {
-    return (channel.groups || []).map((group) => group.name).filter(Boolean);
-  }
-  return splitGroups(channel.group);
+function channelGroupNames(
+  channel: Channel,
+  allowedGroups: ReadonlySet<string> | null = null,
+): string[] {
+  const names =
+    channel.source_platform === "sub2api"
+      ? (channel.groups || []).map((group) => group.name).filter(Boolean)
+      : splitGroups(channel.group);
+  return allowedGroups ? names.filter((name) => allowedGroups.has(name)) : names;
 }
 
 function ratioText(item?: GroupItem): string {
@@ -106,6 +110,12 @@ function staleMatchPrefix(binding?: ChannelUpstreamBinding): string {
 
 function bindingFailure(binding?: ChannelUpstreamBinding) {
   const raw = binding?.match_message || "未知错误";
+  if (/请填写\s*NewAPI\s*用户名和密码/i.test(raw)) {
+    return {
+      summary: "当前渠道选择了账号密码认证，但尚未填写用户名和密码；如已配置系统访问令牌，请将认证方式改为令牌",
+      raw,
+    };
+  }
   if (binding?.match_status === "needs_key_verification") {
     return { summary: "需要重新完成渠道 key 安全验证", raw };
   }
@@ -130,7 +140,19 @@ function bindingTone(
   return "neutral";
 }
 
-export function ChannelsPage() {
+type ReconcileMode = "disable" | "delete";
+
+export function ChannelsPage({
+  reconcileMode,
+  onReconcileModeChange,
+  onSyncMainSites,
+  syncing,
+}: {
+  reconcileMode: ReconcileMode;
+  onReconcileModeChange: (mode: ReconcileMode) => void;
+  onSyncMainSites: (adminSiteId: number) => boolean | Promise<boolean>;
+  syncing: boolean;
+}) {
   const toast = useToast();
   const [adminSites, setAdminSites] = useState<AdminSite[]>([]);
   const [siteId, setSiteId] = useState<number | null>(null);
@@ -140,6 +162,7 @@ export function ChannelsPage() {
 
   const [channels, setChannels] = useState<Channel[]>([]);
   const [groups, setGroups] = useState<Record<string, GroupItem>>({});
+  const [groupCatalogReady, setGroupCatalogReady] = useState(false);
   const [upstreamBindings, setUpstreamBindings] = useState<
     Record<string, ChannelUpstreamBinding>
   >({});
@@ -241,7 +264,10 @@ export function ChannelsPage() {
   );
 
   const load = useCallback(
-    async (query: string, options: { refreshMatches?: boolean } = {}) => {
+    async (
+      query: string,
+      options: { refreshMatches?: boolean; waitForMatches?: boolean } = {},
+    ) => {
       if (siteId == null || !currentAdminSite) return false;
       const targetSiteId = siteId;
       const targetPlatform = currentAdminSite.platform;
@@ -269,16 +295,18 @@ export function ChannelsPage() {
         if (refreshVersion !== loadVersion.current) return false;
         setChannels(channelResponse.data || []);
         setGroups(groupResponse.data || {});
+        setGroupCatalogReady(groupResponse.success === true);
         setUpstreamBindings(bindingResponse.data || {});
         dataSiteId.current = targetSiteId;
         setRowNote({});
         setActionError("");
         if (targetPlatform === "newapi" && options.refreshMatches) {
-          void refreshChannelMatches(
+          const refreshPromise = refreshChannelMatches(
             targetSiteId,
             channelResponse.data || [],
             refreshVersion,
           );
+          if (options.waitForMatches) await refreshPromise;
         }
         return true;
       } catch (err) {
@@ -289,6 +317,7 @@ export function ChannelsPage() {
         } else {
           setChannels([]);
           setGroups({});
+          setGroupCatalogReady(false);
           setUpstreamBindings({});
           setError(message);
         }
@@ -321,6 +350,7 @@ export function ChannelsPage() {
     dataSiteId.current = null;
     setChannels([]);
     setGroups({});
+    setGroupCatalogReady(false);
     setUpstreamBindings({});
     const refreshMatches =
       currentAdminSite?.platform === "newapi" &&
@@ -328,30 +358,47 @@ export function ChannelsPage() {
     void load("", { refreshMatches });
   }, [siteId, currentAdminSite?.platform, load]);
 
+  async function syncCurrentMainSite() {
+    if (siteId == null) return;
+    const synced = await onSyncMainSites(siteId);
+    if (!synced) return;
+    setGroupFilter(null);
+    setSelectedChannelId(null);
+    setSub2ApiChannel(null);
+    setRowNote({});
+    await load("", { refreshMatches: true, waitForMatches: true });
+  }
+
+  const allowedGroupNames = useMemo(
+    () => (groupCatalogReady ? new Set(Object.keys(groups)) : null),
+    [groupCatalogReady, groups],
+  );
+
   const groupChannelCount = useMemo(() => {
     const count: Record<string, number> = {};
     for (const channel of channels) {
-      for (const group of channelGroupNames(channel)) {
+      for (const group of channelGroupNames(channel, allowedGroupNames)) {
         count[group] = (count[group] || 0) + 1;
       }
     }
     return count;
-  }, [channels]);
+  }, [allowedGroupNames, channels]);
 
   const groupRows = useMemo(() => {
+    if (allowedGroupNames) return Array.from(allowedGroupNames).sort();
     const names = new Set<string>([
       ...Object.keys(groups),
       ...Object.keys(groupChannelCount),
     ]);
     return Array.from(names).sort();
-  }, [groups, groupChannelCount]);
+  }, [allowedGroupNames, groups, groupChannelCount]);
 
   const visibleChannels = useMemo(() => {
     if (!groupFilter) return channels;
     return channels.filter((channel) =>
-      channelGroupNames(channel).includes(groupFilter),
+      channelGroupNames(channel, allowedGroupNames).includes(groupFilter),
     );
-  }, [channels, groupFilter]);
+  }, [allowedGroupNames, channels, groupFilter]);
 
   const sub2ApiGroups = useMemo(
     () =>
@@ -634,6 +681,34 @@ export function ChannelsPage() {
                 </option>
               ))}
             </Select>
+            <label className="flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
+              <span>消失渠道</span>
+              <Select
+                className="w-[4.5rem]"
+                value={reconcileMode}
+                onChange={(event) =>
+                  onReconcileModeChange(
+                    event.target.value as ReconcileMode,
+                  )
+                }
+                aria-label="上游消失渠道的处理方式"
+                title="主站同步时，上游已消失的监控渠道如何处理"
+              >
+                <option value="disable">停用</option>
+                <option value="delete">删除</option>
+              </Select>
+            </label>
+            <Button
+              variant="secondary"
+              aria-label="同步主站渠道"
+              title="同步当前主站的全部渠道和分组，并对账消失渠道"
+              onClick={() => void syncCurrentMainSite()}
+              disabled={siteId == null}
+              loading={syncing}
+            >
+              {!syncing ? <Cloud size={13} /> : null}
+              同步主站
+            </Button>
             <Button
               variant="secondary"
               onClick={() => {
@@ -808,6 +883,10 @@ export function ChannelsPage() {
                       const partialMatch = binding?.match_status === "matched_partial";
                       const bindingError = bindingFailure(binding);
                       const note = rowNote[channel.id];
+                      const displayedGroups = channelGroupNames(
+                        channel,
+                        allowedGroupNames,
+                      );
                       const isMatching = matching.has(channel.id);
                       const isSelected = selectedChannelId === channel.id;
                       return (
@@ -854,12 +933,12 @@ export function ChannelsPage() {
                           </td>
                           <td className="max-w-0 py-3 pr-3">
                             <div className="flex flex-wrap gap-1">
-                              {splitGroups(channel.group).map((group) => (
+                              {displayedGroups.map((group) => (
                                 <Badge key={group} tone={groups[group] ? "info" : "neutral"}>
                                   {group}
                                 </Badge>
                               ))}
-                              {!splitGroups(channel.group).length ? (
+                              {!displayedGroups.length ? (
                                 <span className="text-[12.5px] text-ink-soft">—</span>
                               ) : null}
                             </div>

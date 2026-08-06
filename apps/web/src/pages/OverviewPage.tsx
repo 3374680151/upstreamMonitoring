@@ -13,6 +13,7 @@ import { SiteTable } from "@/components/SiteTable";
 import { ChangeTable } from "@/components/ChangeTable";
 import { MainSiteHealthPanel } from "@/components/MainSiteHealthPanel";
 import { Select } from "@/components/ui";
+import { truthy } from "@/lib/format";
 import type { Change, Site } from "@/lib/types";
 
 export function OverviewPage({
@@ -41,10 +42,14 @@ export function OverviewPage({
   const [overviewPanelHeight, setOverviewPanelHeight] = useState<number | null>(
     null,
   );
-  const enabled = sites.filter((s) => s.enabled).length;
-  const ok = sites.filter((s) => s.status === "ok").length;
-  const failed = sites.filter((s) =>
-    ["warning", "failed"].includes(String(s.status)),
+  const enabled = sites.filter((site) => truthy(site.enabled)).length;
+  const ok = sites.filter(
+    (site) => truthy(site.enabled) && site.status === "ok",
+  ).length;
+  const failed = sites.filter(
+    (site) =>
+      truthy(site.enabled) &&
+      ["warning", "failed"].includes(String(site.status)),
   ).length;
   const overviewSites =
     platformFilter === "all"

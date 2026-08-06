@@ -54,12 +54,16 @@ export function SiteFormDialog({
   const [savedSiteId, setSavedSiteId] = useState<number | null>(null);
   const [syncResult, setSyncResult] = useState<SiteSessionSyncState | null>(null);
   const [mode, setMode] = useState<"manual" | "discovery">("manual");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [needsTwoFactor, setNeedsTwoFactor] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setMsg("");
     setSavedSiteId(site?.id ?? null);
     setSyncResult(null);
+    setTwoFactorCode("");
+    setNeedsTwoFactor(false);
     setMode("manual");
     if (site) {
       setForm({
@@ -69,10 +73,7 @@ export function SiteFormDialog({
         base_url: site.base_url,
         interval_minutes: site.interval_minutes || 3,
         login_enabled: !!site.login_enabled,
-        auth_mode:
-          site.platform === "newapi"
-            ? "token"
-            : ((site.auth_mode as AuthMode) || "password"),
+        auth_mode: (site.auth_mode as AuthMode) || "token",
         login_username: site.login_username || "",
         access_user_id: site.access_user_id || "",
         token_expires_at: site.token_expires_at || "",
@@ -121,16 +122,19 @@ export function SiteFormDialog({
 
   const isSub2api = form.platform === "sub2api";
   const tokenMode = form.auth_mode === "token";
-  const browserMode = isSub2api && form.auth_mode === "browser";
-  const passwordMode = isSub2api && form.auth_mode === "password";
+  const browserMode = form.auth_mode === "browser";
+  const passwordMode = form.auth_mode === "password";
+  const newApiPasswordMode = !isSub2api && passwordMode;
   const sameSavedPlatform = Boolean(site && site.platform === form.platform);
   const sameSavedAuthMode = Boolean(
     sameSavedPlatform &&
-      (site?.platform === "newapi" ? "token" : site?.auth_mode || "password") ===
-        form.auth_mode,
+      (site?.auth_mode || "token") === form.auth_mode,
   );
   const hasSavedNewApiToken = Boolean(
     sameSavedAuthMode && !isSub2api && tokenMode && site?.has_access_token,
+  );
+  const hasSavedNewApiPassword = Boolean(
+    sameSavedAuthMode && !isSub2api && passwordMode && site?.has_login_password,
   );
   const hasSavedSub2ApiToken = Boolean(
     sameSavedAuthMode && isSub2api && tokenMode && site?.has_access_token,
@@ -147,7 +151,7 @@ export function SiteFormDialog({
   const savedTokenHelp = site && (hasSavedNewApiToken || hasSavedSub2ApiToken)
     ? "当前已有令牌，留空保持不变；填写新值会替换原令牌"
     : "仅用于读取上游数据，不需要管理员权限";
-  const savedPasswordHelp = hasSavedSub2ApiPassword
+  const savedPasswordHelp = (hasSavedSub2ApiPassword || hasSavedNewApiPassword)
     ? "当前已有密码，留空保持不变；填写新值会替换原密码"
     : "尚未配置，填写后启用账号密码登录";
 
@@ -169,14 +173,33 @@ export function SiteFormDialog({
     return false;
   }
 
+  async function runNewApiPasswordLogin(targetSiteId: number): Promise<boolean> {
+    setMsg("正在验证 NewAPI 用户名密码");
+    const result = await api.loginNewApiSite(targetSiteId, twoFactorCode.trim());
+    if (result.requires_2fa) {
+      setNeedsTwoFactor(true);
+      setMsg(result.message || "需要 2FA 验证码");
+      return false;
+    }
+    if (!result.success) {
+      throw new Error(result.message || "NewAPI 用户名密码验证失败");
+    }
+    setNeedsTwoFactor(false);
+    setTwoFactorCode("");
+    const suffix = result.warning ? `；${result.warning}` : "";
+    setMsg(`登录验证成功：${result.groups_count ?? 0} 个分组${suffix}`);
+    return true;
+  }
+
   async function save() {
     setBusy(true);
     setMsg("");
     try {
       const payload: SiteFormPayload = {
         ...form,
-        login_enabled: isSub2api ? true : form.login_enabled,
-        auth_mode: isSub2api ? form.auth_mode : "token",
+        login_enabled:
+          isSub2api || form.login_enabled || newApiPasswordMode || browserMode,
+        auth_mode: form.auth_mode,
       };
       let targetSiteId = site?.id ?? savedSiteId;
       if (site || savedSiteId) {
@@ -191,6 +214,10 @@ export function SiteFormDialog({
       if (browserMode) {
         await runBrowserSync(targetSiteId);
         return;
+      }
+      if (newApiPasswordMode) {
+        const loggedIn = await runNewApiPasswordLogin(targetSiteId);
+        if (!loggedIn) return;
       }
       await onSaved();
       toast.success(site ? `渠道「${payload.name}」已保存` : `渠道「${payload.name}」已添加`);
@@ -244,7 +271,11 @@ export function SiteFormDialog({
       setMsg("请先填写 Base URL");
       return;
     }
-    if (passwordMode && (!form.login_username.trim() || !form.login_password)) {
+    if (
+      isSub2api &&
+      passwordMode &&
+      (!form.login_username.trim() || !form.login_password)
+    ) {
       setMsg("请填写 sub2api 用户邮箱和密码");
       return;
     }
@@ -288,18 +319,37 @@ export function SiteFormDialog({
     if (isSub2api) {
       return testConnection();
     }
-    if (!baseUrl || !form.access_token.trim() || !form.access_user_id.trim()) {
+    if (
+      newApiPasswordMode &&
+      (!baseUrl || !form.login_username.trim() || !form.login_password)
+    ) {
+      setMsg("请填写 Base URL、NewAPI 用户名和密码");
+      return;
+    }
+    if (
+      !newApiPasswordMode &&
+      (!baseUrl || !form.access_token.trim() || !form.access_user_id.trim())
+    ) {
       setMsg("请填写 Base URL、系统访问令牌和 NewAPI 用户 ID");
       return;
     }
     setAuthTesting(true);
-    setMsg("访问令牌测试中...");
+    setMsg(newApiPasswordMode ? "用户名密码验证中..." : "访问令牌测试中...");
     try {
       const res = await api.checkLogin({
         base_url: baseUrl,
+        auth_mode: form.auth_mode,
+        login_username: form.login_username.trim(),
+        login_password: form.login_password,
+        two_factor_code: twoFactorCode.trim(),
         access_token: form.access_token.trim(),
         access_user_id: form.access_user_id.trim(),
       });
+      if (res.requires_2fa) {
+        setNeedsTwoFactor(true);
+        setMsg(res.message || "需要 2FA 验证码");
+        return;
+      }
       if (res.success) {
         const text = `验证成功：认证后可见 ${res.groups_count ?? 0} 个分组`;
         setMsg(text);
@@ -307,12 +357,12 @@ export function SiteFormDialog({
       } else {
         const text = res.message || "验证失败";
         setMsg(`验证失败：${text}`);
-        toast.error(`令牌验证失败：${text}`);
+        toast.error(`${newApiPasswordMode ? "用户名密码" : "令牌"}验证失败：${text}`);
       }
     } catch (err) {
       const message = errorText(err, "验证失败");
       setMsg(`验证失败：${message}`);
-      toast.error(`令牌验证失败：${message}`);
+      toast.error(`${newApiPasswordMode ? "用户名密码" : "令牌"}验证失败：${message}`);
     } finally {
       setAuthTesting(false);
     }
@@ -401,32 +451,74 @@ export function SiteFormDialog({
                 <Field label="认证方式">
                   <Select
                     value={form.auth_mode}
-                    onChange={(event) =>
-                      set("auth_mode", event.target.value as AuthMode)
-                    }
+                    onChange={(event) => {
+                      set("auth_mode", event.target.value as AuthMode);
+                      setNeedsTwoFactor(false);
+                      setTwoFactorCode("");
+                    }}
                   >
                     <option value="token">手动系统访问令牌</option>
+                    <option value="password">用户名密码登录</option>
+                    <option value="browser">浏览器登录态同步</option>
                   </Select>
                 </Field>
-                <Field
-                  label="系统访问令牌（普通用户即可）"
-                  help={hasSavedNewApiToken ? savedTokenHelp : "尚未配置，填写后可读取余额与隐藏分组"}
-                >
-                  <Input
-                    type="password"
-                    value={form.access_token}
-                    onChange={(e) => set("access_token", e.target.value)}
-                    autoComplete="off"
-                    placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写普通用户令牌"}
-                  />
-                </Field>
-                <Field label="NewAPI 用户 ID">
-                  <Input
-                    value={form.access_user_id}
-                    onChange={(e) => set("access_user_id", e.target.value)}
-                    placeholder="例如：4"
-                  />
-                </Field>
+                {tokenMode ? (
+                  <>
+                    <Field
+                      label="系统访问令牌（普通用户即可）"
+                      help={hasSavedNewApiToken ? savedTokenHelp : "尚未配置，填写后可读取余额与隐藏分组"}
+                    >
+                      <Input
+                        type="password"
+                        value={form.access_token}
+                        onChange={(e) => set("access_token", e.target.value)}
+                        autoComplete="off"
+                        placeholder={hasSavedNewApiToken ? "已保存，留空不修改" : "填写普通用户令牌"}
+                      />
+                    </Field>
+                    <Field label="NewAPI 用户 ID">
+                      <Input
+                        value={form.access_user_id}
+                        onChange={(e) => set("access_user_id", e.target.value)}
+                        placeholder="例如：4"
+                      />
+                    </Field>
+                  </>
+                ) : passwordMode ? (
+                  <>
+                    <Field label="NewAPI 用户名">
+                      <Input
+                        value={form.login_username}
+                        onChange={(e) => set("login_username", e.target.value)}
+                        autoComplete="username"
+                      />
+                    </Field>
+                    <Field label="NewAPI 密码" help={savedPasswordHelp}>
+                      <Input
+                        type="password"
+                        value={form.login_password}
+                        onChange={(e) => set("login_password", e.target.value)}
+                        autoComplete="current-password"
+                        placeholder={hasSavedNewApiPassword ? "已保存，留空不修改" : "填写用户密码"}
+                      />
+                    </Field>
+                    {needsTwoFactor ? (
+                      <Field label="2FA 验证码" help="验证码仅用于本次登录，不会保存">
+                        <Input
+                          value={twoFactorCode}
+                          onChange={(e) => setTwoFactorCode(e.target.value)}
+                          inputMode="numeric"
+                          autoComplete="one-time-code"
+                          placeholder="输入当前动态验证码"
+                        />
+                      </Field>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="rounded-[var(--radius-md)] border border-line bg-info-bg px-3 py-2.5 text-[12.5px] text-info-fg">
+                    在 Chrome 登录上游后保存，系统会同步当前登录态。适用于拦截后端 Python 请求的站点。
+                  </div>
+                )}
               </div>
             ) : null}
           </div>

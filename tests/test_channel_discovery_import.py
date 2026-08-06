@@ -501,6 +501,97 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
         )
         self.assertEqual(link_params[4], "主渠道")
 
+    def test_sync_can_reuse_existing_cross_platform_site(self):
+        class _FakeCursor:
+            def __init__(self):
+                self.queries = []
+                self.next_row = {"id": 21, "platform": "sub2api"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def execute(self, sql, params=()):
+                self.queries.append((sql, params))
+
+            def fetchone(self):
+                row, self.next_row = self.next_row, None
+                return row
+
+        class _FakeConnection:
+            def __init__(self):
+                self.cursor_obj = _FakeCursor()
+
+            def cursor(self):
+                return self.cursor_obj
+
+        fake = _FakeConnection()
+        result = app._import_discovered_site_item(
+            fake,
+            3,
+            {
+                "base_url": "https://provider.example",
+                "name": "Provider",
+                "channel_ids": [12],
+                "channel_names": ["主渠道"],
+            },
+            5,
+            allow_existing_platform=True,
+        )
+
+        self.assertEqual(result["status"], "existing")
+        self.assertEqual(result["site_id"], 21)
+        link_sql, link_params = next(
+            (sql, params)
+            for sql, params in fake.cursor_obj.queries
+            if "INSERT INTO site_discovery_links" in sql
+        )
+        self.assertEqual(link_params[:3], (21, 3, 12))
+
+    def test_reconcile_keeps_one_link_for_each_admin_channel(self):
+        class _Cursor:
+            rowcount = 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _sql, _params=()):
+                return None
+
+        class _Connection:
+            def cursor(self):
+                return _Cursor()
+
+        rows = [
+            {
+                "id": 10,
+                "site_id": 54,
+                "channel_id": 2,
+                "upstream_base_url": "https://provider.example",
+            },
+            {
+                "id": 11,
+                "site_id": 55,
+                "channel_id": 2,
+                "upstream_base_url": "https://provider.example",
+            },
+        ]
+        with patch.object(app, "db_query_all", return_value=rows):
+            removed, affected = app._reconcile_site_discovery_links_in_connection(
+                _Connection(),
+                3,
+                [{"base_url": "https://provider.example", "channel_ids": [2]}],
+                {2: 55},
+            )
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(affected, {54, 55})
+
     def test_auto_sync_imports_pending_candidates_only(self):
         admin_site = {"id": 3, "platform": "newapi", "base_url": "https://upstream.example"}
         fetched_channels = [
@@ -588,6 +679,107 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
 
         self.assertEqual(results, [])
         fetch.assert_not_called()
+
+    def test_snapshot_sync_keeps_snapshot_when_site_import_conflicts(self):
+        class _Cursor:
+            def __init__(self):
+                self.queries = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, params=None):
+                self.queries.append((sql, params))
+
+        class _Connection:
+            def __init__(self):
+                self.cursor_obj = _Cursor()
+
+            def cursor(self):
+                return self.cursor_obj
+
+        connection = _Connection()
+        with patch.object(app, "db_query_one", return_value=None), patch.object(
+            app,
+            "_import_discovered_site_item",
+            return_value={
+                "status": "conflict",
+                "site_id": 44,
+                "base_url": "https://provider.example",
+                "name": "Provider",
+                "channel_ids": [12],
+                "message": "同 URL 已存在非 NewAPI 监控站点",
+            },
+        ), patch.object(
+            app,
+            "_reconcile_site_discovery_links_in_connection",
+            return_value=(0, set()),
+        ), patch.object(
+            app,
+            "_delete_stale_admin_channel_data_in_connection",
+            return_value=(0, 0),
+        ), patch.object(
+            app,
+            "_apply_admin_site_channel_reconcile_in_connection",
+            return_value=(0, 0, 0),
+        ):
+            result = app._sync_admin_site_snapshot_in_connection(
+                connection,
+                {"id": 3, "platform": "newapi"},
+                [{"id": 12, "name": "A", "base_url": "https://provider.example"}],
+                {"default": {"ratio": 1}},
+                app.RECONCILE_MODE_DISABLE,
+            )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(result["conflict_count"], 1)
+        self.assertEqual(result["conflicts"][0]["site_id"], 44)
+        self.assertTrue(
+            any(
+                "INSERT INTO admin_site_sync_state" in sql
+                for sql, _params in connection.cursor_obj.queries
+            )
+        )
+
+    def test_sync_route_surfaces_changed_snapshot_flags(self):
+        handler = object.__new__(app.Handler)
+        handler.path = "/api/sites/sync"
+        handler.headers = {"Content-Length": "2"}
+        handler.rfile = io.BytesIO(b"{}")
+        results = [
+            {
+                "admin_site_id": 2,
+                "status": "synced",
+                "channels_changed": True,
+                "groups_changed": True,
+                "conflict_count": 0,
+                "imported": 0,
+                "disabled": 0,
+                "reenabled": 0,
+                "deleted": 0,
+            },
+            {
+                "status": "reconcile",
+                "mode": "disable",
+                "disabled": 0,
+                "reenabled": 0,
+                "deleted": 0,
+            },
+        ]
+        with patch.object(app.Handler, "_auth_guard", return_value=False), patch.object(
+            app, "read_json_body", return_value={}
+        ), patch.object(
+            app, "auto_sync_admin_site_channels_to_sites", return_value=results
+        ), patch.object(app, "json_response") as response:
+            app.Handler.do_POST(handler)
+
+        payload = response.call_args.args[1]
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["channels_changed"])
+        self.assertTrue(payload["groups_changed"])
 
 
 if __name__ == "__main__":

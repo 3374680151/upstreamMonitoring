@@ -49,6 +49,16 @@ export function statusLabel(status?: string | null): string {
   return labels[String(status || "").toLowerCase()] || status || "未知";
 }
 
+export function siteStatusTone(
+  site: Site,
+): "success" | "warning" | "danger" | "neutral" | "info" {
+  return truthy(site.enabled) ? statusTone(site.status) : "neutral";
+}
+
+export function siteStatusLabel(site: Site): string {
+  return truthy(site.enabled) ? statusLabel(site.status) : "停用";
+}
+
 export function changeTone(
   change: Change,
 ): "success" | "warning" | "danger" | "neutral" {

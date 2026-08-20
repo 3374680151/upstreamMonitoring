@@ -233,7 +233,12 @@ export type AdminSiteCapabilities = {
   toggle_channel: boolean;
   create_channel: boolean;
   delete_channel: boolean;
+  batch_channel: boolean;
   channel_key: boolean;
+  channel_key_match: boolean;
+  channel_key_fetch: boolean;
+  key_verification: boolean;
+  key_refresh: boolean;
   channel_priority: boolean;
   channel_weight: boolean;
   group_rates: boolean;
@@ -404,6 +409,11 @@ export type AdminSite = {
   login_username?: string;
   has_login_password?: boolean;
   has_sub2api_session?: boolean;
+  /** 管理主站浏览器会话只在后端保存，前端仅取得状态。 */
+  has_browser_session?: boolean;
+  session_sync_status?: SessionSyncStatus;
+  session_sync_error?: string | null;
+  session_synced_at?: string | null;
   login_last_error?: string | null;
   login_last_check_at?: string | null;
   has_security_proof?: boolean;

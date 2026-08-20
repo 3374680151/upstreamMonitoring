@@ -161,7 +161,16 @@ export default function App() {
       const result = await api.syncMainSites(adminSiteId);
       await refresh();
       const parts: string[] = [];
-      if (result.imported) parts.push(`新增 ${result.imported}`);
+      if (result.imported) {
+        const breakdown =
+          (result.imported_sub2api || 0) + (result.imported_newapi || 0) > 0
+            ? `（sub2api ${result.imported_sub2api ?? 0} · newapi ${result.imported_newapi ?? 0}）`
+            : "";
+        parts.push(`新增 ${result.imported}${breakdown}`);
+      }
+      if (result.probed_unclassified) {
+        parts.push(`未识别 ${result.probed_unclassified}`);
+      }
       if (result.reenabled) parts.push(`恢复 ${result.reenabled}`);
       if (result.disabled) parts.push(`停用 ${result.disabled}`);
       if (result.deleted) parts.push(`删除 ${result.deleted}`);

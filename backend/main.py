@@ -5,22 +5,33 @@ from __future__ import annotations
 import time
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend import legacy_runtime as legacy
-from backend.api.routers import admin_sites, auth, compat, monitoring, notifications, session_sync, settings
-from backend.core.config import WEB_DIST_DIR, get_settings
-from backend.core.errors import (
+from backend.api.exception_handlers import (
     database_busy_handler,
+    domain_error_handler,
     http_exception_handler,
+    unhandled_exception_handler,
     validation_exception_handler,
 )
+from backend.api.routers import (
+    admin_sites_v2,
+    auth,
+    monitoring,
+    notifications,
+    session_sync,
+    settings,
+)
+from backend.core.config import WEB_DIST_DIR, get_settings
+from backend.db.adapter import close as close_database_pool
+from backend.db.pool import DatabasePoolTimeoutError
+from backend.db.schema import ensure_dirs, init as init_schema, seed_demo_data, wait_for_db
+from backend.core.errors import DomainError
 from backend.core.security import require_console_auth
 from backend.workers.cache import ModelCacheWorker
 from backend.workers.scheduler import SchedulerWorker
@@ -35,12 +46,16 @@ class SPAStaticFiles(StaticFiles):
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
+            # API misses must preserve FastAPI's JSON error envelope.  The SPA
+            # fallback is only for client-side web routes.
+            if str(scope.get("path") or "").startswith("/api/"):
+                raise
             return await super().get_response("index.html", scope)
 
 
 def _seed_demo_if_enabled() -> None:
     if (os.getenv("SEED_DEMO") or "").strip().lower() in {"1", "true", "yes"}:
-        legacy.bootstrap_demo_data()
+        seed_demo_data()
 
 
 @asynccontextmanager
@@ -48,12 +63,11 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Initialize shared resources and own the process-level workers."""
     settings_value = get_settings()
     application.state.settings = settings_value
-    legacy.ensure_dirs()
-    legacy.wait_for_db()
-    legacy.init_db()
+    ensure_dirs()
+    wait_for_db()
+    init_schema()
     _seed_demo_if_enabled()
 
-    legacy.STOP_EVENT.clear()
     worker: SchedulerWorker | None = None
     if settings_value.scheduler_enabled:
         worker = SchedulerWorker()
@@ -69,10 +83,9 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        legacy.STOP_EVENT.set()
         if worker is not None:
             worker.stop(timeout=5)
-        legacy.close_database_pool()
+        close_database_pool()
 
 
 settings_value = get_settings()
@@ -85,9 +98,40 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings_value.enable_api_docs else None,
 )
 
+app.add_exception_handler(DomainError, domain_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(legacy.DatabasePoolTimeoutError, database_busy_handler)
+app.add_exception_handler(DatabasePoolTimeoutError, database_busy_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
+
+
+def _slow_request_log_line(
+    method: Any,
+    target: Any,
+    status: Any,
+    elapsed_ms: Any,
+    threshold_ms: Any,
+) -> Optional[str]:
+    """Format a single slow-request log line.  Returns ``None`` if the
+    request was within the threshold.  The path is stripped at the first
+    ``?`` so query-string tokens never leak.
+    """
+    if elapsed_ms is None or threshold_ms is None:
+        return None
+    try:
+        elapsed_value = float(elapsed_ms)
+        threshold_value = float(threshold_ms)
+    except (TypeError, ValueError):
+        return None
+    if elapsed_value < threshold_value:
+        return None
+    safe_path = str(target or "-")
+    if "?" in safe_path:
+        safe_path = safe_path.split("?", 1)[0]
+    return (
+        f"[慢请求] {method or '-'} {safe_path} "
+        f"{int(status or 0)} {elapsed_value:.1f}ms"
+    )
 
 
 @app.middleware("http")
@@ -99,7 +143,7 @@ async def request_timing_middleware(request: Request, call_next):  # type: ignor
         return response
     finally:
         elapsed_ms = (time.monotonic() - started) * 1000
-        line = legacy._slow_request_log_line(
+        line = _slow_request_log_line(
             request.method,
             request.url.path,
             response.status_code if response is not None else 500,
@@ -124,8 +168,10 @@ app.include_router(monitoring.router, prefix="/api", **protected)
 app.include_router(notifications.router, prefix="/api", **protected)
 app.include_router(settings.router, prefix="/api", **protected)
 app.include_router(session_sync.router, prefix="/api", **protected)
-app.include_router(admin_sites.router, prefix="/api", **protected)
-app.include_router(compat.router, prefix="/api", **protected)
+# admin_sites_v2 is the FastAPI-native implementation; the legacy
+# catch-all forwarder is no longer mounted because every admin-site path
+# is now covered by the v2 router.
+app.include_router(admin_sites_v2.router, prefix="/api", **protected)
 
 
 if WEB_DIST_DIR.exists():

@@ -19,18 +19,19 @@ import sqlite3
 import sys
 from pathlib import Path
 
-# 复用后端的连接层与建表逻辑（app.py 顶层会自动加载 .env）
+# 复用 FastAPI 后端的连接层与建表逻辑（连接池会自动加载本地 .env）。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import app  # noqa: E402
-
 import pymysql  # noqa: E402
+from backend.core.config import DATA_DIR  # noqa: E402
+from backend.db.pool import DB_CONFIG, connect_db  # noqa: E402
+from backend.db.schema import init as init_schema  # noqa: E402
 
 # 父表在前，导入按此序；清空按其逆序，满足外键约束。
 TABLES = ["sites", "snapshots", "changes", "notification_settings", "notification_logs"]
 
 
 def mysql_connect() -> "pymysql.connections.Connection":
-    return app.connect_db()
+    return connect_db()
 
 
 def mysql_columns(conn, table: str) -> list:
@@ -46,7 +47,9 @@ def mysql_columns(conn, table: str) -> list:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sqlite", default=str(app.DB_PATH), help="源 SQLite 文件路径")
+    parser.add_argument(
+        "--sqlite", default=str(DATA_DIR / "app.db"), help="源 SQLite 文件路径"
+    )
     parser.add_argument("--truncate", action="store_true", help="导入前清空 MySQL 目标表")
     args = parser.parse_args()
 
@@ -56,11 +59,11 @@ def main() -> int:
         return 1
 
     print(f"[*] 源：{src_path}")
-    print(f"[*] 目标 MySQL：{app.DB_CONFIG['user']}@{app.DB_CONFIG['host']}:"
-          f"{app.DB_CONFIG['port']}/{app.DB_CONFIG['database']}")
+    print(f"[*] 目标 MySQL：{DB_CONFIG['user']}@{DB_CONFIG['host']}:"
+          f"{DB_CONFIG['port']}/{DB_CONFIG['database']}")
 
     # 1) 确保 MySQL 结构存在
-    app.init_db()
+    init_schema()
 
     src = sqlite3.connect(str(src_path))
     src.row_factory = sqlite3.Row

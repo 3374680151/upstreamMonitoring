@@ -199,6 +199,9 @@ export function SiteFormDialog({
         ...form,
         login_enabled:
           isSub2api || form.login_enabled || newApiPasswordMode || browserMode,
+        // NewAPI now supports the same browser/password session modes as the
+        // discovery flow. Keep the selected mode when saving; coercing it to
+        // token would immediately invalidate a newly synced browser session.
         auth_mode: form.auth_mode,
       };
       let targetSiteId = site?.id ?? savedSiteId;

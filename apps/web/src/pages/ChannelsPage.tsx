@@ -21,6 +21,8 @@ import type {
   Sub2ApiGroupRef,
 } from "@/lib/types";
 
+type ReconcileMode = "disable" | "delete";
+
 const STATUS_META: Record<
   number,
   { label: string; tone: "success" | "warning" | "danger" | "neutral" }
@@ -139,8 +141,6 @@ function bindingTone(
   if (status && status !== "unmatched") return "danger";
   return "neutral";
 }
-
-type ReconcileMode = "disable" | "delete";
 
 export function ChannelsPage({
   reconcileMode,
@@ -369,7 +369,7 @@ export function ChannelsPage({
     setSelectedChannelId(null);
     setSub2ApiChannel(null);
     setRowNote({});
-    await load("");
+    await load("", { refreshMatches: true, waitForMatches: true });
   }
 
   const allowedGroupNames = useMemo(

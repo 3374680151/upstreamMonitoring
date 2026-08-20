@@ -174,23 +174,23 @@ export function SiteTable({
                                   无
                                 </span>
                               )}
-                              {site.platform === "newapi" ? (
-                                site.access_user_id && site.has_access_token ? (
-                                  <Badge tone="info">用户登录</Badge>
-                                ) : (
-                                  <Badge
-                                    tone="warning"
-                                    title="NewAPI 不使用浏览器同步，请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
-                                  >
-                                    未登录，需要配置登录
-                                  </Badge>
-                                )
-                              ) : site.auth_mode === "browser" ? (
+                              {site.auth_mode === "browser" ? (
                                 <Badge
                                   tone={sessionSyncTone(site.session_sync_status)}
                                 >
                                   {sessionSyncLabel(site.session_sync_status)}
                                 </Badge>
+                              ) : site.platform === "newapi" ? (
+                                site.access_user_id && site.has_access_token ? (
+                                  <Badge tone="info">用户登录</Badge>
+                                ) : (
+                                  <Badge
+                                    tone="warning"
+                                    title="请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
+                                  >
+                                    未登录，需要配置登录
+                                  </Badge>
+                                )
                               ) : site.platform === "sub2api" ? (
                                 <Badge tone="info">用户登录</Badge>
                               ) : truthy(site.login_enabled) ? (
@@ -210,7 +210,6 @@ export function SiteTable({
                         <td className="py-3 align-middle">
                           <div className="flex flex-nowrap items-center justify-end gap-1">
                             {enabled &&
-                            site.platform === "sub2api" &&
                             site.auth_mode === "browser" &&
                             isSessionSyncRetryable(
                               site.session_sync_status,

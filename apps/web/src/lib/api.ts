@@ -86,6 +86,11 @@ export const api = {
       success: boolean;
       data?: unknown[];
       imported?: number;
+      imported_sub2api?: number;
+      imported_newapi?: number;
+      probed_sub2api?: number;
+      probed_newapi?: number;
+      probed_unclassified?: number;
       conflicts?: number;
       channels_changed?: boolean;
       groups_changed?: boolean;
@@ -214,6 +219,24 @@ export const api = {
   failSiteSessionSync: (siteId: number, requestId: string, code: string) =>
     request<{ success: boolean; message?: string }>(
       `/api/sites/${siteId}/session-sync/requests/${requestId}/fail`,
+      { method: "POST", body: JSON.stringify({ code }) },
+    ),
+  createAdminSiteSessionSync: (adminSiteId: number) =>
+    request<{ success: boolean; data: SiteSessionSyncRequest }>(
+      `/api/admin/sites/${adminSiteId}/session-sync/requests`,
+      { method: "POST", body: "{}" },
+    ),
+  getAdminSiteSessionSync: (adminSiteId: number, requestId: string) =>
+    request<{ success: boolean; data: SiteSessionSyncState }>(
+      `/api/admin/sites/${adminSiteId}/session-sync/requests/${requestId}`,
+    ),
+  failAdminSiteSessionSync: (
+    adminSiteId: number,
+    requestId: string,
+    code: string,
+  ) =>
+    request<{ success: boolean; message?: string }>(
+      `/api/admin/sites/${adminSiteId}/session-sync/requests/${requestId}/fail`,
       { method: "POST", body: JSON.stringify({ code }) },
     ),
   updateSite: (id: number, payload: SiteFormPayload) =>

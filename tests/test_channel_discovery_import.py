@@ -1,9 +1,27 @@
 import io
+import json
 import unittest
+import urllib.error
 from contextlib import contextmanager
 from unittest.mock import patch
 
 import app
+
+
+class _FakeProbeResponse:
+    """urllib response double for platform-probe tests."""
+
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def read(self, _amount: int = -1) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
 
 
 class ChannelDiscoveryImportTests(unittest.TestCase):
@@ -549,6 +567,242 @@ class ChannelDiscoveryImportTests(unittest.TestCase):
             if "INSERT INTO site_discovery_links" in sql
         )
         self.assertEqual(link_params[:3], (21, 3, 12))
+
+    def test_import_discovered_site_item_uses_detected_platform(self):
+        class _FakeCursor:
+            lastrowid = 99
+
+            def __init__(self):
+                self.queries = []
+                self.fetched = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, params=()):
+                self.queries.append((sql, params))
+
+            def fetchone(self):
+                # 首次 SELECT 无已存在站点 → 走 INSERT 新建
+                if not self.fetched:
+                    self.fetched = True
+                    return None
+                return None
+
+        class _FakeConnection:
+            def __init__(self):
+                self.cursor_obj = _FakeCursor()
+
+            def cursor(self):
+                return self.cursor_obj
+
+        fake = _FakeConnection()
+        result = app._import_discovered_site_item(
+            fake,
+            3,
+            {
+                "base_url": "https://provider.example",
+                "name": "Provider",
+                "channel_ids": [12],
+                "channel_names": ["主渠道"],
+            },
+            5,
+            allow_existing_platform=True,
+            platform="sub2api",
+        )
+
+        self.assertEqual(result["status"], "created")
+        insert_sql, insert_params = next(
+            (sql, params)
+            for sql, params in fake.cursor_obj.queries
+            if "INSERT INTO sites" in sql
+        )
+        self.assertEqual(insert_params[2], "sub2api")
+
+    def test_import_discovered_site_item_keeps_existing_platform(self):
+        class _FakeCursor:
+            def __init__(self):
+                self.queries = []
+                self.next_row = {"id": 21, "platform": "sub2api"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, params=()):
+                self.queries.append((sql, params))
+
+            def fetchone(self):
+                row, self.next_row = self.next_row, None
+                return row
+
+        class _FakeConnection:
+            def __init__(self):
+                self.cursor_obj = _FakeCursor()
+
+            def cursor(self):
+                return self.cursor_obj
+
+        fake = _FakeConnection()
+        result = app._import_discovered_site_item(
+            fake,
+            3,
+            {
+                "base_url": "https://provider.example",
+                "name": "Provider",
+                "channel_ids": [12],
+                "channel_names": ["主渠道"],
+            },
+            5,
+            allow_existing_platform=True,
+            platform="newapi",
+        )
+
+        self.assertEqual(result["status"], "existing")
+        self.assertEqual(result["site_id"], 21)
+        self.assertFalse(
+            any(
+                "INSERT INTO sites" in sql
+                for sql, _params in fake.cursor_obj.queries
+            ),
+            "已存在站点不应被重写平台",
+        )
+
+    def test_snapshot_creates_site_with_detected_platform(self):
+        class _Cursor:
+            rowcount = 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _sql, _params=()):
+                return None
+
+        class _Connection:
+            def cursor(self):
+                return _Cursor()
+
+        admin = {"id": 3, "platform": "newapi", "base_url": "https://upstream.example"}
+        channels = [{"id": 11, "name": "A", "base_url": "https://provider.example"}]
+        groups = {"g1": {"ratio": 1.0}}
+        captured: dict = {}
+
+        def fake_import(connection, admin_site_id, candidate, interval, **kwargs):
+            captured["platform"] = kwargs.get("platform")
+            return {
+                "status": "created",
+                "base_url": candidate["base_url"],
+                "name": candidate["name"],
+                "channel_ids": candidate["channel_ids"],
+                "site_id": 42,
+            }
+
+        with patch.object(app, "db_query_one", return_value=None), \
+             patch.object(
+                 app,
+                 "aggregate_newapi_channel_candidates",
+                 return_value=[
+                     {
+                         "base_url": "https://provider.example",
+                         "name": "A",
+                         "channel_ids": [11],
+                         "channel_names": ["A"],
+                     }
+                 ],
+             ), patch.object(
+                 app, "_import_discovered_site_item", side_effect=fake_import
+             ), patch.object(
+                 app,
+                 "_reconcile_site_discovery_links_in_connection",
+                 return_value=(0, set()),
+             ), patch.object(
+                 app,
+                 "_delete_stale_admin_channel_data_in_connection",
+                 return_value=(0, 0),
+             ), patch.object(
+                 app,
+                 "_apply_admin_site_channel_reconcile_in_connection",
+                 return_value=(0, 0, 0),
+             ):
+            result = app._sync_admin_site_snapshot_in_connection(
+                _Connection(),
+                admin,
+                channels,
+                groups,
+                "disable",
+                detected_platform_by_url={"https://provider.example": "sub2api"},
+            )
+
+        self.assertEqual(captured["platform"], "sub2api")
+        self.assertEqual(result["imported_sub2api"], 1)
+        self.assertEqual(result["imported_newapi"], 0)
+
+    def test_detect_upstream_platform_sub2api(self):
+        def fake_open(req, timeout=None):
+            url = req.full_url
+            if url.endswith("/api/v1/models"):
+                return _FakeProbeResponse(
+                    json.dumps({"code": 0, "message": "success", "data": []}).encode()
+                )
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        with patch.object(app, "open_upstream_url", side_effect=fake_open):
+            self.assertEqual(
+                app.detect_upstream_platform("https://relay.example"), "sub2api"
+            )
+
+    def test_detect_upstream_platform_newapi(self):
+        def fake_open(req, timeout=None):
+            url = req.full_url
+            if url.endswith("/api/v1/models"):
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+            if url.endswith("/api/pricing"):
+                return _FakeProbeResponse(
+                    json.dumps({"success": True, "message": "", "data": []}).encode()
+                )
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        with patch.object(app, "open_upstream_url", side_effect=fake_open):
+            self.assertEqual(
+                app.detect_upstream_platform("https://relay.example"), "newapi"
+            )
+
+    def test_detect_upstream_platform_unknown_when_both_endpoints_fail(self):
+        def fake_open(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+
+        with patch.object(app, "open_upstream_url", side_effect=fake_open):
+            self.assertEqual(app.detect_upstream_platform("https://relay.example"), "")
+
+    def test_detect_upstream_platform_ignores_html_bodies(self):
+        def fake_open(req, timeout=None):
+            return _FakeProbeResponse(b"<html><body>spa</body></html>")
+
+        with patch.object(app, "open_upstream_url", side_effect=fake_open):
+            self.assertEqual(app.detect_upstream_platform("https://relay.example"), "")
+
+    def test_detect_upstream_platforms_dedupes_urls(self):
+        def fake_open(req, timeout=None):
+            url = req.full_url
+            if url.endswith("/api/v1/models"):
+                return _FakeProbeResponse(json.dumps({"code": 0, "data": []}).encode())
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+
+        with patch.object(app, "open_upstream_url", side_effect=fake_open):
+            result = app.detect_upstream_platforms(
+                ["https://a.example", "https://a.example", "", "https://b.example"]
+            )
+        self.assertEqual(result["https://a.example"], "sub2api")
+        self.assertEqual(result["https://b.example"], "sub2api")
+        self.assertNotIn("", result)
 
     def test_reconcile_keeps_one_link_for_each_admin_channel(self):
         class _Cursor:

@@ -1,14 +1,23 @@
 """Model-cache lifecycle facade."""
 
-from backend import legacy_runtime as legacy
+from backend.repositories.sites import SiteRepository
+from backend.services.model_cache import ModelCacheService
 
 
 class ModelCacheWorker:
+    def __init__(self) -> None:
+        self.sites = SiteRepository()
+        self.cache = ModelCacheService()
+
     def warm(self) -> None:
-        legacy.warm_model_cache()
+        # Lifecycle scheduling is owned by this worker boundary; the cache
+        # service performs the actual upstream reads asynchronously.
+        for site in self.sites.list():
+            if site.get("enabled"):
+                self.schedule_site(int(site["id"]))
 
     def refresh_site(self, site_id: int):
-        return legacy.refresh_site_model_cache(site_id)
+        return self.cache.refresh(site_id)
 
     def schedule_site(self, site_id: int) -> None:
-        legacy.schedule_model_cache_refresh(site_id)
+        self.cache.schedule(site_id)

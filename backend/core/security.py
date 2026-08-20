@@ -6,7 +6,7 @@ import re
 
 from fastapi import HTTPException, Request
 
-from backend import legacy_runtime as legacy
+from backend.core import console_auth
 
 
 def bearer_token(request: Request) -> str:
@@ -17,7 +17,7 @@ def bearer_token(request: Request) -> str:
 
 
 def is_public_api_path(path: str) -> bool:
-    if path in legacy.PUBLIC_API_PATHS:
+    if path in console_auth.PUBLIC_API_PATHS:
         return True
     return bool(
         re.fullmatch(
@@ -28,9 +28,9 @@ def is_public_api_path(path: str) -> bool:
 
 
 def console_authenticated(request: Request) -> bool:
-    if not legacy.console_auth_enabled():
+    if not console_auth.enabled():
         return True
-    return legacy.console_session_valid(bearer_token(request))
+    return console_auth.sessions.valid(bearer_token(request))
 
 
 async def require_console_auth(request: Request) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import Field
 
@@ -20,13 +20,13 @@ class SiteCreateRequest(CompatibilityModel):
 
 
 class SiteUpdateRequest(CompatibilityModel):
-    name: str | None = None
-    base_url: str | None = None
-    platform: str | None = None
-    enabled: bool | None = None
-    interval_minutes: int | None = None
-    login_enabled: bool | None = None
-    auth_mode: str | None = None
+    name: Optional[str] = None
+    base_url: Optional[str] = None
+    platform: Optional[str] = None
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+    login_enabled: Optional[bool] = None
+    auth_mode: Optional[str] = None
 
 
 class DiscoveryImportRequest(CompatibilityModel):

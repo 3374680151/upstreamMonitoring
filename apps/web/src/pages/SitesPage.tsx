@@ -126,8 +126,7 @@ export function SitesPage({
     const targets = sites.filter(
       (site) =>
         truthy(site.enabled) &&
-        site.platform === "sub2api" &&
-        site.auth_mode === "browser",
+        site.platform === "sub2api" && site.auth_mode === "browser",
     );
     if (!targets.length) {
       toast.info("暂无配置浏览器登录态的 sub2api 渠道");
@@ -154,8 +153,7 @@ export function SitesPage({
             {sites.some(
               (site) =>
                 truthy(site.enabled) &&
-                site.platform === "sub2api" &&
-                site.auth_mode === "browser",
+                site.platform === "sub2api" && site.auth_mode === "browser",
             ) ? (
               <Button
                 variant="secondary"
@@ -172,7 +170,7 @@ export function SitesPage({
               loading={syncingAll}
               title="同步所有主站的完整渠道、分组和本地来源关联"
             >
-              同步主站
+              从主站同步
             </Button>
           </div>
         }

@@ -214,16 +214,16 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
     if platform == "sub2api":
         if not login_username or not login_password:
             return False, None, "请填写 sub2api 管理员邮箱和密码"
-        from backend import legacy_runtime as _legacy
+        from backend.integrations.sub2api import sub2api_admin_login, Sub2ApiUpstreamError
 
-        logged_in, auth, login_error = _legacy.sub2api_admin_login(
+        logged_in, auth, login_error = sub2api_admin_login(
             base_url, login_username, login_password
         )
         if not logged_in:
             return (
                 False,
                 None,
-                _legacy.Sub2ApiUpstreamError(
+                Sub2ApiUpstreamError(
                     login_error or "sub2api 主站登录失败", auth
                 ),
             )
@@ -343,13 +343,13 @@ def update_admin_site(admin_site_id: int, body: Dict[str, Any]) -> Tuple[bool, O
         )
         auth: Dict[str, Any] = {}
         if credentials_changed:
-            from backend import legacy_runtime as _legacy
+            from backend.integrations.sub2api import sub2api_admin_login, Sub2ApiUpstreamError
 
-            logged_in, auth, login_error = _legacy.sub2api_admin_login(
+            logged_in, auth, login_error = sub2api_admin_login(
                 next_base_url, next_username, next_password
             )
             if not logged_in:
-                return False, _legacy.Sub2ApiUpstreamError(
+                return False, Sub2ApiUpstreamError(
                     login_error or "sub2api 主站登录失败", auth
                 )
         if "login_username" in body:

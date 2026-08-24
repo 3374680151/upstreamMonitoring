@@ -9,8 +9,8 @@ from backend.core.config import SCAN_INTERVAL_SECONDS, DEFAULT_INTERVAL_MINUTES
 from backend.core.state import STOP_EVENT
 from backend.core.time import app_now, utc_now_iso, next_check_iso
 from backend.db.connection import db_query_all, db_execute
+from backend.services.monitoring_service import detect_site
 from backend.services.sync_service import run_due_admin_key_syncs
-from backend.legacy_runtime import detect_site
 
 
 def schedule_worker() -> None:

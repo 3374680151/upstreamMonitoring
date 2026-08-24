@@ -183,9 +183,9 @@ def list_sites_payload(
     # pagination or trigger reconciliation.
     auto_sync_results: List[Dict[str, Any]] = []
     if with_auto_sync:
-        from backend import legacy_runtime as _legacy
+        from backend.services.sync_service import auto_sync_admin_site_channels_to_sites
 
-        auto_sync_results = _legacy.auto_sync_admin_site_channels_to_sites()
+        auto_sync_results = auto_sync_admin_site_channels_to_sites()
     with db_connection() as connection:
         sites = db_query_all(
             "SELECT * FROM sites ORDER BY id DESC", connection=connection

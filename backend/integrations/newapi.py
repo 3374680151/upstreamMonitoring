@@ -4,12 +4,6 @@ All NewAPI-specific protocol, parsing, channel, account, browser-session and
 uptime functions live here.  HTTP transport / upstream response helpers come
 from :mod:`backend.integrations.http`; the legacy runtime re-exports every
 name below for backward compatibility.
-
-Helpers that still live in ``backend.legacy_runtime`` (admin-site channel-key
-management, site-row helpers, etc.) are resolved lazily through the module-level
-``__getattr__`` so this module has no top-level dependency on the legacy
-runtime -- that keeps the import cycle safe when ``backend.integrations.newapi``
-is imported before ``backend.legacy_runtime`` finishes loading.
 """
 from __future__ import annotations
 
@@ -79,20 +73,6 @@ from backend.integrations.http import (
     request_json_with_headers,
 )
 
-
-def __getattr__(name):
-    """Lazy fallback to legacy_runtime for helpers not yet moved.
-
-    Only triggered for names absent from this module's namespace, so
-    intra-module calls and explicit imports resolve normally.  The import
-    is deferred to call time, avoiding a top-level circular dependency.
-    """
-    import backend.legacy_runtime as _legacy
-
-    try:
-        return getattr(_legacy, name)
-    except AttributeError:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
 
 def aggregate_newapi_channel_candidates(
     channels: List[Dict[str, Any]],

@@ -38,18 +38,10 @@ from backend.db.connection import db_execute, db_execute_rowcount, db_query_one
 # ``__getattr__``) -> ``backend.legacy_runtime`` -> ``session_sync_service``
 # (partially initialized).  This mirrors the lazy-import pattern the
 # integration modules themselves use for legacy-runtime names.
-
-
-def _lazy_legacy():
-    """Lazy accessor for helpers still living in ``backend.legacy_runtime``.
-
-    ``detect_site`` remains in the legacy runtime; importing it eagerly here
-    would create a circular import because ``legacy_runtime`` re-exports the
-    functions defined in this module.
-    """
-    import backend.legacy_runtime as legacy
-
-    return legacy
+#
+# ``detect_site`` (from ``monitoring_service``) is also imported lazily for
+# the same reason: ``monitoring_service`` imports ``mark_site_browser_session_expired``
+# from this module at top level.
 
 
 SUB2API_SESSION_SYNC_FIELDS = frozenset(
@@ -638,7 +630,12 @@ def complete_session_sync_request(
             "message": message,
         }
     finish_session_sync_request(str(request_id), "ready")
-    detection = _lazy_legacy().detect_site(int(site_id)) if target_kind == "site" else None
+    if target_kind == "site":
+        from backend.services.monitoring_service import detect_site
+
+        detection = detect_site(int(site_id))
+    else:
+        detection = None
     return 200, {
         "success": True,
         "status": "ready",

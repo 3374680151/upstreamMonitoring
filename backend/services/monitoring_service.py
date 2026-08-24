@@ -83,11 +83,6 @@ from backend.repositories.sites import (
 )
 from backend.services.notification_service import notify_changes
 
-# Functions still living on the legacy runtime (not yet extracted).
-# Use lazy ``legacy.<fn>`` access to avoid a top-level circular import:
-# this module is lazily re-exported by legacy_runtime via ``__getattr__``.
-from backend import legacy_runtime as legacy
-
 # Reconcile-mode constants (mirrored from legacy_runtime to avoid a
 # top-level ``from backend.legacy_runtime import`` that would create a
 # circular import when legacy_runtime resolves this module lazily).

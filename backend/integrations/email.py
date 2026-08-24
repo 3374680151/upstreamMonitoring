@@ -2,9 +2,9 @@
 
 ``send_email_message`` was moved here from ``backend.legacy_runtime``; the
 legacy runtime re-exports it for backward compatibility.  Notification
-settings and the notification log still live on the legacy runtime, so they
-are imported lazily inside the function to avoid a circular import at module
-load time (this module is imported before the legacy runtime finishes loading).
+settings and the notification log are resolved directly from the notifications
+repository, imported lazily inside the function to avoid a circular import at
+module load time.
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from backend.db.connection import db_execute
 
 
 def send_email_message(subject: str, message: str) -> Tuple[bool, Optional[str]]:
-    from backend import legacy_runtime as legacy
+    from backend.repositories.notifications import get_notification_settings, log_notification
 
-    settings = legacy.get_notification_settings()
+    settings = get_notification_settings()
     if not settings.get("email_enabled"):
         return True, "邮箱推送未启用，未发送测试邮件"
 
@@ -58,7 +58,7 @@ def send_email_message(subject: str, message: str) -> Tuple[bool, Optional[str]]
             "UPDATE notification_settings SET email_last_error = ?, updated_at = ? WHERE id = 1",
             (error, utc_now_iso()),
         )
-        legacy.log_notification("email", "failed", smtp_to, message, error)
+        log_notification("email", "failed", smtp_to, message, error)
         return False, error
 
     sent_at = utc_now_iso()
@@ -70,7 +70,7 @@ def send_email_message(subject: str, message: str) -> Tuple[bool, Optional[str]]
         """,
         (sent_at, sent_at),
     )
-    legacy.log_notification("email", "success", smtp_to, message, None)
+    log_notification("email", "success", smtp_to, message, None)
     return True, None
 
 

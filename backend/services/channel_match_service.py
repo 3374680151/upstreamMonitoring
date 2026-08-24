@@ -544,7 +544,7 @@ def match_channel_upstream_binding(
             else None
         )
         if refreshed_auth and not inherited_from_monitor:
-            from backend.legacy_runtime import persist_channel_binding_refreshed_auth
+            from backend.services.sync_service import persist_channel_binding_refreshed_auth
 
             persist_channel_binding_refreshed_auth(
                 admin_site_id,
@@ -631,7 +631,7 @@ def match_channel_upstream_binding(
         )
         if key_refreshed_auth:
             refreshed_auth = key_refreshed_auth
-            from backend.legacy_runtime import persist_channel_binding_refreshed_auth
+            from backend.services.sync_service import persist_channel_binding_refreshed_auth
 
             persist_channel_binding_refreshed_auth(
                 admin_site_id,

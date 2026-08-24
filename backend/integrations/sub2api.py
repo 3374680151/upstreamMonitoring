@@ -8,10 +8,8 @@ existing callers keep working unchanged.
 
 Generic transport / response helpers (``request_json``, ``admin_request_json``,
 ``_upstream_response_details`` ...) and the shared browser-session
-persistence primitives still live in the legacy runtime.  They are resolved
-lazily through the module-level ``__getattr__`` at the bottom of this file,
-which keeps this module free of any eager ``legacy_runtime`` import and so
-breaks what would otherwise be a circular import.
+persistence primitives live in :mod:`backend.integrations.http` and
+:mod:`backend.legacy_runtime` respectively.
 """
 
 from __future__ import annotations
@@ -2066,27 +2064,4 @@ class Sub2ApiClient:
             refresh_token=site.get("refresh_token") or "",
             site_id=int(site.get("id") or 0),
         )
-
-_UNSET = object()
-_BRIDGE_ALLOWLIST = frozenset({
-    "request_json",
-    "admin_request_json",
-    "_upstream_response_details",
-    "_upstream_response_message",
-    "persist_site_browser_session",
-    "mark_site_browser_session_expired",
-    "_site_session_sync_request_error",
-})
-
-
-def __getattr__(name: str):
-    if name.startswith("__") and name.endswith("__"):
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    from backend import legacy_runtime as _legacy
-
-    value = getattr(_legacy, name, _UNSET)
-    if value is _UNSET:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    globals()[name] = value
-    return value
 

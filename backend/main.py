@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend.api.routers import admin_sites, auth, compat, monitoring, notifications, session_sync, settings
+from backend.api.routers import admin_sites, auth, monitoring, notifications, session_sync, settings
 from backend.core.config import SLOW_REQUEST_THRESHOLD_MS, WEB_DIST_DIR, get_settings
 from backend.core.errors import (
     DatabasePoolTimeoutError,
@@ -43,7 +43,7 @@ class SPAStaticFiles(StaticFiles):
 
 def _seed_demo_if_enabled() -> None:
     if (os.getenv("SEED_DEMO") or "").strip().lower() in {"1", "true", "yes"}:
-        from backend.legacy_runtime import bootstrap_demo_data
+        from backend.db.schema import bootstrap_demo_data
         bootstrap_demo_data()
 
 
@@ -124,7 +124,6 @@ app.include_router(notifications.router, prefix="/api", **protected)
 app.include_router(settings.router, prefix="/api", **protected)
 app.include_router(session_sync.router, prefix="/api", **protected)
 app.include_router(admin_sites.router, prefix="/api", **protected)
-app.include_router(compat.router, prefix="/api", **protected)
 
 
 if WEB_DIST_DIR.exists():

@@ -54,12 +54,16 @@ from backend.services.discovery_service import (
     _import_discovered_site_item,
     _reconcile_site_discovery_links_in_connection,
 )
-from backend.legacy_runtime import (
-    RECONCILE_MODE_DELETE,
+from backend.integrations.newapi import (
     aggregate_newapi_channel_candidates,
+    fetch_newapi_channel_key,
+)
+from backend.services.admin_site_service import (
     fetch_admin_site_channels,
     fetch_admin_site_groups,
-    fetch_newapi_channel_key,
+)
+from backend.services.monitoring_service import (
+    RECONCILE_MODE_DELETE,
     get_main_site_reconcile_mode,
 )
 

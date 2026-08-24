@@ -2,9 +2,9 @@
 
 ``send_wecom_message`` was moved here from ``backend.legacy_runtime``; the
 legacy runtime re-exports it for backward compatibility.  Notification
-settings and the notification log still live on the legacy runtime, so they
-are imported lazily inside the function to avoid a circular import at module
-load time (this module is imported before the legacy runtime finishes loading).
+settings and the notification log are resolved directly from the notifications
+repository, imported lazily inside the function to avoid a circular import at
+module load time.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from backend.integrations.http import request_json
 
 
 def send_wecom_message(subject: str, message: str) -> Tuple[bool, Optional[str]]:
-    from backend import legacy_runtime as legacy
+    from backend.repositories.notifications import get_notification_settings, log_notification
 
-    settings = legacy.get_notification_settings()
+    settings = get_notification_settings()
     if not settings.get("wecom_enabled"):
         return True, "企业微信推送未启用，未发送消息"
 
@@ -44,7 +44,7 @@ def send_wecom_message(subject: str, message: str) -> Tuple[bool, Optional[str]]
             "UPDATE notification_settings SET wecom_last_error = ?, updated_at = ? WHERE id = 1",
             (error_text, utc_now_iso()),
         )
-        legacy.log_notification("wecom", "failed", webhook, message, error_text)
+        log_notification("wecom", "failed", webhook, message, error_text)
         return False, error_text
 
     if isinstance(payload, dict) and payload.get("errcode") not in (None, 0):
@@ -53,7 +53,7 @@ def send_wecom_message(subject: str, message: str) -> Tuple[bool, Optional[str]]
             "UPDATE notification_settings SET wecom_last_error = ?, updated_at = ? WHERE id = 1",
             (error_text, utc_now_iso()),
         )
-        legacy.log_notification("wecom", "failed", webhook, message, error_text)
+        log_notification("wecom", "failed", webhook, message, error_text)
         return False, error_text
 
     sent_at = utc_now_iso()
@@ -65,7 +65,7 @@ def send_wecom_message(subject: str, message: str) -> Tuple[bool, Optional[str]]
         """,
         (sent_at, sent_at),
     )
-    legacy.log_notification("wecom", "success", webhook, message, None)
+    log_notification("wecom", "success", webhook, message, None)
     return True, None
 
 

@@ -9,25 +9,35 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-# 以下函数尚未从 legacy_runtime 迁出，暂保留 legacy 引用（见各处 TODO: move to proper module）
-from backend import legacy_runtime as legacy
-from backend.core.normalize import clamp_perf_hours
+from backend.core.normalize import clamp_perf_hours, normalize_base_url
 from backend.core.state import MODEL_CACHE_TTL_SECONDS
+from backend.db.connection import db_query_one
+from backend.integrations.http import newapi_auth_failure_message
 from backend.integrations.newapi import (
+    fetch_newapi_groups_with_access_token,
     fetch_newapi_perf_detail_for_site,
     fetch_newapi_perf_summary_for_site,
     fetch_newapi_pricing_for_site,
+    login_newapi_site_with_password,
+    parse_groups_payload,
+    probe_newapi_groups,
+    probe_newapi_password_login,
 )
+from backend.integrations.sub2api import probe_sub2api_groups
 from backend.repositories.admin_sites import get_admin_site_or_404
 from backend.repositories.sites import create_site, delete_site, get_site_or_404, update_site
 from backend.services.admin_site_service import fetch_admin_site_channels
 from backend.services.channel_classification_service import ChannelClassificationService
-from backend.services.discovery_service import list_site_discovery_links
+from backend.services.discovery_service import (
+    import_discovered_sites,
+    list_site_discovery_links,
+)
 from backend.services.monitoring_service import (
     MonitoringService,
     RECONCILE_MODE_DISABLE,
     detect_site,
     get_site_model_cache,
+    invalidate_site_model_cache,
     refresh_site_model_cache,
     schedule_model_cache_refresh,
 )
@@ -435,7 +445,7 @@ async def update_site_route(site_id: int, request: Request):
             {"success": False, "message": error},
             status_code=400,
         )
-    legacy.invalidate_site_model_cache(site_id)  # TODO: move to proper module
+    invalidate_site_model_cache(site_id)
     schedule_model_cache_refresh(site_id)
     return {"success": True}
 
@@ -450,7 +460,7 @@ def delete_site_route(site_id: int):
             {"success": False, "message": f"删除站点失败：{exc}"},
             status_code=500,
         )
-    legacy.invalidate_site_model_cache(site_id)  # TODO: move to proper module
+    invalidate_site_model_cache(site_id)
     return {"success": True}
 
 
@@ -499,8 +509,7 @@ async def discovery_import(request: Request):
             status_code=405,
         )
     try:
-        # TODO: move to proper module
-        result = await run_in_threadpool(legacy.import_discovered_sites, site, body)
+        result = await run_in_threadpool(import_discovered_sites, site, body)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"success": False, "message": f"导入失败：{exc}"},
@@ -530,7 +539,7 @@ async def check_connection(request: Request):
             status_code=400,
         )
     body = body if isinstance(body, dict) else {}
-    base_url = legacy.normalize_base_url(str(body.get("base_url") or ""))  # TODO: move to proper module
+    base_url = normalize_base_url(str(body.get("base_url") or ""))
     platform = str(body.get("platform") or "newapi").strip().lower()
     if not base_url:
         return JSONResponse(
@@ -539,9 +548,8 @@ async def check_connection(request: Request):
         )
     try:
         if platform == "sub2api":
-            # TODO: move to proper module
             result = await run_in_threadpool(
-                legacy.probe_sub2api_groups,
+                probe_sub2api_groups,
                 base_url,
                 username=str(body.get("login_username") or "").strip(),
                 password=str(body.get("login_password") or ""),
@@ -550,8 +558,7 @@ async def check_connection(request: Request):
                 refresh_token=str(body.get("refresh_token") or "").strip(),
             )
         else:
-            # TODO: move to proper module
-            result = await run_in_threadpool(legacy.probe_newapi_groups, base_url)
+            result = await run_in_threadpool(probe_newapi_groups, base_url)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"success": False, "message": f"连接检测失败：{exc}"},
@@ -571,7 +578,7 @@ async def check_login(request: Request):
             status_code=400,
         )
     body = body if isinstance(body, dict) else {}
-    base_url = legacy.normalize_base_url(str(body.get("base_url") or ""))  # TODO: move to proper module
+    base_url = normalize_base_url(str(body.get("base_url") or ""))
     auth_mode = str(body.get("auth_mode") or "token").strip().lower()
     if auth_mode == "password":
         username = str(body.get("login_username") or "").strip()
@@ -583,9 +590,8 @@ async def check_login(request: Request):
                 status_code=400,
             )
         try:
-            # TODO: move to proper module
             groups_ok, result, groups_error = await run_in_threadpool(
-                legacy.probe_newapi_password_login,
+                probe_newapi_password_login,
                 base_url,
                 username,
                 password,
@@ -610,9 +616,8 @@ async def check_login(request: Request):
             status_code=400,
         )
     try:
-        # TODO: move to proper module
         groups_ok, groups_payload, groups_error = await run_in_threadpool(
-            legacy.fetch_newapi_groups_with_access_token,
+            fetch_newapi_groups_with_access_token,
             base_url,
             access_token,
             access_user_id,
@@ -622,15 +627,46 @@ async def check_login(request: Request):
             {"success": False, "message": f"令牌检测失败：{exc}"},
             status_code=500,
         )
-    groups = legacy.parse_groups_payload(groups_payload) if groups_ok else {}  # TODO: move to proper module
+    groups = parse_groups_payload(groups_payload) if groups_ok else {}
     return {
         "success": groups_ok,
         "message": (
-            # TODO: move to proper module
-            legacy.newapi_auth_failure_message(groups_payload, groups_error)
+            newapi_auth_failure_message(groups_payload, groups_error)
             if not groups_ok
             else "访问令牌验证成功"
         ),
         "groups_count": len(groups),
         "groups": groups,
     }
+
+
+@router.post("/sites/{site_id}/auth/login")
+async def site_password_login(site_id: int, request: Request):
+    """NewAPI 密码登录（获取站点管理令牌）。"""
+    site = db_query_one("SELECT * FROM sites WHERE id = ?", (site_id,))
+    if not site:
+        return JSONResponse(
+            {"success": False, "message": "site not found"}, status_code=404
+        )
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    ok, result, error = await run_in_threadpool(
+        login_newapi_site_with_password,
+        site,
+        str(body.get("two_factor_code") or "").strip(),
+    )
+    if not ok:
+        return JSONResponse({
+            "success": False,
+            "requires_2fa": bool(result.get("requires_2fa")),
+            "message": error or "NewAPI 登录失败",
+        })
+    return JSONResponse({
+        "success": True,
+        "message": "NewAPI 用户登录成功",
+        "groups_count": result.get("groups_count", 0),
+        "warning": result.get("warning"),
+    })

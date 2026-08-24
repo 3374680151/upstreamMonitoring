@@ -13,12 +13,14 @@ from typing import Any
 
 from backend.core.config import APP_DIR, DATA_DIR
 from backend.core.state import DB_LOCK
-from backend.core.time import utc_now_iso
+from backend.core.time import next_check_iso, utc_now_iso
 from backend.db.connection import (
     _existing_columns,
     _q,
     connect_db,
     db_connection,
+    db_execute,
+    db_query_one,
 )
 
 STATIC_DIR = APP_DIR / "static"
@@ -486,3 +488,25 @@ def wait_for_db(max_wait: float = 60.0) -> None:
 
 def init() -> None:
     init_db()
+
+
+def bootstrap_demo_data() -> None:
+    """SEED_DEMO=1 时插入一个 Demo NewAPI 站点。"""
+    if db_query_one("SELECT id FROM sites LIMIT 1"):
+        return
+
+    now = utc_now_iso()
+    db_execute(
+        """
+        INSERT INTO sites
+        (name, base_url, platform, enabled, interval_minutes, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
+        VALUES (?, ?, 'newapi', 1, 3, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
+        """,
+        (
+            "Demo NewAPI",
+            "http://127.0.0.1:3000",
+            next_check_iso(3),
+            now,
+            now,
+        ),
+    )

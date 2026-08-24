@@ -463,7 +463,7 @@ def verify_admin_site_channel_key_access(
     refreshed_site = db_query_one(
         "SELECT * FROM admin_sites WHERE id = ?", (admin_site_id,)
     )
-    from backend.legacy_runtime import refresh_next_admin_site_channel_key
+    from backend.services.sync_service import refresh_next_admin_site_channel_key
 
     refresh_result = refresh_next_admin_site_channel_key(refreshed_site or site)
     if not refresh_result.get("success"):

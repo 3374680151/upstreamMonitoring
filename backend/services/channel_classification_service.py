@@ -15,7 +15,17 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend import legacy_runtime as legacy
+from backend.core.normalize import (
+    _normalize_discovery_base_url,
+    normalize_base_url,
+    split_channel_groups,
+)
+from backend.core.time import utc_now_iso
+from backend.db.connection import db_execute
+from backend.integrations.newapi import fetch_newapi_groups
+from backend.repositories.sites import find_monitor_site_for_channel, site_groups_from_row
+from backend.services.channel_match_service import get_channel_upstream_binding, persist_channel_match
+from backend.services.monitoring_service import detect_site
 
 
 class ChannelClassificationService:
@@ -35,12 +45,12 @@ class ChannelClassificationService:
         Returns:
             "newapi" / "sub2api" / "unknown"
         """
-        normalized = legacy.normalize_base_url(base_url)
+        normalized = normalize_base_url(base_url)
         if not normalized:
             return "unknown"
 
         # 1. 试 NewAPI 公开分组接口
-        ok, _payload, _error = legacy.fetch_newapi_groups(normalized)
+        ok, _payload, _error = fetch_newapi_groups(normalized)
         if ok:
             return "newapi"
 
@@ -111,12 +121,12 @@ class ChannelClassificationService:
                 continue
 
             # 跳过已有精确匹配的渠道
-            existing = legacy.get_channel_upstream_binding(admin_site_id, channel_id)
+            existing = get_channel_upstream_binding(admin_site_id, channel_id)
             if existing and existing.get("match_status") in ("matched", "matched_partial"):
                 classified += 1
                 continue
 
-            base_url, _error = legacy._normalize_discovery_base_url(channel.get("base_url"))
+            base_url, _error = _normalize_discovery_base_url(channel.get("base_url"))
             if not base_url:
                 platform_counts["unknown"] = platform_counts.get("unknown", 0) + 1
                 continue
@@ -126,7 +136,7 @@ class ChannelClassificationService:
             platform_counts[platform] = platform_counts.get(platform, 0) + 1
 
             # 找同 base_url 的上游监控站点
-            monitor_site = legacy.find_monitor_site_for_channel(base_url)
+            monitor_site = find_monitor_site_for_channel(base_url)
             if not monitor_site:
                 continue
 
@@ -137,13 +147,13 @@ class ChannelClassificationService:
                     self._update_site_platform(int(monitor_site["id"]), platform)
 
             # 取监控站点的分组倍率数据
-            upstream_groups = legacy.site_groups_from_row(monitor_site)
+            upstream_groups = site_groups_from_row(monitor_site)
             if not upstream_groups:
                 # 新建的监控站点还没检测过，自动做一次检测拉取分组倍率
                 try:
-                    legacy.detect_site(int(monitor_site["id"]))
-                    monitor_site = legacy.find_monitor_site_for_channel(base_url) or monitor_site
-                    upstream_groups = legacy.site_groups_from_row(monitor_site)
+                    detect_site(int(monitor_site["id"]))
+                    monitor_site = find_monitor_site_for_channel(base_url) or monitor_site
+                    upstream_groups = site_groups_from_row(monitor_site)
                 except Exception as exc:  # noqa: BLE001
                     print(
                         f"[渠道分类] 自动检测 site#{monitor_site.get('id')} 失败：{exc}",
@@ -161,7 +171,7 @@ class ChannelClassificationService:
             matched_groups = self._match_groups_by_name(group_names, upstream_groups)
             status, message = self._build_match_status(matched_groups, base_url, platform)
 
-            legacy.persist_channel_match(
+            persist_channel_match(
                 admin_site_id, channel_id, status, message, matched_groups,
             )
             matched_count += 1
@@ -183,9 +193,9 @@ class ChannelClassificationService:
     def _update_site_platform(self, site_id: int, platform: str) -> None:
         """修正监控站点的平台类型。"""
         try:
-            legacy.db_execute(
+            db_execute(
                 "UPDATE sites SET platform = ?, updated_at = ? WHERE id = ?",
-                (platform, legacy.utc_now_iso(), site_id),
+                (platform, utc_now_iso(), site_id),
             )
             print(f"[渠道分类] 修正 site#{site_id} platform -> {platform}", flush=True)
         except Exception as exc:  # noqa: BLE001
@@ -220,7 +230,7 @@ class ChannelClassificationService:
                 ]
                 return [name for name in names if name]
         # NewAPI 或 unknown：统一用 split_channel_groups
-        return legacy.split_channel_groups(channel.get("group"))
+        return split_channel_groups(channel.get("group"))
 
     def _match_groups_by_name(
         self,

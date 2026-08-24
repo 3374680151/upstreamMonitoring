@@ -1,0 +1,147 @@
+"""进程级单例状态的唯一来源（Single source of truth）。
+
+本模块集中存放整个进程共享的可变单例（锁、缓存、事件对象）以及与之强耦合的
+不可变常量集合。任何模块都不得再在自己的模块层级新建 ``threading.RLock()`` /
+``threading.Lock()`` / ``threading.Event()`` 或进程级缓存 dict / set；统一从这里导入。
+
+配置类值（DB_CONFIG、SERVER_HOST、CONSOLE_PASSWORD 等）放在 ``core/config.py``；
+时区（APP_TIMEZONE）放在 ``core/time.py``，不要回流到本模块。
+"""
+
+from __future__ import annotations
+
+import threading
+from typing import Any, Dict
+
+
+# ---------------------------------------------------------------------------
+# DB / 进程生命周期
+# ---------------------------------------------------------------------------
+# DB_LOCK 串行化所有直接读写 DB 的关键路径；STOP_EVENT 用于后台调度线程退出。
+DB_LOCK = threading.RLock()
+STOP_EVENT = threading.Event()
+
+
+# ---------------------------------------------------------------------------
+# 模型缓存（模型数据 + NewAPI 可用率，统一由 MODEL_CACHE_LOCK 守卫）
+# ---------------------------------------------------------------------------
+# MODEL_DATA_CACHE 缓存分组/模型清单；NEWAPI_UPTIME_CACHE 缓存各主站可用率。
+# 两者共用 MODEL_CACHE_LOCK，NEWAPI_UPTIME_* 虽属 NewAPI 域但为避免死锁与
+# 多锁竞争，仍由 MODEL_CACHE_LOCK 统一守卫。
+MODEL_CACHE_TTL_SECONDS = 90
+UPTIME_CACHE_TTL_SECONDS = 300
+MODEL_DATA_CACHE: Dict[int, Dict[str, Any]] = {}
+MODEL_CACHE_REFRESHING: set[int] = set()
+NEWAPI_UPTIME_CACHE: Dict[str, Dict[str, Any]] = {}
+NEWAPI_UPTIME_REFRESHING: set[str] = set()
+MODEL_CACHE_LOCK = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# NewAPI 用户侧 API 密钥列表缓存
+# ---------------------------------------------------------------------------
+# NewAPI 用户侧 API 密钥列表（/api/token/）缓存。渠道页会按多个主站渠道
+# 连续匹配同一个上游账号，短期复用列表可避免重复分页请求。
+NEWAPI_USER_TOKEN_LIST_CACHE: Dict[str, Dict[str, Any]] = {}
+NEWAPI_USER_TOKEN_LIST_LOCK = threading.RLock()
+NEWAPI_USER_TOKEN_LIST_CACHE_TTL_SECONDS = 15
+
+
+# ---------------------------------------------------------------------------
+# 主站渠道 key 读取（串行化 + 限流冷却 + 短期缓存）
+# ---------------------------------------------------------------------------
+# NewAPI 对 POST /api/channel/:id/key 通常有更严格的频控；渠道页不能并发轰炸
+# 主站。所有主站 key 读取在进程内按站点串行，并留出最小间隔。
+MAIN_CHANNEL_KEY_REQUEST_LOCK = threading.RLock()
+MAIN_CHANNEL_KEY_LAST_REQUEST_AT: Dict[str, float] = {}
+MAIN_CHANNEL_KEY_RATE_LIMIT_UNTIL: Dict[str, float] = {}
+MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS = 2.0
+MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS = 30.0
+ADMIN_KEY_SYNC_PROOF_BATCH_SIZE = 3
+# 主站 key 在同一页面刷新周期内不会变化。短期缓存可避免 React 开发模式重复加载、
+# 页面重绘或多个调用方重复读取同一个渠道时再次触发主站的保护接口限流。
+MAIN_CHANNEL_KEY_CACHE: Dict[str, Dict[str, Any]] = {}
+MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS = 60
+
+
+# ---------------------------------------------------------------------------
+# 浏览器会话锁（管理站 / NewAPI 普通站 / sub2api 管理端）
+# ---------------------------------------------------------------------------
+# Refresh tokens rotate on every successful dashboard refresh. Serialize by
+# admin site so concurrent channel reads cannot race the same refresh cookie.
+ADMIN_BROWSER_SESSION_LOCKS: Dict[int, threading.RLock] = {}
+ADMIN_BROWSER_SESSION_LOCKS_GUARD = threading.RLock()
+# 普通监控站点与管理站的 refresh cookie 独立轮换，不能共用锁命名空间。
+NEWAPI_SITE_BROWSER_SESSION_LOCKS: Dict[int, threading.RLock] = {}
+NEWAPI_SITE_BROWSER_SESSION_LOCKS_GUARD = threading.RLock()
+# sub2api 管理端 JWT 与普通监控站点登录态分开保存，并按主站串行轮换。
+ADMIN_SUB2API_SESSION_LOCKS: Dict[int, threading.RLock] = {}
+ADMIN_SUB2API_SESSION_LOCKS_GUARD = threading.RLock()
+ADMIN_SUB2API_EXPIRY_SKEW_SECONDS = 60
+BROWSER_AUTH_MODE = "browser"
+
+
+# ---------------------------------------------------------------------------
+# sub2api 刷新令牌 + 站点鉴权
+# ---------------------------------------------------------------------------
+# sub2api refresh token 也可能轮换；同一个上游站点的并发请求必须串行刷新，
+# 并在短时间内复用同一轮刷新结果，避免第二个请求继续使用已轮换的旧 refresh_token。
+SUB2API_REFRESH_LOCKS: Dict[str, threading.RLock] = {}
+SUB2API_REFRESH_LOCKS_GUARD = threading.RLock()
+SUB2API_REFRESH_CACHE: Dict[str, Dict[str, Any]] = {}
+SUB2API_REFRESH_CACHE_TTL_SECONDS = 30.0
+# A refresh-token lock is not enough for a monitor request: a browser sync,
+# a scheduled check, and a manual check can all update the same site row.  Keep
+# the complete credential decision (reload -> request -> conditional write)
+# serial for each ordinary sub2api site.
+SUB2API_SITE_AUTH_LOCKS: Dict[int, threading.RLock] = {}
+SUB2API_SITE_AUTH_LOCKS_GUARD = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# 会话同步（浏览器桥接扩展）
+# ---------------------------------------------------------------------------
+SESSION_SYNC_TTL_SECONDS = 60
+SESSION_SYNC_TERMINAL_STATUSES = {
+    "ready",
+    "no_session",
+    "expired",
+    "permission_required",
+    "extension_unavailable",
+    "failed",
+}
+SESSION_SYNC_PAGE_FAILURES = {
+    "EXTENSION_UNAVAILABLE": (
+        "extension_unavailable",
+        "未安装或未连接浏览器同步扩展",
+    ),
+    "ORIGIN_PERMISSION_REQUIRED": (
+        "permission_required",
+        "扩展需要该站点的读取权限",
+    ),
+    "COOKIE_PERMISSION_REQUIRED": (
+        "permission_required",
+        "扩展需要读取 NewAPI 登录 Cookie 的权限，请允许后重新同步",
+    ),
+    "SYNC_FAILED": ("failed", "登录态同步失败"),
+}
+SESSION_SYNC_MAX_BODY_BYTES = 40 * 1024
+SESSION_SYNC_MAX_TOKEN_LENGTH = 16 * 1024
+SESSION_SYNC_REQUEST_LOCK = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# 控制台登录会话
+# ---------------------------------------------------------------------------
+CONSOLE_SESSIONS: Dict[str, float] = {}
+CONSOLE_SESSIONS_LOCK = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# 渠道发现导入边界
+# ---------------------------------------------------------------------------
+# Discovery imports are intentionally bounded so a malformed client cannot
+# create an unbounded number of monitoring sites in one request.
+MAX_DISCOVERY_IMPORT_ITEMS = 100
+MAX_DISCOVERY_CHANNEL_IDS_PER_ITEM = 1000
+MAX_DISCOVERY_INTERVAL_MINUTES = 1440

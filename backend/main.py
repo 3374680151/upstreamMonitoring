@@ -13,15 +13,18 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend import legacy_runtime as legacy
 from backend.api.routers import admin_sites, auth, compat, monitoring, notifications, session_sync, settings
-from backend.core.config import WEB_DIST_DIR, get_settings
+from backend.core.config import SLOW_REQUEST_THRESHOLD_MS, WEB_DIST_DIR, get_settings
 from backend.core.errors import (
+    DatabasePoolTimeoutError,
     database_busy_handler,
     http_exception_handler,
     validation_exception_handler,
 )
 from backend.core.security import require_console_auth
+from backend.core.state import STOP_EVENT
+from backend.db.connection import close_database_pool
+from backend.db.schema import ensure_dirs, init_db, wait_for_db
 from backend.workers.cache import ModelCacheWorker
 from backend.workers.scheduler import SchedulerWorker
 
@@ -40,7 +43,8 @@ class SPAStaticFiles(StaticFiles):
 
 def _seed_demo_if_enabled() -> None:
     if (os.getenv("SEED_DEMO") or "").strip().lower() in {"1", "true", "yes"}:
-        legacy.bootstrap_demo_data()
+        from backend.legacy_runtime import bootstrap_demo_data
+        bootstrap_demo_data()
 
 
 @asynccontextmanager
@@ -48,12 +52,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Initialize shared resources and own the process-level workers."""
     settings_value = get_settings()
     application.state.settings = settings_value
-    legacy.ensure_dirs()
-    legacy.wait_for_db()
-    legacy.init_db()
+    ensure_dirs()
+    wait_for_db()
+    init_db()
     _seed_demo_if_enabled()
 
-    legacy.STOP_EVENT.clear()
+    STOP_EVENT.clear()
     worker: SchedulerWorker | None = None
     if settings_value.scheduler_enabled:
         worker = SchedulerWorker()
@@ -69,10 +73,10 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        legacy.STOP_EVENT.set()
+        STOP_EVENT.set()
         if worker is not None:
             worker.stop(timeout=5)
-        legacy.close_database_pool()
+        close_database_pool()
 
 
 settings_value = get_settings()
@@ -87,7 +91,7 @@ app = FastAPI(
 
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
-app.add_exception_handler(legacy.DatabasePoolTimeoutError, database_busy_handler)
+app.add_exception_handler(DatabasePoolTimeoutError, database_busy_handler)
 
 
 @app.middleware("http")
@@ -99,15 +103,10 @@ async def request_timing_middleware(request: Request, call_next):  # type: ignor
         return response
     finally:
         elapsed_ms = (time.monotonic() - started) * 1000
-        line = legacy._slow_request_log_line(
-            request.method,
-            request.url.path,
-            response.status_code if response is not None else 500,
-            elapsed_ms,
-            settings_value.slow_request_threshold_ms,
-        )
-        if line:
-            print(line, flush=True)
+        if settings_value.slow_request_threshold_ms > 0 and elapsed_ms >= settings_value.slow_request_threshold_ms:
+            from urllib.parse import urlparse
+            safe_path = urlparse(str(request.url.path or "")).path or "/"
+            print(f"[慢请求] {request.method} {safe_path} {response.status_code if response is not None else 500} {elapsed_ms:.1f}ms", flush=True)
 
 
 @app.get("/healthz", include_in_schema=False)

@@ -2,18 +2,41 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
+# 以下函数尚未从 legacy_runtime 迁出，暂保留 legacy 引用（见各处 TODO: move to proper module）
 from backend import legacy_runtime as legacy
-from backend.api.routers.common import forward_request
-from backend.services.monitoring_service import MonitoringService
+from backend.core.normalize import clamp_perf_hours
+from backend.core.state import MODEL_CACHE_TTL_SECONDS
+from backend.integrations.newapi import (
+    fetch_newapi_perf_detail_for_site,
+    fetch_newapi_perf_summary_for_site,
+    fetch_newapi_pricing_for_site,
+)
+from backend.repositories.admin_sites import get_admin_site_or_404
+from backend.repositories.sites import create_site, delete_site, get_site_or_404, update_site
+from backend.services.admin_site_service import fetch_admin_site_channels
+from backend.services.channel_classification_service import ChannelClassificationService
+from backend.services.discovery_service import list_site_discovery_links
+from backend.services.monitoring_service import (
+    MonitoringService,
+    RECONCILE_MODE_DISABLE,
+    detect_site,
+    get_site_model_cache,
+    refresh_site_model_cache,
+    schedule_model_cache_refresh,
+)
+from backend.services.sync_service import auto_sync_admin_site_channels_to_sites
 
 
 router = APIRouter()
 service = MonitoringService()
+classification_service = ChannelClassificationService()
 
 
 @router.get("/overview")
@@ -44,7 +67,7 @@ def site_changes(site_id: int, limit: int = 100) -> dict[str, Any]:
 
 @router.get("/sites/{site_id}/account")
 def account(site_id: int):
-    site, error, status = legacy.get_site_or_404(site_id)
+    site, error, status = get_site_or_404(site_id)
     if error:
         return JSONResponse(error, status_code=status)
     response_status, payload = service.account(site)
@@ -53,47 +76,561 @@ def account(site_id: int):
 
 @router.get("/sites/{site_id}/discovery-links")
 def discovery_links(site_id: int):
-    site, error, status = legacy.get_site_or_404(site_id)
+    site, error, status = get_site_or_404(site_id)
     if error:
         return JSONResponse(error, status_code=status)
-    return {"success": True, "data": legacy.list_site_discovery_links(site_id)}
+    return {"success": True, "data": list_site_discovery_links(site_id)}
 
 
 @router.get("/sites/{site_id}/models")
-async def models(request: Request):
-    return await forward_request(request)
+def models(site_id: int):
+    site, error, status = get_site_or_404(site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    try:
+        cached_payload, cache_age = get_site_model_cache(site_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"读取模型缓存失败：{exc}"},
+            status_code=500,
+        )
+    if cached_payload is not None:
+        cached_payload["cache_hit"] = True
+        cached_payload["cache_age_seconds"] = round(cache_age, 1)
+        if cache_age >= MODEL_CACHE_TTL_SECONDS:
+            schedule_model_cache_refresh(site_id)
+            cached_payload["refreshing"] = True
+        return cached_payload
+    try:
+        status_code, payload = refresh_site_model_cache(site_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"刷新模型缓存失败：{exc}"},
+            status_code=500,
+        )
+    payload["cache_hit"] = False
+    return JSONResponse(payload, status_code=status_code)
 
 
-@router.api_route(
-    "/sites/{site_id}/pricing",
-    methods=["GET"],
-)
-async def pricing(request: Request):
-    return await forward_request(request)
+@router.get("/sites/{site_id}/pricing")
+def pricing(site_id: int):
+    site, error, status = get_site_or_404(site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if (site.get("platform") or "newapi") != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "pricing 仅支持 NewAPI 站点"},
+            status_code=400,
+        )
+    try:
+        ok, payload, error_message = fetch_newapi_pricing_for_site(site)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"读取 pricing 失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error_message, "upstream": payload},
+            status_code=502,
+        )
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["site_id"] = site_id
+        payload["base_url"] = site["base_url"]
+        auth_mode = str(site.get("auth_mode") or "token").strip().lower()
+        if auth_mode == "browser":
+            payload["auth_used"] = bool(
+                site.get("browser_access_token") and site.get("browser_session_id")
+            )
+        else:
+            payload["auth_used"] = bool(
+                site.get("access_token") and site.get("access_user_id")
+            )
+    return payload
 
 
-@router.api_route(
-    "/sites/{site_id}/perf-metrics",
-    methods=["GET"],
-)
-async def perf_metrics(request: Request):
-    return await forward_request(request)
+@router.get("/sites/{site_id}/perf-metrics/summary")
+def perf_summary(site_id: int, hours: str = "24"):
+    site, error, status = get_site_or_404(site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if (site.get("platform") or "newapi") != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "perf-metrics 仅支持 NewAPI 站点"},
+            status_code=400,
+        )
+    clamped_hours = clamp_perf_hours(hours, 24)
+    try:
+        ok, payload, error_message = fetch_newapi_perf_summary_for_site(
+            site, hours=clamped_hours
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"读取 perf-metrics summary 失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error_message, "upstream": payload},
+            status_code=502,
+        )
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["site_id"] = site_id
+        payload["hours"] = clamped_hours
+        payload["note"] = (
+            "summary 为全站模型级汇总，不随 group 筛选变化；"
+            "分组仅用于 pricing 过滤模型名单（与 NewAPI 前端列表一致）"
+        )
+    return payload
 
 
-@router.api_route(
-    "/sites/{site_id}/perf-metrics/summary",
-    methods=["GET"],
-)
-async def perf_summary(request: Request):
-    return await forward_request(request)
+@router.get("/sites/{site_id}/perf-metrics")
+def perf_metrics(site_id: int, model: str = "", group: str = "", hours: str = "24"):
+    site, error, status = get_site_or_404(site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if (site.get("platform") or "newapi") != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "perf-metrics 仅支持 NewAPI 站点"},
+            status_code=400,
+        )
+    clamped_hours = clamp_perf_hours(hours, 24)
+    model_name = model.strip()
+    if not model_name:
+        return JSONResponse(
+            {"success": False, "message": "model is required"},
+            status_code=400,
+        )
+    try:
+        ok, payload, error_message = fetch_newapi_perf_detail_for_site(
+            site,
+            model_name=model_name,
+            hours=clamped_hours,
+            group=group,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"读取 perf-metrics 失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error_message, "upstream": payload},
+            status_code=502,
+        )
+    if isinstance(payload, dict):
+        payload = dict(payload)
+        payload["site_id"] = site_id
+        payload["hours"] = clamped_hours
+        payload["requested_model"] = model_name
+        payload["requested_group"] = group or None
+    return payload
 
 
-@router.api_route("/sites", methods=["POST"])
-@router.api_route("/sites/{site_id}", methods=["PUT", "DELETE"])
-@router.api_route("/sites/{site_id}/check", methods=["POST"])
-@router.api_route("/sites/sync", methods=["POST"])
-@router.api_route("/sites/discovery-import", methods=["POST"])
-@router.api_route("/check-connection", methods=["POST"])
-@router.api_route("/check-login", methods=["POST"])
-async def site_mutation(request: Request):
-    return await forward_request(request)
+@router.post("/sites/sync")
+async def sync_sites(request: Request):
+    """同步主站：先跑同步，再自动做渠道分类。
+
+    分类逻辑：根据上游 API 返回的数据格式探测平台类型（NewAPI / sub2api），
+    然后按渠道 group 字段名匹配上游监控站点已有的分组倍率。
+    不需要用户令牌，已精确匹配的渠道不会被覆盖。
+    """
+    body_bytes = await request.body()
+    try:
+        body = json.loads(body_bytes) if body_bytes else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+
+    raw_admin_site_id = body.get("admin_site_id")
+    admin_site_id: int | None = None
+    if raw_admin_site_id not in (None, ""):
+        try:
+            admin_site_id = int(raw_admin_site_id)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"success": False, "message": "管理站点 ID 无效"},
+                status_code=400,
+            )
+        if admin_site_id <= 0:
+            return JSONResponse(
+                {"success": False, "message": "管理站点 ID 无效"},
+                status_code=400,
+            )
+
+    # 1. 跑同步（复用现有逻辑，不改动 legacy_runtime.py）
+    results = await run_in_threadpool(
+        auto_sync_admin_site_channels_to_sites, admin_site_id,
+    )
+
+    # 2. 汇总同步结果（和原有逻辑一致）
+    imported = sum(
+        int(entry.get("imported") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    conflicts = sum(
+        int(entry.get("conflict_count") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    channels_changed = any(
+        bool(entry.get("channels_changed"))
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    groups_changed = any(
+        bool(entry.get("groups_changed"))
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    keys_refreshed = sum(
+        int(entry.get("keys_refreshed") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    keys_changed = sum(
+        int(entry.get("keys_changed") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    keys_failed = sum(
+        int(entry.get("keys_failed") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+    key_errors: list[str] = []
+    for entry in results:
+        for message in (entry.get("key_errors") or []) if isinstance(entry, dict) else []:
+            if message not in key_errors:
+                key_errors.append(str(message))
+    reconcile = next(
+        (
+            entry
+            for entry in results
+            if isinstance(entry, dict)
+            and entry.get("status") == "reconcile"
+        ),
+        {},
+    )
+    failed = [
+        entry
+        for entry in results
+        if isinstance(entry, dict)
+        and entry.get("status") in {"fetch_failed", "sync_failed", "error"}
+    ]
+
+    # 3. 渠道分类：对每个同步成功的主站，取渠道列表，探测平台类型并匹配倍率
+    classification_results: list[dict[str, Any]] = []
+    for entry in results:
+        if not isinstance(entry, dict):
+            continue
+        sync_admin_site_id = entry.get("admin_site_id")
+        status = entry.get("status")
+        if sync_admin_site_id is None or status not in ("synced", "reconcile"):
+            continue
+        try:
+            admin_site, _err, _code = get_admin_site_or_404(
+                int(sync_admin_site_id),
+            )
+            if not admin_site:
+                continue
+            _ok, channels, _meta, _error = fetch_admin_site_channels(
+                admin_site, "",
+            )
+            if channels:
+                classify_result = await run_in_threadpool(
+                    classification_service.classify_channels,
+                    int(sync_admin_site_id),
+                    channels,
+                )
+                classification_results.append(classify_result)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[渠道分类] admin_site_id={sync_admin_site_id} 失败：{exc}",
+                flush=True,
+            )
+
+    total_classified = sum(
+        int(item.get("matched") or 0)
+        for item in classification_results
+        if isinstance(item, dict)
+    )
+
+    return JSONResponse(
+        {
+            "success": True,
+            "data": results,
+            "mode": reconcile.get("mode") or RECONCILE_MODE_DISABLE,
+            "channels_changed": channels_changed,
+            "groups_changed": groups_changed,
+            "keys_refreshed": keys_refreshed,
+            "keys_changed": keys_changed,
+            "keys_failed": keys_failed,
+            "key_errors": key_errors[:3],
+            "imported": imported,
+            "conflicts": conflicts,
+            "disabled": int(reconcile.get("disabled") or 0),
+            "reenabled": int(reconcile.get("reenabled") or 0),
+            "deleted": int(reconcile.get("deleted") or 0),
+            "failed": len(failed),
+            "classified": total_classified,
+            "classification": classification_results,
+        },
+    )
+
+
+@router.post("/sites")
+async def create_site_route(request: Request):
+    """创建监控站点。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "message": "请求 JSON 无效"},
+            status_code=400,
+        )
+    body = body if isinstance(body, dict) else {}
+    try:
+        ok, site_id, error, existed = await run_in_threadpool(create_site, body)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"创建站点失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error},
+            status_code=400,
+        )
+    response: dict[str, Any] = {"success": True, "id": site_id}
+    if existed:
+        response["existed"] = True
+    return response
+
+
+@router.put("/sites/{site_id}")
+async def update_site_route(site_id: int, request: Request):
+    """更新监控站点配置。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "message": "请求 JSON 无效"},
+            status_code=400,
+        )
+    body = body if isinstance(body, dict) else {}
+    try:
+        ok, error = await run_in_threadpool(update_site, site_id, body)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"更新站点失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error},
+            status_code=400,
+        )
+    legacy.invalidate_site_model_cache(site_id)  # TODO: move to proper module
+    schedule_model_cache_refresh(site_id)
+    return {"success": True}
+
+
+@router.delete("/sites/{site_id}")
+def delete_site_route(site_id: int):
+    """删除监控站点。"""
+    try:
+        delete_site(site_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"删除站点失败：{exc}"},
+            status_code=500,
+        )
+    legacy.invalidate_site_model_cache(site_id)  # TODO: move to proper module
+    return {"success": True}
+
+
+@router.post("/sites/{site_id}/check")
+def check_site(site_id: int):
+    """手动检测站点（采集分组倍率快照 + diff）。"""
+    try:
+        result = detect_site(site_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"检测失败：{exc}"},
+            status_code=500,
+        )
+    return result
+
+
+@router.post("/sites/discovery-import")
+async def discovery_import(request: Request):
+    """从主站渠道发现结果导入/复用监控站点。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "message": "请求 JSON 无效"},
+            status_code=400,
+        )
+    body = body if isinstance(body, dict) else {}
+    try:
+        admin_site_id = int(body.get("admin_site_id") or 0)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            {"success": False, "message": "管理站点 ID 无效"},
+            status_code=400,
+        )
+    if admin_site_id <= 0:
+        return JSONResponse(
+            {"success": False, "message": "管理站点 ID 无效"},
+            status_code=400,
+        )
+    site, error, status = get_admin_site_or_404(admin_site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if str(site.get("platform") or "newapi").strip().lower() != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "主站渠道发现导入仅支持 NewAPI"},
+            status_code=405,
+        )
+    try:
+        # TODO: move to proper module
+        result = await run_in_threadpool(legacy.import_discovered_sites, site, body)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"导入失败：{exc}"},
+            status_code=500,
+        )
+    if isinstance(result, dict) and result.get("error"):
+        error_status = 413 if result.get("error") == "too_many_items" else 400
+        return JSONResponse(
+            {
+                "success": False,
+                "message": result.get("message") or "导入请求无效",
+                "error": result.get("error"),
+            },
+            status_code=error_status,
+        )
+    return {"success": True, "data": result or []}
+
+
+@router.post("/check-connection")
+async def check_connection(request: Request):
+    """检测上游站点连通性（探测分组列表）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "message": "请求 JSON 无效"},
+            status_code=400,
+        )
+    body = body if isinstance(body, dict) else {}
+    base_url = legacy.normalize_base_url(str(body.get("base_url") or ""))  # TODO: move to proper module
+    platform = str(body.get("platform") or "newapi").strip().lower()
+    if not base_url:
+        return JSONResponse(
+            {"success": False, "message": "base_url required"},
+            status_code=400,
+        )
+    try:
+        if platform == "sub2api":
+            # TODO: move to proper module
+            result = await run_in_threadpool(
+                legacy.probe_sub2api_groups,
+                base_url,
+                username=str(body.get("login_username") or "").strip(),
+                password=str(body.get("login_password") or ""),
+                auth_mode=str(body.get("auth_mode") or "password").strip().lower(),
+                access_token=str(body.get("access_token") or "").strip(),
+                refresh_token=str(body.get("refresh_token") or "").strip(),
+            )
+        else:
+            # TODO: move to proper module
+            result = await run_in_threadpool(legacy.probe_newapi_groups, base_url)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"连接检测失败：{exc}"},
+            status_code=500,
+        )
+    return result
+
+
+@router.post("/check-login")
+async def check_login(request: Request):
+    """检测上游站点登录凭证（密码或访问令牌）。"""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "message": "请求 JSON 无效"},
+            status_code=400,
+        )
+    body = body if isinstance(body, dict) else {}
+    base_url = legacy.normalize_base_url(str(body.get("base_url") or ""))  # TODO: move to proper module
+    auth_mode = str(body.get("auth_mode") or "token").strip().lower()
+    if auth_mode == "password":
+        username = str(body.get("login_username") or "").strip()
+        password = str(body.get("login_password") or "")
+        verification_code = str(body.get("two_factor_code") or "").strip()
+        if not base_url or not username or not password:
+            return JSONResponse(
+                {"success": False, "message": "Base URL、用户名和密码都需要填写"},
+                status_code=400,
+            )
+        try:
+            # TODO: move to proper module
+            groups_ok, result, groups_error = await run_in_threadpool(
+                legacy.probe_newapi_password_login,
+                base_url,
+                username,
+                password,
+                verification_code,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                {"success": False, "message": f"登录检测失败：{exc}"},
+                status_code=500,
+            )
+        return {
+            "success": groups_ok,
+            "requires_2fa": bool(result.get("requires_2fa")),
+            "message": groups_error or result.get("warning") or "用户名密码验证成功",
+            "groups_count": result.get("groups_count", 0),
+        }
+    access_token = str(body.get("access_token") or "").strip()
+    access_user_id = str(body.get("access_user_id") or "").strip()
+    if not base_url or not access_token or not access_user_id:
+        return JSONResponse(
+            {"success": False, "message": "Base URL、系统访问令牌、NewAPI 用户 ID 都需要填写"},
+            status_code=400,
+        )
+    try:
+        # TODO: move to proper module
+        groups_ok, groups_payload, groups_error = await run_in_threadpool(
+            legacy.fetch_newapi_groups_with_access_token,
+            base_url,
+            access_token,
+            access_user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"令牌检测失败：{exc}"},
+            status_code=500,
+        )
+    groups = legacy.parse_groups_payload(groups_payload) if groups_ok else {}  # TODO: move to proper module
+    return {
+        "success": groups_ok,
+        "message": (
+            # TODO: move to proper module
+            legacy.newapi_auth_failure_message(groups_payload, groups_error)
+            if not groups_ok
+            else "访问令牌验证成功"
+        ),
+        "groups_count": len(groups),
+        "groups": groups,
+    }

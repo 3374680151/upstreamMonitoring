@@ -8,7 +8,9 @@ from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from backend import legacy_runtime as legacy
+
+class DatabasePoolTimeoutError(TimeoutError):
+    """连接池在限定时间内没有可用连接。"""
 
 
 def _json_error(message: str, status_code: int, code: str | None = None, **extra: Any) -> JSONResponse:
@@ -29,5 +31,5 @@ async def validation_exception_handler(_request: Request, exc: RequestValidation
     return _json_error("请求参数无效", 422, "validation_error", details=exc.errors())
 
 
-async def database_busy_handler(_request: Request, _exc: legacy.DatabasePoolTimeoutError) -> JSONResponse:
+async def database_busy_handler(_request: Request, _exc: DatabasePoolTimeoutError) -> JSONResponse:
     return _json_error("数据库连接池繁忙，请稍后重试", 503, "database_busy")

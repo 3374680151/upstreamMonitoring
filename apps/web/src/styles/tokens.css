@@ -217,7 +217,7 @@ html[data-theme="dark"] {
 @layer base {
   html,
   body,
-  #root {
+  #app {
     height: 100%;
   }
 

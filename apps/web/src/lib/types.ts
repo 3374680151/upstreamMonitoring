@@ -1,3 +1,16 @@
+/**
+ * 前端类型契约 — 与后端 `backend/api/schemas/*` 对应。
+ * 后端 schemas 为 extra="allow" 透传，故多数类型保留 [key: string]: unknown
+ * 以容纳上游平台字段，避免把宽松的透传契约收窄成编译错误。
+ *
+ * 资源域分组（同 `lib/api/*` 模块划分）：
+ *   通用 / Platform / AuthMode / SessionSync*
+ *   监控站点 / GroupItem / Site / Change / Overview / SiteAccount* / SiteCheck*
+ *   快照 / SiteSnapshot
+ *   渠道发现 / ChannelDiscovery* / SiteDiscoveryLink
+ *   主站与渠道 / AdminSite* / Channel* / ChannelUpstreamBinding*
+ *   推送 / NotificationSettings / NotificationLog
+ */
 export type Platform = "newapi" | "sub2api";
 export type AuthMode = "password" | "token" | "browser";
 export type SessionSyncTargetKind = "site" | "admin_site";
@@ -452,4 +465,31 @@ export type SiteFormPayload = {
   token_expires_at: string;
   access_user_id: string;
   enabled: boolean;
+};
+
+/** 站点历史快照（GET /api/sites/{id}/snapshots）— 对应 snapshots 表透传 */
+export type SiteSnapshot = {
+  id?: number;
+  site_id?: number;
+  status?: string;
+  source?: string;
+  /** JSON 字符串或已解析的分组表；后端透传，形态宽松 */
+  groups_json?: string | Record<string, GroupItem>;
+  raw_json?: string | Record<string, unknown>;
+  hash?: string;
+  error_message?: string | null;
+  checked_at?: string;
+  [key: string]: unknown;
+};
+
+/** 推送历史日志（GET /api/notifications/logs）— 对应 notification_logs 表透传 */
+export type NotificationLog = {
+  id?: number;
+  channel?: string;
+  status?: string;
+  target?: string;
+  message?: string;
+  error_message?: string | null;
+  created_at?: string;
+  [key: string]: unknown;
 };

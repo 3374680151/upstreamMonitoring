@@ -1,220 +1,278 @@
 """HTTP transport primitives for upstream site requests.
 
-Moved out of ``backend.legacy_runtime`` so the FastAPI boundary can import the
-curl fallback, JSON request helpers, and upstream error translators without
-pulling in the whole legacy runtime.  The legacy runtime re-exports every name
-below for backward compatibility.
+传输层基于 **httpx**（连接复用 / 超时 / 手动重定向控制），并在连接被上游
+重置（常见于 Cloudflare 前置、对 stdlib TLS 指纹敏感的站点）时回退到
+**curl_cffi**（libcurl TLS 栈），取代旧版手写的 urllib opener 与
+subprocess curl 包装。对外仍暴露 ``request_json`` /
+``admin_request_json`` / ``request_json_with_headers`` 等既有契约。
 """
 
 from __future__ import annotations
 
-import io
 import json
 import re
-import subprocess
-import tempfile
-import urllib.error
-import urllib.request
-from email.message import EmailMessage
-from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+import threading
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+from curl_cffi import requests as curl_requests
 
 from backend.core.config import HTTP_TIMEOUT_SECONDS
-from backend.core.normalize import _cookie_header_from_response, _url_origin
+from backend.core.normalize import _cookie_header_from_response, _url_origin  # noqa: F401 (_cookie_header_from_response 为兼容旧导入面保留再导出)
 
 
-def open_upstream_url(
-    request: urllib.request.Request,
-    timeout: float = HTTP_TIMEOUT_SECONDS,
-    *handlers: Any,
-):
-    """Use the OS network route without application-level HTTP proxies."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), *handlers)
-    try:
-        return opener.open(request, timeout=timeout)
-    except urllib.error.URLError as exc:
-        if not _is_connection_reset_by_peer(exc):
-            raise
-        return _open_upstream_url_with_curl(request, timeout)
+# ---------------------------------------------------------------------------
+# 内部响应模型：统一 httpx 与 curl_cffi 两种来源
+# ---------------------------------------------------------------------------
 
 
-class _CurlResponse:
-    """Small urllib-compatible response for the connection-reset fallback."""
+class UpstreamHeaders:
+    """大小写不敏感的多值响应头。"""
 
-    def __init__(self, body: bytes, headers: EmailMessage, status: int) -> None:
-        self._body = io.BytesIO(body)
-        self.headers = headers
+    __slots__ = ("_items",)
+
+    def __init__(self, items: List[Tuple[str, str]]):
+        self._items = [(str(k), str(v)) for k, v in items]
+
+    def get(self, name: str, default: str = "") -> str:
+        low = name.lower()
+        for key, value in self._items:
+            if key.lower() == low:
+                return value
+        return default
+
+    def get_all(self, name: str) -> List[str]:
+        low = name.lower()
+        return [value for key, value in self._items if key.lower() == low]
+
+
+class UpstreamResponse:
+    __slots__ = ("status", "headers", "content")
+
+    def __init__(self, status: int, headers: UpstreamHeaders, content: bytes):
         self.status = status
+        self.headers = headers
+        self.content = content
 
-    def read(self, amount: int = -1) -> bytes:
-        return self._body.read(amount)
-
-    def __enter__(self) -> "_CurlResponse":
-        return self
-
-    def __exit__(self, *_args: Any) -> None:
-        self._body.close()
+    def text(self) -> str:
+        return self.content.decode("utf-8", errors="replace")
 
 
-def _is_connection_reset_by_peer(exc: BaseException) -> bool:
-    reason = getattr(exc, "reason", exc)
-    return isinstance(reason, ConnectionResetError) or "Connection reset by peer" in str(reason)
+class UpstreamHttpStatusError(Exception):
+    """等价于旧 ``urllib.error.HTTPError`` 的语义：>=400 状态 + 可 read() 的响应体。"""
+
+    def __init__(
+        self,
+        url: str,
+        status: int,
+        message: str,
+        headers: UpstreamHeaders,
+        body: bytes,
+    ):
+        self.url = url
+        self.code = status
+        self.headers = headers
+        self._body = body
+        super().__init__(message)
+
+    def read(self) -> bytes:
+        return self._body
 
 
-def _curl_config_value(value: Any) -> str:
-    return str(value or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "")
+def _response_from_httpx(resp: httpx.Response) -> UpstreamResponse:
+    return UpstreamResponse(
+        resp.status_code,
+        UpstreamHeaders(list(resp.headers.multi_items())),
+        resp.content,
+    )
 
 
-def _curl_headers_from_dump(raw: bytes) -> Tuple[int, EmailMessage]:
-    blocks = [block for block in re.split(br"\r?\n\r?\n", raw) if block.strip()]
-    block = blocks[-1] if blocks else b""
-    lines = block.splitlines()
-    if not lines:
-        return 0, EmailMessage()
-    match = re.search(br"\s(\d{3})\s", lines[0])
-    status = int(match.group(1)) if match else 0
-    headers = EmailMessage()
-    for raw_line in lines[1:]:
-        if b":" not in raw_line:
-            continue
-        key, value = raw_line.split(b":", 1)
-        headers.add_header(
-            key.decode("iso-8859-1", errors="replace").strip(),
-            value.decode("iso-8859-1", errors="replace").strip(),
-        )
-    return status, headers
+# ---------------------------------------------------------------------------
+# 共享客户端与发送逻辑
+# ---------------------------------------------------------------------------
+
+_client_lock = threading.Lock()
+_client: Optional[httpx.Client] = None
 
 
-def _open_upstream_url_with_curl(
-    request: urllib.request.Request, timeout: float
-) -> _CurlResponse:
-    """Retry only TLS-fingerprint-sensitive sites through the system curl client.
-
-    Some Cloudflare-fronted NewAPI deployments reset stdlib TLS clients while
-    accepting the same HTTP request from curl. Credentials stay in a 0700 temp
-    directory and are never passed as process arguments.
-    """
-    with tempfile.TemporaryDirectory(prefix="upstream-curl-") as temp_dir:
-        directory = Path(temp_dir)
-        config_path = directory / "request.conf"
-        body_path = directory / "response.bin"
-        headers_path = directory / "headers.txt"
-        request_body_path = directory / "request.bin"
-        lines = [
-            "silent",
-            "show-error",
-            f'max-time = "{max(1, int(timeout))}"',
-            f'request = "{_curl_config_value(request.get_method())}"',
-            f'url = "{_curl_config_value(request.full_url)}"',
-            f'output = "{_curl_config_value(body_path)}"',
-            f'dump-header = "{_curl_config_value(headers_path)}"',
-        ]
-        for key, value in request.header_items():
-            lines.append(
-                f'header = "{_curl_config_value(f"{key}: {value}")}"'
+def _http_client() -> httpx.Client:
+    """进程内共享客户端；trust_env=False 等价旧的「不走应用级代理」。"""
+    global _client
+    with _client_lock:
+        if _client is None or _client.is_closed:
+            _client = httpx.Client(
+                trust_env=False,
+                timeout=HTTP_TIMEOUT_SECONDS,
+                follow_redirects=False,
+                headers={"User-Agent": "Upstream-Ratio-Watch/1.0"},
             )
-        if request.data is not None:
-            request_body_path.write_bytes(request.data)
-            lines.append(f'data-binary = "@{_curl_config_value(request_body_path)}"')
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        try:
-            result = subprocess.run(
-                ["curl", "--config", str(config_path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                timeout=max(2, int(timeout) + 3),
-                check=False,
-            )
-        except FileNotFoundError as exc:
-            raise urllib.error.URLError("上游重置连接，且系统未安装 curl 兼容客户端") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise urllib.error.URLError("curl 兼容请求超时") from exc
-        if result.returncode != 0:
-            detail = result.stderr.decode("utf-8", errors="replace").strip()
-            raise urllib.error.URLError(f"curl 兼容请求失败：{detail or result.returncode}")
-        body = body_path.read_bytes() if body_path.exists() else b""
-        status, headers = _curl_headers_from_dump(
-            headers_path.read_bytes() if headers_path.exists() else b""
-        )
-        if status >= 400:
-            raise urllib.error.HTTPError(
-                request.full_url,
-                status,
-                f"HTTP {status}",
-                headers,
-                io.BytesIO(body),
-            )
-        if not status:
-            raise urllib.error.URLError("curl 兼容请求没有返回有效 HTTP 状态")
-        return _CurlResponse(body, headers, status)
+        return _client
 
 
-def json_request(
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+
+def _is_connection_reset(exc: BaseException) -> bool:
+    seen = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ConnectionResetError):
+            return True
+        text = str(current).lower()
+        if "connection reset by peer" in text or "econnreset" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _fetch_with_curl(
     url: str,
-    payload: Dict[str, Any],
+    method: str,
+    headers: Dict[str, str],
+    data: Optional[bytes],
+    timeout: float,
+) -> UpstreamResponse:
+    """连接被重置时的兼容传输：curl_cffi 走 libcurl TLS 栈。"""
+    kwargs: Dict[str, Any] = {
+        "headers": dict(headers),
+        "data": data if data is not None else b"",
+        "timeout": max(1.0, float(timeout)),
+        "allow_redirects": False,
+        "proxy": "",
+    }
+    try:
+        resp = curl_requests.request(method, url, **kwargs)
+    except TypeError:
+        kwargs.pop("proxy", None)
+        resp = curl_requests.request(method, url, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - 统一转译为可读错误
+        raise RuntimeError(f"curl 兼容请求失败：{exc}") from exc
+    return UpstreamResponse(
+        resp.status_code,
+        UpstreamHeaders(list(resp.headers.multi_items())),
+        resp.content or b"",
+    )
+
+
+def send_upstream_request(
+    url: str,
+    *,
+    method: str = "GET",
     headers: Optional[Dict[str, str]] = None,
-    method: str = "POST",
-) -> Tuple[int, Dict[str, Any], str]:
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request_headers = {
+    data: Optional[bytes] = None,
+    timeout: float = HTTP_TIMEOUT_SECONDS,
+    same_origin_only: bool = False,
+    max_redirects: int = 10,
+) -> UpstreamResponse:
+    """发送请求并手动跟随重定向（保持与旧 urllib 行为一致）。
+
+    - 301/302/303 且方法非 GET/HEAD：改写为 GET 并丢弃请求体；
+    - 307/308：保留原方法与请求体；
+    - ``same_origin_only=True``（管理端）：跨 Origin 跳转按 403 拒绝，
+      防止管理员凭据被重定向到外部域；
+    - 连接被上游重置时回退 curl_cffi 兼容传输；
+    - >=400 抛 ``UpstreamHttpStatusError``（等价 urllib HTTPError 语义）。
+    """
+    method = method.upper()
+    merged: Dict[str, str] = {
         "Accept": "application/json",
-        "Content-Type": "application/json",
         "User-Agent": "Upstream-Ratio-Watch/1.0",
     }
     if headers:
-        request_headers.update(headers)
-    req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
-    with open_upstream_url(req) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
+        merged.update(headers)
+
+    current_url = url
+    current_data = data
+    response: Optional[UpstreamResponse] = None
+    for _ in range(max_redirects + 1):
         try:
-            payload_obj = json.loads(raw) if raw else {}
-        except Exception:
-            payload_obj = {"raw": raw}
-        if not isinstance(payload_obj, dict):
-            payload_obj = {"raw": raw}
-        return resp.status, payload_obj, raw
+            resp = _http_client().request(
+                method,
+                current_url,
+                headers=merged,
+                content=current_data,
+                timeout=timeout,
+            )
+            response = _response_from_httpx(resp)
+        except httpx.TransportError as exc:
+            if not _is_connection_reset(exc):
+                raise
+            response = _fetch_with_curl(
+                current_url, method, merged, current_data, timeout
+            )
+
+        assert response is not None
+        if response.status not in _REDIRECT_STATUSES:
+            break
+        location = response.headers.get("location")
+        if not location:
+            break
+        next_url = str(httpx.URL(current_url).join(location))
+        if same_origin_only:
+            try:
+                cross_origin = _url_origin(next_url) != _url_origin(current_url)
+            except (TypeError, ValueError):
+                cross_origin = True
+            if cross_origin:
+                raise UpstreamHttpStatusError(
+                    next_url,
+                    403,
+                    "跨 Origin 跳转已拒绝",
+                    response.headers,
+                    response.content,
+                )
+        if response.status in (301, 302, 303) and method not in ("GET", "HEAD"):
+            method = "GET"
+            current_data = None
+        current_url = next_url
+    else:
+        raise httpx.TooManyRedirects(f"超过最大重定向次数：{url}")
+
+    if response.status >= 400:
+        raise UpstreamHttpStatusError(
+            current_url,
+            response.status,
+            f"HTTP {response.status}",
+            response.headers,
+            response.content,
+        )
+    return response
 
 
-def request_json(url: str, headers: Optional[Dict[str, str]] = None, payload: Optional[Dict[str, Any]] = None, method: str = "GET") -> Tuple[bool, Any, Optional[str]]:
+# ---------------------------------------------------------------------------
+# 对外契约层（签名与返回结构与迁移前完全一致）
+# ---------------------------------------------------------------------------
+
+
+def request_json(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    method: str = "GET",
+) -> Tuple[bool, Any, Optional[str]]:
     data = None
-    request_headers = {
-        "Accept": "application/json",
-        "User-Agent": "Upstream-Ratio-Watch/1.0",
-    }
+    request_headers: Dict[str, str] = {}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     if headers:
         request_headers.update(headers)
-    req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     try:
-        with open_upstream_url(req) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            parsed = json.loads(body) if body else {}
-            return True, parsed, None
-    except urllib.error.HTTPError as exc:
+        resp = send_upstream_request(
+            url, method=method, headers=request_headers, data=data
+        )
+        body = resp.text()
+        parsed = json.loads(body) if body else {}
+        return True, parsed, None
+    except UpstreamHttpStatusError as exc:
         try:
             raw = exc.read().decode("utf-8", errors="replace")
         except Exception:
             raw = ""
         return False, {"status": exc.code, "raw": raw}, f"HTTP {exc.code}"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 保持既有宽松契约
         return False, {"error": str(exc)}, str(exc)
-
-
-class SameOriginAdminRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Prevent administrator credentials from following cross-Origin redirects."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        try:
-            same_origin = _url_origin(req.full_url) == _url_origin(newurl)
-        except (TypeError, ValueError):
-            same_origin = False
-        if not same_origin:
-            raise urllib.error.HTTPError(
-                newurl, 403, "跨 Origin 跳转已拒绝", headers, fp
-            )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def admin_request_json(
@@ -223,30 +281,30 @@ def admin_request_json(
     payload: Optional[Dict[str, Any]] = None,
     method: str = "GET",
 ) -> Tuple[bool, Any, Optional[str]]:
-    request_headers = {
-        "Accept": "application/json",
-        "User-Agent": "Upstream-Ratio-Watch/1.0",
-    }
+    request_headers: Dict[str, str] = {}
     data = None
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     if headers:
         request_headers.update(headers)
-    req = urllib.request.Request(
-        url, data=data, headers=request_headers, method=method
-    )
     try:
-        with open_upstream_url(req, HTTP_TIMEOUT_SECONDS, SameOriginAdminRedirectHandler()) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            return True, json.loads(body) if body else {}, None
-    except urllib.error.HTTPError as exc:
+        resp = send_upstream_request(
+            url,
+            method=method,
+            headers=request_headers,
+            data=data,
+            same_origin_only=True,
+        )
+        body = resp.text()
+        return True, json.loads(body) if body else {}, None
+    except UpstreamHttpStatusError as exc:
         try:
             raw = exc.read().decode("utf-8", errors="replace")
         except Exception:
             raw = ""
         return False, {"status": exc.code, "raw": raw}, f"HTTP {exc.code}"
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - 保持既有宽松契约
         return False, {"error": str(exc)}, str(exc)
 
 
@@ -258,33 +316,40 @@ def request_json_with_headers(
 ) -> Tuple[bool, Any, Optional[str], Dict[str, Any]]:
     """请求 JSON，同时保留响应头，供网页登录态捕获 Set-Cookie 使用。"""
     data = None
-    request_headers = {
-        "Accept": "application/json",
-        "User-Agent": "Upstream-Ratio-Watch/1.0",
-    }
+    request_headers: Dict[str, str] = {}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request_headers["Content-Type"] = "application/json"
     if headers:
         request_headers.update(headers)
-    req = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     try:
-        with open_upstream_url(req) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            parsed = json.loads(body) if body else {}
-            response_headers: Dict[str, Any] = {
-                "set-cookie": resp.headers.get_all("Set-Cookie") or [],
-            }
-            return True, parsed, None, response_headers
-    except urllib.error.HTTPError as exc:
+        resp = send_upstream_request(
+            url, method=method, headers=request_headers, data=data
+        )
+        body = resp.text()
+        parsed = json.loads(body) if body else {}
+        response_headers: Dict[str, Any] = {
+            "set-cookie": resp.headers.get_all("Set-Cookie")
+        }
+        return True, parsed, None, response_headers
+    except UpstreamHttpStatusError as exc:
         try:
             raw = exc.read().decode("utf-8", errors="replace")
         except Exception:
             raw = ""
-        response_headers = {"set-cookie": exc.headers.get_all("Set-Cookie") or []}
-        return False, {"status": exc.code, "raw": raw}, f"HTTP {exc.code}", response_headers
-    except Exception as exc:
+        return (
+            False,
+            {"status": exc.code, "raw": raw},
+            f"HTTP {exc.code}",
+            {"set-cookie": exc.headers.get_all("Set-Cookie")},
+        )
+    except Exception as exc:  # noqa: BLE001 - 保持既有宽松契约
         return False, {"error": str(exc)}, str(exc), {"set-cookie": []}
+
+
+# ---------------------------------------------------------------------------
+# 错误信息翻译器（纯函数，行为不变）
+# ---------------------------------------------------------------------------
 
 
 def _upstream_response_message(payload: Any, error: Optional[str] = None) -> str:

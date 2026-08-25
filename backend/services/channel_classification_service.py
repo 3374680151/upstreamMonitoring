@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from backend.integrations.http import (
+    UpstreamHttpStatusError,
+    send_upstream_request,
+)
 from backend.core.normalize import (
     _normalize_discovery_base_url,
     normalize_base_url,
@@ -69,19 +71,11 @@ class ChannelClassificationService:
         如果返回 404，说明不是 sub2api。
         """
         url = f"{base_url}/api/v1/auth/me"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "Upstream-Ratio-Watch/1.0",
-            },
-            method="GET",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                # 能无认证访问说明确实是 sub2api（返回了数据）
-                return resp.status == 200
-        except urllib.error.HTTPError as exc:
+            resp = send_upstream_request(url, timeout=5)
+            # 能无认证访问说明确实是 sub2api（返回了数据）
+            return resp.status == 200
+        except UpstreamHttpStatusError as exc:
             # 401 = 端点存在但需要认证 → 是 sub2api
             # 404 = 端点不存在 → 不是 sub2api
             return exc.code in (401, 403)

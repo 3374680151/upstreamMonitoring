@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from pymysql.cursors import DictCursor
 from backend.core.config import DEFAULT_INTERVAL_MINUTES, MIN_INTERVAL_MINUTES
 from backend.core.normalize import (
     _normalize_discovery_base_url,
@@ -242,7 +243,7 @@ def _import_discovered_site_item(
     """
     base_url = item["base_url"]
     name = item["name"]
-    with connection.cursor() as cursor:
+    with connection.cursor(DictCursor) as cursor:
         cursor.execute(
             _q(
                 "SELECT * FROM sites "
@@ -471,7 +472,7 @@ def _reconcile_site_discovery_links_in_connection(
 
     removed = 0
     if stale_rows:
-        with connection.cursor() as cursor:
+        with connection.cursor(DictCursor) as cursor:
             for row in stale_rows:
                 cursor.execute(
                     _q(

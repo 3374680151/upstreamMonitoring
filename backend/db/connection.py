@@ -12,13 +12,13 @@ which in turn re-exports the pool symbols defined here.
 
 from __future__ import annotations
 
-import threading
 from contextlib import contextmanager
-from queue import Empty, LifoQueue
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 import pymysql
 from pymysql.cursors import DictCursor
+from sqlalchemy import create_engine
+from sqlalchemy.exc import TimeoutError as PoolAcquireTimeoutError
 
 from backend.core.config import (
     DB_CONFIG,
@@ -33,7 +33,11 @@ from backend.core.state import DB_LOCK
 
 
 def connect_db() -> pymysql.connections.Connection:
-    """新建一个可由连接池独占租用的 MySQL 连接。"""
+    """新建一个可由连接池独占租用的 MySQL 连接。
+
+    注意：连接级不设 ``cursorclass=DictCursor``——SQLAlchemy 方言初始化要用普通游标
+    探测服务器版本；需要字典行的代码一律显式 ``connection.cursor(DictCursor)``。
+    """
     return pymysql.connect(
         host=DB_CONFIG["host"],
         port=DB_CONFIG["port"],
@@ -41,7 +45,6 @@ def connect_db() -> pymysql.connections.Connection:
         password=DB_CONFIG["password"],
         database=DB_CONFIG["database"],
         charset="utf8mb4",
-        cursorclass=DictCursor,
         autocommit=False,
         connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
         read_timeout=DB_READ_TIMEOUT_SECONDS,
@@ -50,69 +53,39 @@ def connect_db() -> pymysql.connections.Connection:
 
 
 class DatabaseConnectionPool:
-    """有界、惰性创建的进程内 MySQL 连接池。"""
+    """基于 SQLAlchemy ``QueuePool`` 的有界 MySQL 连接池。
+
+    连接生命周期完全复用成熟实现，不再手写：
+    - 惰性创建、上限 ``pool_size``（``max_overflow=0`` 不超卖）、获取超时 ``pool_timeout``
+    - ``pool_pre_ping=True``：每次租约前探活，坏连接自动重建
+    - 归还时自动 rollback（reset_on_return 默认行为），无法复位的连接自动废弃重建
+    - ``dispose()`` 关闭全部空闲连接
+    """
 
     def __init__(self, connection_factory, size: int, acquire_timeout: float):
-        self._connection_factory = connection_factory
-        self._acquire_timeout = acquire_timeout
-        self._state_lock = threading.Lock()
-        self._closed = False
-        self._slots = LifoQueue(maxsize=size)
-        for _ in range(size):
-            self._slots.put(None)
+        self._engine = create_engine(
+            "mysql+pymysql://",
+            creator=connection_factory,
+            pool_size=size,
+            max_overflow=0,
+            pool_timeout=acquire_timeout,
+            pool_pre_ping=True,
+        )
 
     @contextmanager
     def connection(self):
         try:
-            connection = self._slots.get(timeout=self._acquire_timeout)
-        except Empty as exc:
+            leased = self._engine.raw_connection()
+        except PoolAcquireTimeoutError as exc:
             raise DatabasePoolTimeoutError("数据库连接池繁忙，请稍后重试") from exc
         try:
-            if connection is not None:
-                try:
-                    connection.ping(reconnect=False)
-                except Exception:
-                    try:
-                        connection.close()
-                    except Exception:
-                        pass
-                    connection = None
-            if connection is None:
-                connection = self._connection_factory()
-            yield connection
+            yield leased
         finally:
-            if connection is not None:
-                try:
-                    connection.rollback()
-                except Exception:
-                    try:
-                        connection.close()
-                    except Exception:
-                        pass
-                    connection = None
-            with self._state_lock:
-                if self._closed:
-                    if connection is not None:
-                        try:
-                            connection.close()
-                        except Exception:
-                            pass
-                else:
-                    self._slots.put(connection)
+            # close() 只把连接归还到池；归还前的 rollback 由 SQLAlchemy 统一执行。
+            leased.close()
 
     def close(self) -> None:
-        with self._state_lock:
-            self._closed = True
-            while True:
-                try:
-                    connection = self._slots.get_nowait()
-                except Empty:
-                    break
-                if connection is not None:
-                    try:
-                        connection.close()
-                    except Exception:
-                        pass
+        self._engine.dispose()
 
 
 DB_POOL = DatabaseConnectionPool(
@@ -165,7 +138,7 @@ def db_query_all(
     if connection is None:
         with db_connection() as leased:
             return db_query_all(sql, params, connection=leased)
-    with connection.cursor() as cur:
+    with connection.cursor(DictCursor) as cur:
         cur.execute(_q(sql), tuple(params))
         return [dict(row) for row in cur.fetchall()]
 
@@ -178,7 +151,7 @@ def db_query_one(
     if connection is None:
         with db_connection() as leased:
             return db_query_one(sql, params, connection=leased)
-    with connection.cursor() as cur:
+    with connection.cursor(DictCursor) as cur:
         cur.execute(_q(sql), tuple(params))
         row = cur.fetchone()
         return dict(row) if row else None
@@ -187,7 +160,7 @@ def db_query_one(
 def db_execute(sql: str, params: Iterable[Any] = ()) -> int:
     with db_connection() as connection:
         try:
-            with connection.cursor() as cur:
+            with connection.cursor(DictCursor) as cur:
                 cur.execute(_q(sql), tuple(params))
                 lastrowid = cur.lastrowid
             connection.commit()
@@ -204,7 +177,7 @@ def db_execute_rowcount(sql: str, params: Iterable[Any] = ()) -> int:
     """Execute a write and return affected rows for compare-and-swap updates."""
     with db_connection() as connection:
         try:
-            with connection.cursor() as cur:
+            with connection.cursor(DictCursor) as cur:
                 cur.execute(_q(sql), tuple(params))
                 rowcount = int(cur.rowcount or 0)
             connection.commit()

@@ -16,7 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# FastAPI/Uvicorn + PyMySQL；不引入 ORM 或任务队列。
+# FastAPI/Uvicorn + PyMySQL + SQLAlchemy Engine 连接池 + APScheduler 调度。
 COPY requirements.txt /app/requirements.txt
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

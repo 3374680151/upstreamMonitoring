@@ -26,15 +26,12 @@ from backend.core.normalize import normalize_base_url
 from backend.core.state import (
     ADMIN_SUB2API_EXPIRY_SKEW_SECONDS,
     ADMIN_SUB2API_SESSION_LOCKS,
-    ADMIN_SUB2API_SESSION_LOCKS_GUARD,
     BROWSER_AUTH_MODE,
     SESSION_SYNC_REQUEST_LOCK,
     SUB2API_REFRESH_CACHE,
     SUB2API_REFRESH_CACHE_TTL_SECONDS,
     SUB2API_REFRESH_LOCKS,
-    SUB2API_REFRESH_LOCKS_GUARD,
     SUB2API_SITE_AUTH_LOCKS,
-    SUB2API_SITE_AUTH_LOCKS_GUARD,
 )
 from backend.core.time import app_now, utc_now_iso
 from backend.db.connection import (
@@ -701,10 +698,7 @@ def sub2api_admin_refresh_token(
 
 
 def _admin_sub2api_session_lock(site_id: int) -> threading.RLock:
-    with ADMIN_SUB2API_SESSION_LOCKS_GUARD:
-        return ADMIN_SUB2API_SESSION_LOCKS.setdefault(
-            int(site_id), threading.RLock()
-        )
+    return ADMIN_SUB2API_SESSION_LOCKS.lock(int(site_id))
 
 
 def _persist_sub2api_admin_auth(site_id: int, auth: Dict[str, Any]) -> None:
@@ -1245,14 +1239,11 @@ def sub2api_refresh_token(base_url: str, refresh_token: str) -> Tuple[bool, Dict
 
 
 def _sub2api_refresh_lock(base_url: str) -> threading.RLock:
-    key = normalize_base_url(base_url)
-    with SUB2API_REFRESH_LOCKS_GUARD:
-        return SUB2API_REFRESH_LOCKS.setdefault(key, threading.RLock())
+    return SUB2API_REFRESH_LOCKS.lock(normalize_base_url(base_url))
 
 
 def _sub2api_site_auth_lock(site_id: int) -> threading.RLock:
-    with SUB2API_SITE_AUTH_LOCKS_GUARD:
-        return SUB2API_SITE_AUTH_LOCKS.setdefault(int(site_id), threading.RLock())
+    return SUB2API_SITE_AUTH_LOCKS.lock(int(site_id))
 
 
 def refresh_sub2api_auth(

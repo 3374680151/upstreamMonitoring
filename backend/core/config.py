@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 # Resolve paths from the repository root, not from the backend package directory.
 APP_DIR = Path(__file__).resolve().parents[2]
@@ -18,21 +20,10 @@ DB_PATH = DATA_DIR / "app.db"  # 旧 SQLite 路径，仅供一次性迁移工具
 def _load_dotenv() -> None:
     """把本地 .env（已 gitignore）的 KEY=VALUE 读入环境变量。
 
-    目的：数据库密码 / SMTP / 令牌等密钥只留在本地 .env，不进源码、不进 git，
-    开源时不会泄露。已存在的环境变量优先，不会被覆盖。
+    使用 python-dotenv：数据库密码 / SMTP / 令牌等密钥只留在本地 .env，
+    不进源码、不进 git。已存在的环境变量优先，不会被覆盖（override=False）。
     """
-    env_path = APP_DIR / ".env"
-    if not env_path.exists():
-        return
-    try:
-        for raw in env_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-    except OSError:
-        return
+    load_dotenv(APP_DIR / ".env", override=False, encoding="utf-8")
 
 
 # 在读取任何依赖 .env 的模块级常量之前先把密钥载入环境变量。

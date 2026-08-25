@@ -11,8 +11,6 @@ import json
 import re
 import threading
 import time
-import urllib.error
-import urllib.request
 from http.cookies import SimpleCookie
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
@@ -42,7 +40,6 @@ from backend.core.state import (
     MODEL_CACHE_TTL_SECONDS,
     MODEL_DATA_CACHE,
     NEWAPI_SITE_BROWSER_SESSION_LOCKS,
-    NEWAPI_SITE_BROWSER_SESSION_LOCKS_GUARD,
     NEWAPI_UPTIME_CACHE,
     NEWAPI_UPTIME_REFRESHING,
     NEWAPI_USER_TOKEN_LIST_CACHE,
@@ -65,12 +62,12 @@ from backend.integrations.http import (
     _cookie_header_from_response,
     _upstream_response_details,
     _upstream_response_message,
+    UpstreamHttpStatusError,
     admin_request_json,
-    json_request,
     newapi_auth_failure_message,
-    open_upstream_url,
     request_json,
     request_json_with_headers,
+    send_upstream_request,
 )
 
 
@@ -526,22 +523,14 @@ def parse_newapi_models_by_group(
 
 def fetch_newapi_groups(base_url: str) -> Tuple[bool, Dict[str, Any], Optional[str]]:
     url = f"{normalize_base_url(base_url)}/api/user/groups"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "Upstream-Ratio-Watch/1.0",
-        },
-        method="GET",
-    )
     try:
-        with open_upstream_url(req) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            payload = json.loads(body)
-            if not isinstance(payload, dict) or not payload.get("success"):
-                return False, payload if isinstance(payload, dict) else {"raw": body}, "success=false"
-            return True, payload, None
-    except urllib.error.HTTPError as exc:
+        resp = send_upstream_request(url)
+        body = resp.text()
+        payload = json.loads(body)
+        if not isinstance(payload, dict) or not payload.get("success"):
+            return False, payload if isinstance(payload, dict) else {"raw": body}, "success=false"
+        return True, payload, None
+    except UpstreamHttpStatusError as exc:
         try:
             raw = exc.read().decode("utf-8", errors="replace")
         except Exception:
@@ -1702,8 +1691,7 @@ def persist_newapi_site_browser_session(
     )
 
 def _newapi_site_browser_session_lock(site_id: int) -> threading.RLock:
-    with NEWAPI_SITE_BROWSER_SESSION_LOCKS_GUARD:
-        return NEWAPI_SITE_BROWSER_SESSION_LOCKS.setdefault(site_id, threading.RLock())
+    return NEWAPI_SITE_BROWSER_SESSION_LOCKS.lock(site_id)
 
 def _newapi_refresh_cookie_from_response(
     headers: Dict[str, Any], previous: str = ""

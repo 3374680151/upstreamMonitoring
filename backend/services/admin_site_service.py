@@ -19,12 +19,7 @@ from backend.core.normalize import (
     _cookie_header_from_response,
     normalize_base_url,
 )
-from backend.core.state import (
-    ADMIN_BROWSER_SESSION_LOCKS,
-    ADMIN_BROWSER_SESSION_LOCKS_GUARD,
-    ADMIN_SUB2API_SESSION_LOCKS,
-    ADMIN_SUB2API_SESSION_LOCKS_GUARD,
-)
+from backend.core.state import ADMIN_BROWSER_SESSION_LOCKS
 from backend.core.time import app_now, utc_now_iso
 from backend.db.connection import (
     _q,
@@ -82,8 +77,7 @@ from backend.repositories.admin_sites import (
 # ---------------------------------------------------------------------------
 
 def _admin_browser_session_lock(site_id: int) -> threading.RLock:
-    with ADMIN_BROWSER_SESSION_LOCKS_GUARD:
-        return ADMIN_BROWSER_SESSION_LOCKS.setdefault(site_id, threading.RLock())
+    return ADMIN_BROWSER_SESSION_LOCKS.lock(site_id)
 
 
 def _admin_browser_auth_headers(site: Dict[str, Any]) -> Dict[str, str]:

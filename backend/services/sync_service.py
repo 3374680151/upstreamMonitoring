@@ -12,6 +12,7 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+from pymysql.cursors import DictCursor
 from backend.core.config import DEFAULT_INTERVAL_MINUTES, SCAN_INTERVAL_SECONDS
 from backend.core.state import (
     ADMIN_KEY_SYNC_PROOF_BATCH_SIZE,
@@ -118,7 +119,7 @@ def _delete_stale_admin_channel_data_in_connection(
     )
     removed_bindings = 0
     removed_keys = 0
-    with connection.cursor() as cursor:
+    with connection.cursor(DictCursor) as cursor:
         for row in binding_rows:
             channel_id = _positive_channel_id(row.get("channel_id"))
             if channel_id is not None and channel_id in live_channel_ids:
@@ -189,7 +190,7 @@ def _apply_admin_site_channel_reconcile_in_connection(
         remaining_count = int((remaining or {}).get("count") or 0)
         if remaining_count > 0:
             if int(site.get("auto_disabled") or 0) == 1:
-                with connection.cursor() as cursor:
+                with connection.cursor(DictCursor) as cursor:
                     cursor.execute(
                         _q(
                             "UPDATE sites SET enabled = 1, auto_disabled = 0, "
@@ -200,14 +201,14 @@ def _apply_admin_site_channel_reconcile_in_connection(
                     reenabled += int(cursor.rowcount or 0)
             continue
         if mode == RECONCILE_MODE_DELETE:
-            with connection.cursor() as cursor:
+            with connection.cursor(DictCursor) as cursor:
                 cursor.execute(
                     _q("DELETE FROM sites WHERE id = ?"),
                     (site_id,),
                 )
                 deleted += int(cursor.rowcount or 0)
         elif int(site.get("enabled") or 0) == 1:
-            with connection.cursor() as cursor:
+            with connection.cursor(DictCursor) as cursor:
                 cursor.execute(
                     _q(
                         "UPDATE sites SET enabled = 0, auto_disabled = 1, "
@@ -326,7 +327,7 @@ def _sync_admin_site_snapshot_in_connection(
             connection, admin_site_id, affected_site_ids, mode
         )
 
-    with connection.cursor() as cursor:
+    with connection.cursor(DictCursor) as cursor:
         cursor.execute(
             _q(
                 """

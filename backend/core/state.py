@@ -11,7 +11,27 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Hashable
+
+from cachetools import TTLCache
+
+
+class KeyedLockManager:
+    """按 key 取 ``RLock`` 的通用管理器。
+
+    收敛原先五套「guard 锁 + dict[key]→RLock」的复制粘贴样板；
+    用法：``with XXX_LOCKS.lock(key):``。
+    """
+
+    __slots__ = ("_guard", "_locks")
+
+    def __init__(self) -> None:
+        self._guard = threading.RLock()
+        self._locks: Dict[Hashable, threading.RLock] = {}
+
+    def lock(self, key: Hashable) -> threading.RLock:
+        with self._guard:
+            return self._locks.setdefault(key, threading.RLock())
 
 
 # ---------------------------------------------------------------------------
@@ -30,9 +50,11 @@ STOP_EVENT = threading.Event()
 # 多锁竞争，仍由 MODEL_CACHE_LOCK 统一守卫。
 MODEL_CACHE_TTL_SECONDS = 90
 UPTIME_CACHE_TTL_SECONDS = 300
-MODEL_DATA_CACHE: Dict[int, Dict[str, Any]] = {}
+# 容器用 cachetools.TTLCache：有界内存 + 过期自动兜底；
+# 条目内的 updated_monotonic 仍保留，业务侧的 age 计算与 SWR 逻辑不变。
+MODEL_DATA_CACHE: TTLCache = TTLCache(maxsize=512, ttl=MODEL_CACHE_TTL_SECONDS)
 MODEL_CACHE_REFRESHING: set[int] = set()
-NEWAPI_UPTIME_CACHE: Dict[str, Dict[str, Any]] = {}
+NEWAPI_UPTIME_CACHE: TTLCache = TTLCache(maxsize=512, ttl=UPTIME_CACHE_TTL_SECONDS)
 NEWAPI_UPTIME_REFRESHING: set[str] = set()
 MODEL_CACHE_LOCK = threading.RLock()
 
@@ -42,9 +64,11 @@ MODEL_CACHE_LOCK = threading.RLock()
 # ---------------------------------------------------------------------------
 # NewAPI 用户侧 API 密钥列表（/api/token/）缓存。渠道页会按多个主站渠道
 # 连续匹配同一个上游账号，短期复用列表可避免重复分页请求。
-NEWAPI_USER_TOKEN_LIST_CACHE: Dict[str, Dict[str, Any]] = {}
-NEWAPI_USER_TOKEN_LIST_LOCK = threading.RLock()
 NEWAPI_USER_TOKEN_LIST_CACHE_TTL_SECONDS = 15
+NEWAPI_USER_TOKEN_LIST_CACHE: TTLCache = TTLCache(
+    maxsize=512, ttl=NEWAPI_USER_TOKEN_LIST_CACHE_TTL_SECONDS
+)
+NEWAPI_USER_TOKEN_LIST_LOCK = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -58,10 +82,12 @@ MAIN_CHANNEL_KEY_RATE_LIMIT_UNTIL: Dict[str, float] = {}
 MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS = 2.0
 MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS = 30.0
 ADMIN_KEY_SYNC_PROOF_BATCH_SIZE = 3
-# 主站 key 在同一页面刷新周期内不会变化。短期缓存可避免 React 开发模式重复加载、
-# 页面重绘或多个调用方重复读取同一个渠道时再次触发主站的保护接口限流。
-MAIN_CHANNEL_KEY_CACHE: Dict[str, Dict[str, Any]] = {}
+# 主站 key 在同一页面刷新周期内不会变化。短期缓存可避免页面重复加载或多个调用方
+# 重复读取同一个渠道时再次触发主站的保护接口限流。
 MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS = 60
+MAIN_CHANNEL_KEY_CACHE: TTLCache = TTLCache(
+    maxsize=1024, ttl=MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS
+)
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +95,11 @@ MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS = 60
 # ---------------------------------------------------------------------------
 # Refresh tokens rotate on every successful dashboard refresh. Serialize by
 # admin site so concurrent channel reads cannot race the same refresh cookie.
-ADMIN_BROWSER_SESSION_LOCKS: Dict[int, threading.RLock] = {}
-ADMIN_BROWSER_SESSION_LOCKS_GUARD = threading.RLock()
+ADMIN_BROWSER_SESSION_LOCKS = KeyedLockManager()
 # 普通监控站点与管理站的 refresh cookie 独立轮换，不能共用锁命名空间。
-NEWAPI_SITE_BROWSER_SESSION_LOCKS: Dict[int, threading.RLock] = {}
-NEWAPI_SITE_BROWSER_SESSION_LOCKS_GUARD = threading.RLock()
+NEWAPI_SITE_BROWSER_SESSION_LOCKS = KeyedLockManager()
 # sub2api 管理端 JWT 与普通监控站点登录态分开保存，并按主站串行轮换。
-ADMIN_SUB2API_SESSION_LOCKS: Dict[int, threading.RLock] = {}
-ADMIN_SUB2API_SESSION_LOCKS_GUARD = threading.RLock()
+ADMIN_SUB2API_SESSION_LOCKS = KeyedLockManager()
 ADMIN_SUB2API_EXPIRY_SKEW_SECONDS = 60
 BROWSER_AUTH_MODE = "browser"
 
@@ -86,16 +109,16 @@ BROWSER_AUTH_MODE = "browser"
 # ---------------------------------------------------------------------------
 # sub2api refresh token 也可能轮换；同一个上游站点的并发请求必须串行刷新，
 # 并在短时间内复用同一轮刷新结果，避免第二个请求继续使用已轮换的旧 refresh_token。
-SUB2API_REFRESH_LOCKS: Dict[str, threading.RLock] = {}
-SUB2API_REFRESH_LOCKS_GUARD = threading.RLock()
-SUB2API_REFRESH_CACHE: Dict[str, Dict[str, Any]] = {}
+SUB2API_REFRESH_LOCKS = KeyedLockManager()
 SUB2API_REFRESH_CACHE_TTL_SECONDS = 30.0
+SUB2API_REFRESH_CACHE: TTLCache = TTLCache(
+    maxsize=512, ttl=SUB2API_REFRESH_CACHE_TTL_SECONDS
+)
 # A refresh-token lock is not enough for a monitor request: a browser sync,
 # a scheduled check, and a manual check can all update the same site row.  Keep
 # the complete credential decision (reload -> request -> conditional write)
 # serial for each ordinary sub2api site.
-SUB2API_SITE_AUTH_LOCKS: Dict[int, threading.RLock] = {}
-SUB2API_SITE_AUTH_LOCKS_GUARD = threading.RLock()
+SUB2API_SITE_AUTH_LOCKS = KeyedLockManager()
 
 
 # ---------------------------------------------------------------------------

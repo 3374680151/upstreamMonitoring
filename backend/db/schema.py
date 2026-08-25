@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from pymysql.cursors import DictCursor
 from backend.core.config import APP_DIR, DATA_DIR
 from backend.core.state import DB_LOCK
 from backend.core.time import next_check_iso, utc_now_iso
@@ -408,7 +409,7 @@ def init_db() -> None:
     with DB_LOCK:
         conn = connect_db()
         try:
-            with conn.cursor() as cur:
+            with conn.cursor(DictCursor) as cur:
                 for statement in DDL_STATEMENTS:
                     cur.execute(statement)
 

@@ -1,6 +1,6 @@
 import unittest
 
-from app import parse_sub2api_monitor_models
+from backend.integrations.sub2api import parse_sub2api_monitor_models
 
 
 class Sub2ApiMonitorMappingTests(unittest.TestCase):

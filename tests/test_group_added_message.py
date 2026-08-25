@@ -1,6 +1,6 @@
 import unittest
 
-from app import diff_groups
+from backend.repositories.changes import diff_groups
 
 
 class GroupAddedMessageTests(unittest.TestCase):

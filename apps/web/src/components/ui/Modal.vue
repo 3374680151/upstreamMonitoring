@@ -1,12 +1,42 @@
 <script setup lang="ts">
+import { onUnmounted, watch } from "vue";
+
 interface Props {
   open: boolean;
   title: string;
   subtitle?: string;
   wide?: boolean;
 }
-defineProps<Props>();
+const props = defineProps<Props>();
 const emit = defineEmits<{ close: [] }>();
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape") emit("close");
+}
+
+watch(
+  () => props.open,
+  (open) => {
+    if (open) {
+      document.addEventListener("keydown", onKeydown);
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      cleanup = () => {
+        document.removeEventListener("keydown", onKeydown);
+        document.body.style.overflow = prevOverflow;
+      };
+    } else {
+      cleanup?.();
+      cleanup = null;
+    }
+  },
+);
+
+let cleanup: (() => void) | null = null;
+onUnmounted(() => {
+  cleanup?.();
+  cleanup = null;
+});
 </script>
 
 <template>
@@ -14,13 +44,14 @@ const emit = defineEmits<{ close: [] }>();
     <div
       v-if="open"
       class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-overlay px-4 py-6 backdrop-blur-[3px] md:px-8 md:py-10"
+      @mousedown.self="emit('close')"
     >
       <div
         role="dialog"
         aria-modal="true"
         :aria-label="title"
         :class="[
-          'my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-line bg-panel shadow-[var(--shadow-floating)]',
+          'upstream-pop my-auto w-full overflow-hidden rounded-[var(--radius-xl)] border border-line bg-panel shadow-[var(--shadow-floating)]',
           wide ? 'max-w-5xl' : 'max-w-xl',
         ]"
       >

@@ -19,7 +19,7 @@ import {
   truthy,
 } from "@/lib/format";
 import Badge from "@/components/Badge.vue";
-import { Button } from "@/components/ui";
+import { Button, EmptyState } from "@/components/ui";
 
 interface Props {
   sites: Site[];
@@ -119,7 +119,7 @@ function handleSyncSession(site: Site) {
   emit("syncSession", site);
 }
 
-// Vue 3 的 emit 不返回 Promise，无法像 React 那样 await 父组件的异步回调；
+// emit 不返回 Promise，无法 await 父组件的异步回调；
 // 父组件完成检测/同步后会刷新 sites，借此清除行内 loading。
 watch(
   () => props.sites,
@@ -184,17 +184,11 @@ const sections = computed(() => {
 </script>
 
 <template>
-  <div
+  <EmptyState
     v-if="!hasSites"
-    class="flex flex-col items-center gap-1.5 py-10 text-center"
-  >
-    <div class="font-serif text-[15px] font-semibold text-ink-strong">
-      还没有渠道
-    </div>
-    <p class="max-w-sm text-[12.5px] leading-relaxed text-ink-muted">
-      从右上角「添加渠道」开始，先接入一个 NewAPI / sub2api 上游站点，再决定抓取频率和认证方式。
-    </p>
-  </div>
+    title="还没有渠道"
+    description="从右上角「添加渠道」开始，先接入一个 NewAPI / sub2api 上游站点，再决定抓取频率和认证方式。"
+  />
   <div v-else class="priceai-scrollbar min-w-0 overflow-x-auto pb-1">
     <table class="w-full min-w-max table-auto text-left text-[13px]">
       <thead>

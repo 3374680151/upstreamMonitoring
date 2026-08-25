@@ -181,6 +181,16 @@ export function modelMetricText(
   return `${Number(value).toLocaleString("zh-CN")} ${suffix}`;
 }
 
+export function usd(value?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+  return `$${Number(value).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export function siteNameById(sites: Site[], siteId: number): string {
   return sites.find((s) => s.id === siteId)?.name || `#${siteId}`;
 }

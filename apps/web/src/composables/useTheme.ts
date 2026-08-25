@@ -1,5 +1,5 @@
 /**
- * 明暗主题切换 — 从 AppShell.tsx 提取。
+ * 明暗主题切换。
  * 读写 localStorage + 同步 html[data-theme]。
  */
 import { shallowRef, watch } from "vue";

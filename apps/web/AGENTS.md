@@ -1,290 +1,229 @@
-# apps/web — Agent 规范（Vue 3，迁移进行中）
+# apps/web — Agent 规范（Vue 3，已迁移完成）
 
-> 范围：`apps/web/`（Vue 3 + Vite 7 + Tailwind 4 + vue-router，PriceAI 风格控制台）。
+> 范围：`apps/web/`（Vue 3 + Vite 7 + Tailwind 4 + vue-router，暖纸+浓墨风格控制台）。
 > 上位规则见 `../../AGENTS.md`，本文件只讲 Vue 前端层的目录、公共层抽取、组件 / composable / api 客户端契约，以及禁止项。
-> 当前状态：迁移进行中；旧的 React 文件正被 Vue 3 替换。**不要在未确认替换行为前删除旧文件**；一旦新版本就绪就立即清掉旧版本。
+> 当前状态：**React → Vue 迁移已完成**（2026-08 复核：`src/` 下无任何 `.tsx`，`package.json` 无 react 依赖）。本文件描述的就是现状，不是目标态。
 
 ---
 
-## 1. 技术栈（已切到 Vue 3）
+## 1. 技术栈
 
-- **框架**：Vue 3.5 + `<script setup lang="ts">` + Composition API；**不再使用 React**。
-- **路由**：`vue-router@4`，`createWebHistory`；路由表集中放在 `src/router/index.ts`（现状单文件，目标可拆 `routes.ts`，但不要在 `main.ts` 内手写跳转）。
-- **构建**：Vite 7 + `@vitejs/plugin-vue` + `@tailwindcss/vite`；路径别名 `@` → `src`；`/api` 代理到 `${VITE_API_PROXY_TARGET || http://127.0.0.1:8000}`。
-- **样式**：Tailwind 4；色 token 在 `src/styles/tokens.css`（含 `colorTokens` 导出，对应 CSS 变量）；暗色通过 `html[data-theme=dark]` 切换。
-- **图标**：`lucide-vue-next`（已在 `package.json`）；**不要**回退到 `lucide-react` 或在 `package.json` 里加 `react*`。
-- **状态管理**：**不引 Pinia / Vuex**。跨页面共享状态用 `provide/inject` + composable（`provideAppActions` 已在 `composables/useAppActions.ts`）。
-- **类型**：TypeScript 5.8 + `vue-tsc`；API 类型在 `src/lib/types.ts`（与后端 `backend/api/schemas/*` 一一对应），不要把类型再复制一份到 `src/lib/api/types.ts`。
-- **包管理**：`npm`；`package-lock.json` 入库；**不要**切到 pnpm / yarn / bun，也不要往 `package.json` 加 `react` / `react-dom` / `react-router-dom`。
-- **测试**：默认不新增；`tests/web/*.test.mjs` 是历史 Playwright 套件，等迁移窗口提示后再决定保留 / 重写 / 删除。
+- **框架**：Vue 3.5 + `<script setup lang="ts">` + Composition API；**不使用 React**。
+- **路由**：`vue-router@4`，`createWebHistory`；路由表集中放在 `src/router/index.ts`。登录不是独立路由——`LoginPage` 由 `App.vue` 按鉴权状态条件渲染。
+- **构建**：Vite 7 + `@vitejs/plugin-vue` + `@tailwindcss/vite`；路径别名 `@` → `src`；`/api` 代理到 `${VITE_API_PROXY_TARGET || http://127.0.0.1:8000}`。类型检查走 `vue-tsc --noEmit -p tsconfig.json`（`npm run build` 自带；不要改回 `vue-tsc -b`——build 模式在本机会无限挂起，且 composite 会把 `vite.config.js` 编译进项目根目录，遮蔽 `vite.config.ts` 导致 dev server 丢失 vue 插件）。
+- **样式**：Tailwind 4 + 设计 token 在 `src/styles/tokens.css`；主题为「暖纸 + 浓墨」（页底 `#f4f1ea`、品牌 veridian 绿 `#2c8a5a`），暗色经 `html[data-theme=dark]` 切换。组件层只消费语义工具类（`bg-panel` / `text-ink-strong` / `border-line` …），**不要**写死 hex 或 `bg-[var(--color-…)]`。
+- **图标**：`lucide-vue-next`；不要引入其它图标库。
+- **状态管理**：**不引 Pinia / Vuex**。跨页面共享状态用模块级 composable（`useConsoleData`）或 `provide/inject`（`useAppActions`）。
+- **类型**：TypeScript 5.8 + `vue-tsc`；API 类型唯一来源 `src/lib/types.ts`，不要复制到 `src/lib/api/types.ts`。
+- **包管理**：`npm`；`package-lock.json` 入库。
 
 ---
 
-## 2. 实际目录（与目标态的差距）
-
-当前 `src/` 真实状态（迁移半成品）：
+## 2. 实际目录
 
 ```
 apps/web/src/
-├── main.ts                 # Vue 入口（createApp + router + tokens.css + 主题）
-├── App.vue                 # 新根组件（装配 AppShell / LoginPage / 弹窗 / 注入 actions）
-├── App.tsx                 # ⚠ 旧 React 根组件，待删
-├── main.tsx                # ⚠ 旧 React 入口，待删
-├── router/
-│   └── index.ts            # createRouter + 路由表
+├── main.ts                 # createApp + router + tokens.css + 主题预置
+├── App.vue                 # 根组件：鉴权分支 / AppShell / 全局弹窗 / provideAppActions
+├── router/index.ts         # 路由表（懒加载）；无守卫，401 靠事件驱动
 ├── components/
-│   ├── ui/                 # 公共 UI（index.ts 统一出口，colorTokens 在此）
+│   ├── ui/                 # 公共 UI 原子件（index.ts 统一出口 + colorTokens）
 │   │   ├── Button.vue / ConfirmDialog.vue / Field.vue / Input.vue
 │   │   ├── Modal.vue / Select.vue / Spinner.vue / SwitchRow.vue
 │   │   ├── Tabs.vue / Textarea.vue / index.ts
-│   ├── AppShell.vue / .tsx
-│   ├── Badge.vue / .tsx
-│   ├── ChangeTable.vue / .tsx
-│   ├── ChangeValue.vue
-│   ├── LoginPage.vue / .tsx
-│   ├── PageHeader.vue / .tsx
-│   ├── Panel.vue / .tsx
-│   ├── StatCard.vue / .tsx
-│   ├── ToastViewport.vue
-│   ├── Toast.tsx           # ⚠ 旧 React toast
-│   ├── AdminSiteFormDialog.tsx
-│   ├── BalanceSummaryPanel.tsx
-│   ├── ChannelDiscoveryPanel.tsx
-│   ├── ChannelFormDialog.tsx
-│   ├── ChannelPriorityDialog.tsx
-│   ├── MainSiteHealthPanel.tsx
-│   ├── RatiosDialog.tsx
-│   ├── SiteFormDialog.tsx
-│   ├── SiteTable.tsx
-│   ├── Sub2ApiChannelDialog.tsx
-│   ├── Sub2ApiChannelTable.tsx
-│   ├── Sub2ApiPricingEditor.tsx
-│   └── ui.tsx              # ⚠ 旧 React UI 出口
-├── composables/            # Vue 版公共逻辑
-│   ├── useAuth.ts
-│   ├── useToast.ts
-│   ├── useConsoleData.ts
-│   ├── useReconcileMode.ts
-│   ├── useBalances.ts
-│   ├── useAppActions.ts
-│   └── useTheme.ts
-├── lib/                    # 工具 + 旧 React hook 残留 + api 客户端
-│   ├── api/                # 旧位置：按域拆分的 api 客户端（仍在这里，迁完前不要新增 `src/api/`）
+│   ├── AppShell.vue        # 顶栏 + 主内容容器（含移动端导航）
+│   ├── PageHeader.vue / Panel.vue / StatCard.vue / Badge.vue
+│   ├── ChangeTable.vue / ChangeValue.vue
+│   ├── SiteTable.vue / SiteFormDialog.vue / RatiosDialog.vue
+│   ├── ChannelDiscoveryPanel.vue / ChannelFormDialog.vue / ChannelPriorityDialog.vue
+│   ├── AdminSiteFormDialog.vue
+│   ├── Sub2ApiChannelDialog.vue / Sub2ApiChannelTable.vue / Sub2ApiPricingEditor.vue / Sub2ApiNumberField.vue
+│   ├── MainSiteHealthPanel.vue
+│   ├── GroupSummaryBar.vue / PerfBars.vue / ModelCell.vue / NewApiModelRow.vue
+│   ├── LoginPage.vue       # 由 App.vue 条件渲染（非路由）
+│   └── ToastViewport.vue   # 全局 toast 渲染；触发靠 useToast()
+├── composables/            # 唯一公共逻辑层
+│   ├── useAuth.ts          # 三态鉴权单例 + console-unauthorized 监听
+│   ├── useToast.ts         # 全局 toast 单例 + errorText 工具
+│   ├── useConsoleData.ts   # 站点/变化/推送设置共享数据（15s 轮询）
+│   ├── useReconcileMode.ts # 主站对账模式（停用/删除）
+│   ├── useBalances.ts      # 账户额度按需查询
+│   ├── useAppActions.ts    # provide/inject 的 App 级动作
+│   └── useTheme.ts         # 明暗主题
+├── lib/
+│   ├── api/                # 数据层：按域拆分的 api 客户端（见 §6）
 │   │   ├── adminSites.ts / auth.ts / client.ts / index.ts
 │   │   ├── monitoring.ts / notifications.ts / sessionSync.ts / settings.ts
-│   ├── automaticRefresh.ts
-│   ├── browserSessionBridge.ts
-│   ├── channelPriority.ts
-│   ├── format.ts
-│   ├── mainSiteHealth.ts
-│   ├── perf.ts
-│   ├── sub2apiChannel.ts
-│   ├── types.ts            # 唯一前端类型来源（不要复制到 api/types.ts）
-│   ├── upstreamError.ts
-│   ├── useAuth.ts          # ⚠ 旧 React hook
-│   ├── useBalances.ts      # ⚠ 旧 React hook
-│   ├── useConsoleData.ts   # ⚠ 旧 React hook
-│   └── useReconcileMode.ts # ⚠ 旧 React hook
-├── pages/                  # ⚠ 仍是 React .tsx，Vue 页面未落地
-│   ├── BalancePage.tsx / ChangesPage.tsx / ChannelsPage.tsx
-│   ├── DetailPage.tsx / NotificationsPage.tsx
-│   ├── OverviewPage.tsx / SitesPage.tsx
-├── styles/tokens.css
+│   ├── automaticRefresh.ts / browserSessionBridge.ts / channelPriority.ts
+│   ├── format.ts           # fmtTime / platformLabel / ratioLabel / usd / truthy 等纯函数
+│   ├── mainSiteHealth.ts / perf.ts / sub2apiChannel.ts / upstreamError.ts
+│   └── types.ts            # 唯一前端类型来源
+├── pages/                  # 路由页面（全 .vue）
+│   ├── OverviewPage.vue / SitesPage.vue / DetailPage.vue / ChangesPage.vue
+│   ├── BalancePage.vue / ChannelsPage.vue / NotificationsPage.vue
+├── styles/tokens.css       # 设计 token 权威文件
 └── vite-env.d.ts
 ```
 
-迁移目标态（`App.vue` / `App.tsx` / `main.tsx` 互斥留一；`pages/` 全 `.vue`；`composables/` 唯一来源；`lib/api/` 按迁移窗口决定保留或挪到 `api/`）。
-
 ---
 
-## 3. 公共 UI 组件（`components/ui/`）—— 抽取原则
+## 3. 公共 UI 组件（`components/ui/`）
 
-> `components/ui/` 与 `components/<业务>.vue` 的边界：**`ui/` 禁止依赖 `composables/` / `lib/api/` / 任何 `lib/*` 业务工具**；否则下沉到 `components/` 根目录或 `composables/`。
-> `components/ui/index.ts` 已经是统一出口（`Button / Input / Textarea / Select / Tabs / Field / SwitchRow / Modal / ConfirmDialog / Spinner`）；所有页面 / 业务组件**只**从这里 import，**不要**直接 `import` 单个 `.vue` 文件。
+> 边界：**`ui/` 禁止依赖 `composables/` / `lib/api/` / 任何 `lib/*` 业务工具**；越界就下沉到 `components/` 根目录或 `composables/`。
+> 所有页面 / 业务组件**只**从 `components/ui`（index.ts 出口）import，**不要**直接 import 单个 `.vue` 文件。
 
-| 组件 | 旧 React 来源 | 职责 |
-|------|---------------|------|
-| `Button.vue` | `ui.tsx` 的 Button | 主/次/危险三态；loading / disabled |
-| `Input.vue` / `Textarea.vue` / `Select.vue` | `ui.tsx` | 表单控件；`v-model` 双向绑定 |
-| `Field.vue` | `ui.tsx` | label + 控件 + 错误信息三段式 |
-| `SwitchRow.vue` | `ui.tsx` | 行内开关 + 标题 + 描述 |
-| `Modal.vue` | `ui.tsx` | `<Teleport to="body">` + `v-model:open`；内容 slot |
-| `ConfirmDialog.vue` | `ui.tsx` | 标题 / 内容 / 确认回调；emit `confirm` / `cancel` |
-| `Tabs.vue` | `ui.tsx` | tab 切换 |
-| `Spinner.vue` | 新增 | 统一 loading 圈 |
+| 组件 | 职责 |
+|------|------|
+| `Button.vue` | 主/次/危险三态；loading / disabled |
+| `Input.vue` / `Textarea.vue` / `Select.vue` | 表单控件；`v-model` 双向绑定 |
+| `Field.vue` | label + 控件 + help 三段式 |
+| `SwitchRow.vue` | 行内开关 + 标题 |
+| `Modal.vue` | `<Teleport to="body">` + `v-model:open`；内容 slot |
+| `ConfirmDialog.vue` | 标题 / 内容 / busy / error；emit `confirm` / `cancel` |
+| `Tabs.vue` | tab 切换 |
+| `Spinner.vue` | 统一 loading 圈 |
 
-**抽取规则**
+**规则**
 
 - props 用 `defineProps<...>()` 强类型；事件用 `defineEmits<...>()`；不要 `any`。
-- **不**引用 `useAuth` / `useApi` / `lib/api` / 任何 `lib/*` 业务工具；外部数据由父组件传进来。
-- **不**在组件内 `fetch` / `onMounted` 拉数据；只做渲染。
-- 颜色 / 间距用 `tokens.css` 变量 + Tailwind 工具类；**不要**写死 hex，`colorTokens` 已经集中了 `var(--color-*)`。
+- 不在 ui 组件内 fetch / onMounted 拉数据；外部数据由父组件传入。
 - 弹窗族用 `v-model:open` + `<Teleport to="body">`；关闭时清理本地状态。
+- 颜色一律走语义工具类 / `colorTokens`；不要在 `ui/index.ts` 之外再 export 一份颜色表。
 
 ---
 
-## 4. 业务组件（`components/<Name>.vue` 根目录）
+## 4. 业务组件（`components/<Name>.vue`）
 
-依赖 composables 或 api，但仍被多页面复用。**与 ui 的边界**：依赖 `composables/*` 或 `lib/api/*`，就放 `components/` 根目录（当前目录布局，**不要**自建 `components/business/` 子目录，除非迁移窗口明确要求）。
+依赖 composables 或 api、被多页面复用的组件放这里；**不要**自建 `components/business/` 子目录。
 
-| 组件 | 旧来源 | 说明 |
-|------|--------|------|
-| `AppShell.vue` | `AppShell.tsx` | 侧边栏 + 顶栏 + 路由出口；由 `App.vue` 引入 |
-| `PageHeader.vue` | `PageHeader.tsx` | 页面标题 + 操作区 slot |
-| `Panel.vue` | `Panel.tsx` | 白卡片 + 标题 + 右侧 slot（actions） |
-| `Badge.vue` | `Badge.tsx` | 状态胶囊（ok/warning/failed/...）；只读 props |
-| `StatCard.vue` | `StatCard.tsx` | KPI 单卡（label / value / 趋势） |
-| `ChangeTable.vue` / `ChangeValue.vue` | `ChangeTable.tsx` | 变化列表渲染 |
-| `SiteTable.tsx` | 同 .tsx | 列表 + 启停 + 删除 + 检测（待迁 Vue） |
-| `SiteFormDialog.tsx` | 同 .tsx | 新增 / 编辑监控站点（待迁 Vue） |
-| `RatiosDialog.tsx` | 同 .tsx | 分组倍率弹窗（待迁 Vue） |
-| `ChannelDiscoveryPanel.tsx` / `ChannelFormDialog.tsx` / `ChannelPriorityDialog.tsx` | 同 .tsx | 渠道发现 / 编辑 / 优先级（待迁） |
-| `AdminSiteFormDialog.tsx` | 同 .tsx | 主站 CRUD（待迁） |
-| `Sub2ApiChannelDialog.tsx` / `Sub2ApiChannelTable.tsx` / `Sub2ApiPricingEditor.tsx` | 同 .tsx | sub2api 主站专项（待迁） |
-| `BalanceSummaryPanel.tsx` | 同 .tsx | 账户额度（待迁） |
-| `MainSiteHealthPanel.tsx` | 同 .tsx | 主站健康总览（待迁） |
-| `LoginPage.vue` | `LoginPage.tsx` | 登录表单（独立路由 `/login`） |
-| `ToastViewport.vue` | `Toast.tsx` 的容器 | 全局 toast 渲染；触发靠 `useToast()` |
+| 组件 | 说明 |
+|------|------|
+| `AppShell.vue` | 顶栏导航 + 移动端抽屉 + `<main>` 容器；由 `App.vue` 引入 |
+| `PageHeader.vue` / `Panel.vue` | 页头（标题+操作区 slot）/ 白卡片面板 |
+| `StatCard.vue` | KPI 卡（label / value / hint / icon / tone） |
+| `Badge.vue` | 状态胶囊（neutral/success/warning/danger/info/brand，可选 dot） |
+| `SiteTable.vue` | 渠道列表（平台折叠分组、行内检测/同步、「更多」菜单） |
+| `SiteFormDialog.vue` / `RatiosDialog.vue` | 监控站点新增编辑 / 分组倍率弹窗 |
+| `ChannelDiscoveryPanel.vue` | 主站渠道 → 监控站点发现导入 |
+| `ChannelFormDialog.vue` / `ChannelPriorityDialog.vue` | 渠道上游配置 / 优先级编辑 |
+| `AdminSiteFormDialog.vue` | 主站 CRUD 表单 |
+| `Sub2ApiChannel*` / `Sub2ApiPricingEditor.vue` | sub2api 渠道表格 / 编辑 / 计费阶梯 |
+| `MainSiteHealthPanel.vue` | 总览页主站健康区块 |
+| `ChangeTable.vue` / `ChangeValue.vue` | 变化记录渲染 |
 
-**抽取规则**
+**规则**
 
-- 组件内部允许 `import` 自 `composables/` 和 `lib/api/`；但**不要**直接 `import` 另一个业务组件（避免环依赖）；要复用就抽 composable。
-- 业务组件的 props 优先用类型别名（来自 `lib/types.ts`），**不要**用 `any`。
-- 业务组件的本地状态留在 `setup()`，跨组件共享才上 composable。
+- 业务组件允许 import `composables/` 和 `lib/api/`；但**不要**直接 import 另一个业务组件（避免环依赖）；要复用就抽 composable。
+- props 优先用 `lib/types.ts` 的类型别名；透传字段用 `[key: string]: unknown` 兜底，不用 `any`。
+- 本地状态留在 `<script setup>`，跨组件共享才上 composable。
 
 ---
 
 ## 5. 公共逻辑层（`composables/`）
 
-> Vue 3 的 composable ≈ React 的 hook；命名 `useXxx.ts`，统一返回 ref / computed / 显式 action。
+命名 `useXxx.ts`，统一返回 ref / computed / 显式 action。
 
 | composable | 职责 |
 |------------|------|
-| `useAuth.ts` | 三态 `authReady / authRequired / authed`（模块级 `shallowRef`）；监听 `console-unauthorized` 事件；提供 `login / logout` |
-| `useToast.ts` | 全局 toast；`toast.success / error / info`；导出 `errorText(err)` 工具 |
-| `useConsoleData.ts` | 站点 / 变化 / 推送设置三件套；`enabled` 守门 |
-| `useReconcileMode.ts` | 主站对账模式（disable/delete），含 `pendingDeleteMode` |
-| `useBalances.ts` | 账户额度按需查询 |
-| `useAppActions.ts` | App 级动作注入（`provideAppActions` + `appActionsKey`），供页面 `inject` 调用弹窗 / 操作 |
-| `useTheme.ts` | 主题（light/dark）切换；写 `localStorage.upstream-theme` + `html[data-theme]` |
+| `useAuth.ts` | 三态 `authReady / authRequired / authed`（模块级单例）；监听 `console-unauthorized`；提供 `setAuthed / handleLogout` |
+| `useToast.ts` | 全局 toast（success/error/info/run）；导出 `errorText(err)` |
+| `useConsoleData.ts` | sites / changes / notify 共享数据；App.vue 传 `enabled` 激活拉取 + 15s 轮询；页面不传 enabled 只读 |
+| `useReconcileMode.ts` | 主站对账模式（disable/delete），含删除模式二次确认状态 |
+| `useBalances.ts` | 账户额度按需查询（每使用方独立实例，非单例） |
+| `useAppActions.ts` | App 级动作注入（打开站点表单/倍率弹窗/删除确认/检测/同步等），供页面 inject |
+| `useTheme.ts` | light/dark 切换；写 `localStorage.upstream-theme` + `html[data-theme]` |
 
-**抽取规则**
+**规则**
 
-- composable 内**不允许** `fetch` 直接打 URL；统一走 `lib/api/<domain>` 模块。
-- 涉及 401 / 登出的副作用在 `useAuth` 集中处理；其它 composable 只 `import { useAuth }` 取状态。
-- 定时器 / `window` 事件监听在 `onUnmounted` 必须清理；**不要**泄漏 `setInterval` / `EventListener`。
-- 状态对象默认 `shallowRef` / `ref`；列表用 `ref<T[]>([])`；**不要**把整个响应体塞 `reactive`。
-- 模块级单例（如 `useAuth` 的 `shallowRef`）要可独立测试；**不要**塞运行时副作用的全局可变 dict。
+- composable 内不允许直接 fetch URL；统一走 `lib/api/<domain>`。
+- 401 / 登出的副作用只在 `useAuth` 处理；其他 composable 不要重复监听 `console-unauthorized`。
+- 定时器 / window 事件监听必须在 `onUnmounted`（或 watch `onCleanup`）清理。
+- 状态默认 `shallowRef` / `ref<T[]>`；不要把整个响应体塞 `reactive`。
 
 ---
 
-## 6. 数据层（当前在 `lib/api/`，迁移期别再挪）
+## 6. 数据层（`lib/api/`）
 
-**按域拆分**，每个文件对应后端一个 router；新加端点先在 `backend/api/routers/<domain>.py` 加好，再回到前端 `lib/api/<domain>.ts` 加方法。
+按域拆分，每个文件对应后端一个 router；新加端点先在 `backend/api/routers/<domain>.py` 加好，再回到前端加方法，并同步 `lib/types.ts` 类型与对应页面。
 
 | 前端模块 | 后端 router | 主要端点 |
 |----------|-------------|----------|
-| `lib/api/auth.ts` | `backend/api/routers/auth.py` | `GET /api/auth/status`、`POST /api/auth/login`、`POST /api/auth/logout` |
-| `lib/api/monitoring.ts` | `backend/api/routers/monitoring.py` | `/api/overview`、`/api/sites`、`/api/changes`、`/api/sites/{id}/...`、`/api/sites/sync`、`/api/sites/discovery-import`、`/api/check-connection`、`/api/check-login` |
-| `lib/api/notifications.ts` | `backend/api/routers/notifications.py` | `/api/notifications/settings`、`/api/notifications/logs`、`/api/notifications/test-email`、`/api/notifications/test-wecom` |
-| `lib/api/settings.ts` | `backend/api/routers/settings.py` | `GET/PUT /api/settings`（主站对账模式） |
-| `lib/api/sessionSync.ts` | `backend/api/routers/session_sync.py` | `/api/sites/{id}/session-sync/requests...` |
-| `lib/api/adminSites.ts` | `backend/api/routers/admin_sites.py` | `/api/admin/sites...` |
+| `auth.ts` | `auth.py` | `GET /api/auth/status`、`POST /api/auth/login`、`POST /api/auth/logout` |
+| `monitoring.ts` | `monitoring.py` | `/api/sites`、`/api/sites/{id}/changes|snapshots|discovery-links|account|check...`、`/api/sites/sync`、`/api/check-*` |
+| `notifications.ts` | `notifications.py` | settings / logs / test-email / test-wecom |
+| `settings.ts` | `settings.py` | `GET/PUT /api/settings`（对账模式） |
+| `sessionSync.ts` | `session_sync.py` | `/api/*/session-sync/requests...` |
+| `adminSites.ts` | `admin_sites.py` | `/api/admin/sites` 及渠道 CRUD / 匹配 / key 刷新 |
 
-**`lib/api/client.ts`**
+**`client.ts`**：`request<T>()` 自动注入 Bearer token；401（非 auth 路径）→ 清 token + 广播 `console-unauthorized`；JSON 解析失败兜底提示。
 
-- 提供 `request<T>(path, options?)`；
-- 自动注入 `Authorization: Bearer <token>`（`getConsoleToken`）；
-- 收到 401（非 `/api/auth/*`）→ 清 token + `window.dispatchEvent(new CustomEvent('console-unauthorized'))`；
-- 解析 JSON，HTML 兜底提示「接口返回了网页内容而不是 JSON」；
-- 暴露 `getConsoleToken` / `setConsoleToken`。
+**`index.ts`**：合并各域为 `api` 对象。页面 / 组件**只** `import { api } from '@/lib/api'`，不要直连域文件。
 
-**`lib/api/index.ts`**
+**`lib/format.ts`**：跨页面复用的纯函数（`fmtTime` / `platformLabel` / `ratioLabel` / `usd` / `truthy` / 变化类型文案与配色…）。金额格式化只用这里的 `usd()`，不要再写局部 `fmtUsd`。
 
-- 合并各域到 `api` 对象；**App.vue / 页面 / 业务组件只 `import { api } from '@/lib/api'`**。
-- **不要**再有任何页面 / 组件直接 `import` 域文件（`@/lib/api/monitoring` 等）。
-
-**`lib/types.ts`（唯一前端类型来源）**
-
-- TypeScript 类型与 `backend/api/schemas/*` 一一对应：`Site` / `GroupItem` / `Change` / `Overview` / `SiteSnapshot` / `SiteAccountResponse` / `SiteCheckResponse` / `AdminSite` / `Channel` / `ChannelUpstreamBinding` / `NotificationSettings` / `NotificationLog` / `SessionSyncStatus` / `SessionSyncRequest` / `SessionSyncResult`；
-- 联合类型：`Platform = 'newapi' | 'sub2api'`、`AuthMode = 'password' | 'token' | 'browser'`；
-- 后端 `CompatibilityModel`（`extra="allow"`）透传的字段用 `[key: string]: unknown` 兜底，**不要**收窄成编译错误，也**不要**用 `any`。
+**`lib/types.ts`**：与后端 schemas 一一对应；透传字段用 `[key: string]: unknown`，禁 `any`。
 
 ---
 
 ## 7. 页面（`pages/`）
 
-> 当前 `pages/*.tsx` 仍是 React 版；迁移窗口按 Vue 3 写新 `.vue`，确认行为一致后 `rm` 旧 `.tsx`。
-
-| 页面（目标 `.vue`） | 路由 | 关键依赖 |
-|---------------------|------|----------|
-| `OverviewPage.vue` | `/` | `useConsoleData` / `MainSiteHealthPanel` |
-| `SitesPage.vue` | `/sites` | `useConsoleData` / `SiteTable` / `SiteFormDialog` |
-| `DetailPage.vue` | `/detail` 或 `/detail/:id` | `RatiosDialog` / `ChangeTable` / `BalanceSummaryPanel` |
+| 页面 | 路由 | 关键依赖 |
+|------|------|----------|
+| `OverviewPage.vue` | `/` | `useConsoleData` / `SiteTable` / `ChangeTable` / `MainSiteHealthPanel` |
+| `ChannelsPage.vue` | `/channels` | 主站选择 + 渠道表格 + 分组视角侧栏 + Channel* 弹窗 |
+| `SitesPage.vue` | `/sites` | `useConsoleData` / `SiteTable` / 同步主站 |
+| `DetailPage.vue` | `/detail`, `/detail/:id` | 快照 / 来源关联 / 账户额度 / 历史变化 |
 | `ChangesPage.vue` | `/changes` | `useConsoleData` / `ChangeTable` |
 | `BalancePage.vue` | `/balance` | `useBalances` |
-| `ChannelsPage.vue` | `/channels` | `useApi` + `Channel*` 业务组件 |
-| `NotificationsPage.vue` | `/notifications` | 推送设置 + 测试发送 |
-| `LoginPage.vue` | `/login` | `useAuth`（现已在 `components/LoginPage.vue`，迁移时视情况挪到 `pages/`） |
+| `NotificationsPage.vue` | `/notifications` | 推送设置表单 + 测试发送 + 推送日志 |
+| （登录） | 无路由 | `LoginPage` 由 `App.vue` 在未鉴权时渲染 |
 
-**页面规则**
+**规则**
 
-- 页面只做编排：拉数据 → 传给业务组件 → 监听业务组件事件 → 调 `api` / `composables`。
-- **不在**页面内 `fetch('/api/...')`；统一 `await api.xxx()`（`api` 已在 `lib/api/index.ts` 合并）。
-- 页面级局部状态留在 `setup()`，跨页面才抽 composable。
-- 弹窗用 `<component :is="..." v-model:open="..." />` 或 `v-if + <Teleport>`，状态由页面持有；复杂的多弹窗编排通过 `provideAppActions` 注入。
+- 页面只做编排：拉数据 → 传业务组件 → 监听事件 → 调 `api` / composables。
+- 页面内禁止 `fetch('/api/...')`；统一 `await api.xxx()`。
+- 弹窗状态由页面/App 持有；跨层动作走 `useAppActions` 注入，不要 props 层层透传。
 
 ---
 
 ## 8. 路由（`router/`）
 
-- 当前 `src/router/index.ts` 是单文件（路由表 + 守卫集中）；不要往 `main.ts` 里手写跳转。
-- 路由懒加载：`component: () => import('@/pages/...')`。
-- 守卫职责：未登录访问 `requiresAuth` 路由 → 跳 `/login`；已登录访问 `/login` → 跳 `/`；`console-unauthorized` 事件由 `useAuth` 监听并切回登录页。
-- 新加路由时同步更新 `AppShell.vue` 侧边栏与本表。
+- 路由表集中在 `src/router/index.ts`，全部懒加载；`/:pathMatch(.*)*` 重定向 `/`。
+- **没有路由守卫**：鉴权是「App.vue 按 `useAuth` 三态切换渲染」，401 经 `console-unauthorized` 事件把 `authed` 打回 false 即回到登录视图。
+- 新加路由时同步更新 `AppShell.vue` 导航数组与本表。
 
 ---
 
 ## 9. 鉴权与浏览器同步约定
 
-- `localStorage.console_token` 存放 Bearer token；`lib/api/client.ts` 是**唯一**读写入口。
-- 401 事件名固定 `console-unauthorized`；`composables/useAuth.ts` 监听，其他模块**不要**重复监听。
-- 浏览器同步终态机集合与后端 `core.state.SESSION_SYNC_TERMINAL_STATUSES` / `SESSION_SYNC_PAGE_FAILURES` 严格一致；前端展示文案来自 `SESSION_SYNC_PAGE_FAILURES` 的中文注释（`extensions/upstream-session-bridge` 扩展协同）。
-- 两类站点（监控 `sites` vs 主站 `admin_sites`）**不可混淆**；详见根 `AGENTS.md` 与 `upstream-two-site-model` 记忆。
+- `localStorage.console_token` 存 Bearer token；`lib/api/client.ts` 是唯一读写入口。
+- 401 事件名固定 `console-unauthorized`；只有 `useAuth` 监听。
+- 浏览器同步终态机集合与后端严格一致；展示文案见 `SiteTable.sessionSyncLabel`。
+- 两类站点（监控 `sites` vs 主站 `admin_sites`）不可混淆；详见根 `AGENTS.md`。
 
 ---
 
-## 10. 迁移期与清理
+## 10. 维护约定
 
-- 迁移窗口逐项把 `.tsx` 翻成 `.vue` / composable / `lib/api` 方法，**先在 dev 模式跑一遍主流程**，再 `rm` 旧文件。
-- 一旦新版就绪，**立即删除**：
-  - `App.tsx`（保留 `App.vue`）
-  - `main.tsx`（保留 `main.ts`）
-  - `lib/useAuth.ts` / `lib/useBalances.ts` / `lib/useConsoleData.ts` / `lib/useReconcileMode.ts`（保留 `composables/` 对应文件）
-  - `components/<Name>.tsx`（迁完即删对应 `.vue` 同名文件）
-  - `pages/*.tsx`（迁完即删对应 `.vue` 同名文件）
-  - `components/ui.tsx`（保留 `components/ui/index.ts`）
-  - `components/Toast.tsx`（保留 `ToastViewport.vue` + `composables/useToast.ts`）
-- **不要保留**「以防万一」的旧代码或 `// removed` 注释；历史由 git 记录。
-- `tsconfig.tsbuildinfo` / `dist/` / `node_modules/` 已在 `.gitignore`，**不要**反着提交。
+- 改 UI 先看 `styles/tokens.css` 的注释（token 语义、档位、动效时长都写在里面）；新样式优先复用现有 token / 工具类，不新增 hex。
+- UI 改动必须在浏览器 dev 模式过一遍主流程（浅色 + 暗色都要看），不能只靠 typecheck 就声称完成。
+- 删除文件前先全局搜引用（`rg "<Name>|from .*<name>"`），确认 0 引用再 `rm`；不留「以防万一」的死代码和 `// removed` 注释，历史交给 git。
+- `dist/` / `node_modules/` / `tsconfig.tsbuildinfo` 已 gitignore，不要提交。
+- 默认不新增测试文件。
 
 ---
 
-## 11. 不要做（按当前项目状态）
+## 11. 不要做
 
-- **不要写 React 组件**（`.tsx`）、`useXxx` React hook、`react-router-dom`、`lucide-react`；本项目已迁 Vue 3。`package.json` 不要再加 `react` / `react-dom` / `react-router-dom` / `lucide-react` 依赖。
-- **不要在 `components/ui/` 引入 `composables/` / `lib/api/` / `lib/*` 业务工具**；越界就下沉到 `components/` 根目录。
-- **不要**在 `components/ui/index.ts` 之外，再建一个 `components/ui.tsx` 或 `components/ui/index.vue` 出口。
-- **不要**在页面 / `App.vue` 内 `fetch('/api/...')`；统一走 `import { api } from '@/lib/api'`。
-- **不要**在 composable 里 `setInterval` / `addEventListener` 后忘记 `onUnmounted` 清理。
-- **不要**把 Pinia / Vuex 引入；状态用 `provide/inject` + composable（`useAppActions` 已示范）。
-- **不要**在 `lib/types.ts` 用 `any` 收口后端透传字段；用 `[key: string]: unknown` 兜底。
-- **不要**再在 `lib/api/` 之外建 `src/api/` 复制一份；数据层先收敛在 `lib/api/`，等迁移窗口整体迁完再决定要不要挪到 `src/api/`。
-- **不要**把 `composables/` 里的 `useAuth / useConsoleData / useReconcileMode / useBalances` 与 `lib/` 下同名 React hook 混用；旧的 `lib/use*.ts` 在新版就绪后立即 `rm`，**不要**用 `// deprecated` 注释保留。
-- **不要**把 `components/ui.tsx` 复活；`components/ui/index.ts` 是统一出口。
-- **不要**新增测试；用户没要就别加（旧的 `tests/web/*.test.mjs` 不要去「顺手补一下」）。
-- **不要**把 `dist/` / `node_modules/` / `tsconfig.tsbuildinfo` 提交。
-- **不要**在主站 `id=2`（`aiinfinite.online`）相关流程加测试覆盖（事故复盘见 `main-site-aiinfinite-and-test-clobber-incident` 记忆）。
-- **不要**在迁移半成品里「为了跑得通」写两套实现并 import 同一个旧文件；要么完全 Vue，要么完全 React，**不要**混用。
-- **不要**让 `colorTokens` 在 `components/ui/index.ts` 之外再 export 一份（`tokens.css` 已声明 `var(--color-*)`）；新组件要颜色就 `import { colorTokens } from "@/components/ui"`。
-- **不要**绕过 `useAppActions` 把 dialog state 通过 props 跨多层传递；需要的话注入到子组件。
+- **不要写 React**（`.tsx` / `lucide-react` / `react-router-dom` / 任何 `react*` 依赖）。
+- **不要在 `components/ui/` 引入 `composables/` / `lib/*`**；越界就下沉。
+- **不要**绕过 `components/ui/index.ts` 直连单个 ui 组件文件，或另建第二出口。
+- **不要**在页面 / `App.vue` 内 `fetch('/api/...')`；统一 `import { api } from '@/lib/api'`。
+- **不要**在 composable 里 `setInterval` / `addEventListener` 后忘记清理。
+- **不要**引入 Pinia / Vuex；状态共享用 composable 单例或 provide/inject。
+- **不要**在 `lib/types.ts` 用 `any`；用 `[key: string]: unknown`。
+- **不要**在 `lib/api/` 之外建 `src/api/` 复制一份。
+- **不要**重复实现已有纯函数（时间/金额/倍率/状态文案都在 `lib/format.ts`，先搜再写）。
+- **不要**新增测试；用户没要就别加。
+- **不要**在主站 `id=2`（`aiinfinite.online`）相关流程加测试覆盖（事故复盘见根仓库记忆）。
+- **不要**绕过 `useAppActions` 把 dialog state 用 props 跨多层传递。

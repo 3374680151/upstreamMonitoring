@@ -5,9 +5,9 @@ import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Badge from "@/components/Badge.vue";
 import StatCard from "@/components/StatCard.vue";
-import { Button } from "@/components/ui";
-import { fmtTime, platformLabel } from "@/lib/format";
-import { usd, useBalances, type BalanceRow } from "@/composables/useBalances";
+import { Button, EmptyState } from "@/components/ui";
+import { fmtTime, platformLabel, usd } from "@/lib/format";
+import { useBalances, type BalanceRow } from "@/composables/useBalances";
 import { useConsoleData } from "@/composables/useConsoleData";
 import type { AccountSubscription, Site, SiteAccount } from "@/lib/types";
 
@@ -64,14 +64,11 @@ function queryOneSite(site: Site) {
   <div v-if="!sites.length" class="upstream-rise flex flex-col gap-6 md:gap-8">
     <PageHeader title="余额" subtitle="按你配置的渠道站点，用各自登录态查询账户余额" />
     <Panel title="余额" subtitle="暂无渠道">
-      <div class="flex flex-col items-center gap-1 py-10 text-center">
-        <div class="font-serif text-[15px] font-semibold text-ink-strong">
-          还没有配置渠道
-        </div>
-        <p class="max-w-sm text-[12.5px] leading-relaxed text-ink-muted">
-          先在「渠道监控」添加站点并填写登录信息（NewAPI 系统访问令牌 / sub2api 账号或登录态）。
-        </p>
-      </div>
+      <EmptyState
+        dense
+        title="还没有配置渠道"
+        description="先在「渠道监控」添加站点并填写登录信息（NewAPI 系统访问令牌 / sub2api 账号或登录态）。"
+      />
     </Panel>
   </div>
 

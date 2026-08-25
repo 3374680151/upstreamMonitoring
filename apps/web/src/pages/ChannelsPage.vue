@@ -9,7 +9,7 @@ import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
 import Sub2ApiChannelTable from "@/components/Sub2ApiChannelTable.vue";
-import { Button, Input, Select, Spinner } from "@/components/ui";
+import { Button, EmptyState, Input, Select, Spinner } from "@/components/ui";
 import { claimAutomaticRefresh } from "@/lib/automaticRefresh";
 import { api } from "@/lib/api";
 import { normalizedChannelStatus } from "@/lib/sub2apiChannel";
@@ -181,7 +181,7 @@ const updatingChannelIds = shallowRef<Set<number>>(new Set());
 const actionError = ref("");
 const syncing = ref(false);
 
-// ---- non-reactive refs (React useRef equivalents) ----
+// ---- 非响应式变量（跨渲染保持，不触发视图更新）----
 let loadVersion = 0;
 const automaticallyRefreshedSiteIds = new Set<number>();
 let loadedSiteId: number | null = null;
@@ -942,12 +942,15 @@ watch(
 
         <!-- 渠道主区域 -->
         <div class="min-w-0">
-          <div v-if="loading" class="py-16 text-center text-sm text-ink-muted">
-            加载中...
+          <div v-if="loading" class="space-y-2 py-1" aria-hidden="true">
+            <div v-for="i in 6" :key="i" class="skeleton h-[52px] w-full rounded-[var(--radius-sm)]" />
           </div>
-          <div v-else-if="!visibleChannels.length" class="py-16 text-center text-sm text-ink-muted">
-            {{ groupFilter ? `分组「${groupFilter}」下暂无渠道` : "主站当前没有可显示的渠道" }}
-          </div>
+          <EmptyState
+            v-else-if="!visibleChannels.length"
+            dense
+            :title="groupFilter ? `分组「${groupFilter}」下暂无渠道` : '主站当前没有可显示的渠道'"
+            :description="groupFilter ? '换个分组看看，或点上方「清除」回到全部渠道。' : '点右上角「同步主站」从上游拉取渠道，或检查筛选条件。'"
+          />
           <Sub2ApiChannelTable
             v-else-if="isSub2Api"
             :channels="visibleChannels"

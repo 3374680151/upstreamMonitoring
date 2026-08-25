@@ -3,7 +3,7 @@
  *
  * 对应后端 `backend/core/security.py` 的 Bearer 鉴权约定与
  * `backend/main.py` 的统一异常处理：401 → 清 token 并广播全局事件，
- * 让 App.tsx 把会话切回登录页。
+ * 让 useAuth 把会话切回登录页。
  */
 
 const TOKEN_KEY = "console_token";

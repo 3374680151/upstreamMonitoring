@@ -1,5 +1,5 @@
 /**
- * Toast 全局提示系统 — 替代 React Context 的 provide/consume。
+ * Toast 全局提示系统。
  *
  * 模块级 reactive 单例：任意组件调 useToast() 都拿到同一组方法，
  * ToastViewport.vue 调 useToastState() 拿到同一份只读列表。

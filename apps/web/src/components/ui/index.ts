@@ -1,5 +1,5 @@
 /**
- * UI 基础组件统一出口 — 对应 React 版 components/ui.tsx。
+ * UI 基础组件统一出口。
  * 页面/组件从此处导入 Button / Input / Modal / ConfirmDialog 等。
  */
 export { default as Button } from "./Button.vue";
@@ -12,6 +12,7 @@ export { default as Field } from "./Field.vue";
 export { default as SwitchRow } from "./SwitchRow.vue";
 export { default as Modal } from "./Modal.vue";
 export { default as ConfirmDialog } from "./ConfirmDialog.vue";
+export { default as EmptyState } from "./EmptyState.vue";
 
 /** 颜色变体收敛到 token，避免组件分散拼 var(--color-…) */
 export const colorTokens = {

@@ -14,7 +14,7 @@ import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import StatCard from "@/components/StatCard.vue";
 import ChangeTable from "@/components/ChangeTable.vue";
-import { Button, Select } from "@/components/ui";
+import { Button, EmptyState, Select } from "@/components/ui";
 import { errorText, useToast } from "@/composables/useToast";
 import { useConsoleData } from "@/composables/useConsoleData";
 import { api } from "@/lib/api";
@@ -30,6 +30,7 @@ import {
   statusLabel,
   statusTone,
   truthy,
+  usd,
 } from "@/lib/format";
 import { explainUpstreamError } from "@/lib/upstreamError";
 import type {
@@ -38,16 +39,6 @@ import type {
   SiteDiscoveryLink,
   SiteSnapshot,
 } from "@/lib/types";
-
-function fmtUsd(value?: number | null): string {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "-";
-  }
-  return `$${Number(value).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
 
 /** 从快照的 groups_json 字段解析出分组数量 */
 function snapshotGroupCount(snapshot: SiteSnapshot): number {
@@ -274,17 +265,11 @@ const hasSubscriptions = computed(
 </script>
 
 <template>
-  <div
+  <EmptyState
     v-if="!sites.length"
-    class="flex flex-col items-center gap-1.5 rounded-[var(--radius-lg)] border border-dashed border-line py-14 text-center"
-  >
-    <div class="font-serif text-[16px] font-semibold text-ink-strong">
-      还没有渠道
-    </div>
-    <p class="max-w-sm text-[12.5px] leading-relaxed text-ink-muted">
-      请先到「渠道监控」添加一个上游站点，再回来查看倍率详情。
-    </p>
-  </div>
+    title="还没有渠道"
+    description="请先到「渠道监控」添加一个上游站点，再回来查看倍率详情。"
+  />
 
   <div v-else-if="!site" class="flex flex-col gap-4">
     <Select v-model="selectorValue">
@@ -427,16 +412,16 @@ const hasSubscriptions = computed(
       <div v-else-if="account" class="flex flex-col gap-4">
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard :label="balanceLabel">
-            <template #value>{{ fmtUsd(account.balance_usd) }}</template>
+            <template #value>{{ usd(account.balance_usd) }}</template>
             <template v-if="accountHint" #hint>{{ accountHint }}</template>
           </StatCard>
           <template v-if="isSub2api">
             <StatCard label="冻结余额" :accent="false">
-              <template #value>{{ fmtUsd(account.frozen_balance_usd) }}</template>
+              <template #value>{{ usd(account.frozen_balance_usd) }}</template>
             </StatCard>
             <StatCard label="累计充值" :accent="false">
               <template #value>{{
-                fmtUsd(account.total_recharged_usd)
+                usd(account.total_recharged_usd)
               }}</template>
             </StatCard>
             <StatCard label="RPM 上限" :accent="false">
@@ -445,7 +430,7 @@ const hasSubscriptions = computed(
           </template>
           <template v-else>
             <StatCard label="已用额度" :accent="false">
-              <template #value>{{ fmtUsd(account.used_usd) }}</template>
+              <template #value>{{ usd(account.used_usd) }}</template>
             </StatCard>
             <StatCard label="请求次数" :accent="false">
               <template #value>{{ requestCountText }}</template>
@@ -478,20 +463,20 @@ const hasSubscriptions = computed(
               class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-ink-muted tabular"
             >
               <span>
-                日 {{ fmtUsd(sub.daily_usage_usd)
-                }}{{ sub.daily_limit_usd ? ` / ${fmtUsd(sub.daily_limit_usd)}` : "" }}
+                日 {{ usd(sub.daily_usage_usd)
+                }}{{ sub.daily_limit_usd ? ` / ${usd(sub.daily_limit_usd)}` : "" }}
               </span>
               <span>
-                周 {{ fmtUsd(sub.weekly_usage_usd)
+                周 {{ usd(sub.weekly_usage_usd)
                 }}{{
-                  sub.weekly_limit_usd ? ` / ${fmtUsd(sub.weekly_limit_usd)}` : ""
+                  sub.weekly_limit_usd ? ` / ${usd(sub.weekly_limit_usd)}` : ""
                 }}
               </span>
               <span>
-                月 {{ fmtUsd(sub.monthly_usage_usd)
+                月 {{ usd(sub.monthly_usage_usd)
                 }}{{
                   sub.monthly_limit_usd
-                    ? ` / ${fmtUsd(sub.monthly_limit_usd)}`
+                    ? ` / ${usd(sub.monthly_limit_usd)}`
                     : ""
                 }}
               </span>

@@ -5,6 +5,7 @@
 import { shallowRef, computed, type Ref } from "vue";
 import { api } from "@/lib/api";
 import { errorText, useToast } from "./useToast";
+import { usd } from "@/lib/format";
 import type { Site, SiteAccount } from "@/lib/types";
 
 export type BalanceRow =
@@ -12,16 +13,6 @@ export type BalanceRow =
   | { state: "loading" }
   | { state: "ok"; account: SiteAccount; fetchedAt?: string }
   | { state: "error"; message: string };
-
-export function usd(value?: number | null): string {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
-    return "—";
-  }
-  return `$${Number(value).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
 
 export function useBalances(sites: Ref<Site[]>) {
   const toast = useToast();

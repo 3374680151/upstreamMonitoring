@@ -16,6 +16,8 @@ import { classifyExtensionSyncFailure } from "./adapters/sync-errors.js";
 import { selectExistingTargetTab } from "./adapters/target-tab.js";
 
 const PAGE_REQUEST_TYPE = "UPSTREAM_SESSION_BRIDGE_START";
+const TARGET_TAB_OPEN_TIMEOUT_MS = 20000;
+const TARGET_TAB_SETTLE_MS = 2500;
 
 function readSub2ApiSessionInPage() {
   const accessToken = String(localStorage.getItem("auth_token") || "").trim();
@@ -202,6 +204,55 @@ async function findExistingTargetTabId(targetOrigin) {
   return selectExistingTargetTab(tabs, targetOrigin)?.id || null;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function waitForTargetTabReady(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ready) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+      resolve(ready);
+    };
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") {
+        finish(true);
+      }
+    };
+    const onRemoved = (removedTabId) => {
+      if (removedTabId === tabId) finish(false);
+    };
+    const timer = setTimeout(() => finish(true), timeoutMs);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs
+      .get(tabId)
+      .then((tab) => {
+        if (tab?.status === "complete") finish(true);
+      })
+      .catch(() => finish(false));
+  });
+}
+
+async function ensureTargetTab(targetOrigin) {
+  const existingTabId = await findExistingTargetTabId(targetOrigin);
+  if (existingTabId) return { tabId: existingTabId, created: false };
+  const createdTab = await chrome.tabs.create({
+    url: `${targetOrigin}/`,
+    active: false,
+  });
+  const tabId = createdTab?.id ?? null;
+  if (tabId == null) return { tabId: null, created: false };
+  const ready = await waitForTargetTabReady(tabId, TARGET_TAB_OPEN_TIMEOUT_MS);
+  if (ready) await delay(TARGET_TAB_SETTLE_MS);
+  return { tabId, created: true };
+}
+
 async function readSub2ApiTargetSession(tabId) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
@@ -332,9 +383,13 @@ async function handleStart(rawRequest) {
     });
   }
   let diagnosticStage = "target_tab_query";
+  let createdTabId = null;
   try {
-    const targetTabId = await findExistingTargetTabId(request.targetOrigin);
-    if (!targetTabId) {
+    const { tabId: targetTabId, created: createdTab } = await ensureTargetTab(
+      request.targetOrigin,
+    );
+    createdTabId = createdTab ? targetTabId : null;
+    if (targetTabId == null) {
       const payload =
         request.platform === "newapi"
           ? newApiCompletionPayload(request.targetOrigin, null)
@@ -368,6 +423,10 @@ async function handleStart(rawRequest) {
     return tokenFreePageResult(
       classifyExtensionSyncFailure(error, diagnosticStage),
     );
+  } finally {
+    if (createdTabId != null) {
+      chrome.tabs.remove(createdTabId).catch(() => {});
+    }
   }
 }
 

@@ -149,14 +149,15 @@ test("service worker does not persist browser credentials", async () => {
   assert.doesNotMatch(source, /sendResponse\([^)]*(?:access_token|refresh_token)/s);
 });
 
-test("service worker never opens a background page to locate a session", async () => {
+test("service worker opens a background tab only when needed and always cleans it up", async () => {
   const testDir = new URL(".", import.meta.url);
   const source = await readFile(
     fileURLToPath(new URL("../service-worker.js", testDir)),
     "utf8",
   );
-  assert.doesNotMatch(source, /chrome\.tabs\.create/);
-  assert.doesNotMatch(source, /waitForTabComplete/);
+  assert.match(source, /chrome\.tabs\.create\(\{[\s\S]*?active:\s*false/);
+  assert.match(source, /chrome\.tabs\.remove\(createdTabId\)/);
+  assert.doesNotMatch(source, /active:\s*true/);
   assert.match(source, /newApiCompletionPayload\(request\.targetOrigin, null\)/);
   assert.match(source, /sub2ApiCompletionPayload\(request\.targetOrigin, null\)/);
 });

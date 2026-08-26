@@ -5,6 +5,7 @@ function errorText(error) {
 const DIAGNOSTIC_STAGE_LABELS = Object.freeze({
   origin_permission: "站点权限",
   target_tab_query: "目标标签页查询",
+  target_tab_open: "目标标签页打开",
   page_storage_read: "页面登录态读取",
   page_memory_read: "页面内存登录态读取",
   cookie_permission: "Cookie 权限",

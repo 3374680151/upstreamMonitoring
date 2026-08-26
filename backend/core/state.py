@@ -70,6 +70,14 @@ NEWAPI_USER_TOKEN_LIST_CACHE: TTLCache = TTLCache(
 )
 NEWAPI_USER_TOKEN_LIST_LOCK = threading.RLock()
 
+# 上游用户分组（/api/user/self/groups）缓存。渠道页会对同一上游的多个渠道
+# 逐一匹配，分组数据与渠道无关，短期复用可把 N 次上游请求收敛为 1 次。
+NEWAPI_MATCH_GROUPS_CACHE_TTL_SECONDS = 30
+NEWAPI_MATCH_GROUPS_CACHE: TTLCache = TTLCache(
+    maxsize=256, ttl=NEWAPI_MATCH_GROUPS_CACHE_TTL_SECONDS
+)
+NEWAPI_MATCH_GROUPS_LOCK = threading.RLock()
+
 
 # ---------------------------------------------------------------------------
 # 主站渠道 key 读取（串行化 + 限流冷却 + 短期缓存）

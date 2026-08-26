@@ -343,8 +343,11 @@ async function refreshChannelMatches(
   channelList: Channel[],
   refreshVersion: number,
 ): Promise<void> {
-  for (const channel of channelList) {
-    if (refreshVersion !== loadVersion) return;
+  // 主站 key 读取在后端有按站点串行 + 最小间隔保护，前端只需限制并发
+  // 避免请求堆积；3 并发在提速与限流之间取平衡。
+  const CONCURRENCY = 3;
+  const queue = [...channelList];
+  const refreshOne = async (channel: Channel): Promise<void> => {
     let data: ChannelUpstreamBinding;
     try {
       const response = await api.matchChannelUpstreamBinding(
@@ -382,7 +385,19 @@ async function refreshChannelMatches(
         [String(channel.id)]: data,
       };
     }
-  }
+  };
+  const workers = Array.from(
+    { length: Math.min(CONCURRENCY, queue.length) },
+    async () => {
+      while (queue.length) {
+        if (refreshVersion !== loadVersion) return;
+        const channel = queue.shift();
+        if (!channel) return;
+        await refreshOne(channel);
+      }
+    },
+  );
+  await Promise.all(workers);
 }
 
 async function load(

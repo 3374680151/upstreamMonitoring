@@ -18,8 +18,12 @@ from backend.core.normalize import (
     ratio_number,
     split_channel_groups,
 )
-from backend.core.state import BROWSER_AUTH_MODE
-from backend.core.time import utc_now_iso
+from backend.core.state import (
+    BROWSER_AUTH_MODE,
+    NEWAPI_MATCH_GROUPS_CACHE,
+    NEWAPI_MATCH_GROUPS_LOCK,
+)
+from backend.core.time import stable_hash, utc_now_iso
 from backend.db.connection import (
     _q,
     db_connection,
@@ -308,6 +312,39 @@ def persist_channel_match(
 # Matching
 # ---------------------------------------------------------------------------
 
+def _cached_newapi_match_groups(
+    upstream_base: str, access_token: str, access_user_id: str
+) -> Tuple[bool, Dict[str, Any], Optional[str]]:
+    """上游用户分组带 30s TTL 缓存。
+
+    分组数据与具体渠道无关，同一上游的多个渠道匹配共享一次请求；
+    cache_key 不含明文 token（stable_hash）。
+    """
+    cache_key = "|".join(
+        (
+            normalize_base_url(upstream_base),
+            stable_hash([str(access_token), str(access_user_id)]),
+        )
+    )
+    with NEWAPI_MATCH_GROUPS_LOCK:
+        cached = NEWAPI_MATCH_GROUPS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    ok, payload, error = fetch_newapi_groups_with_access_token(
+        upstream_base, access_token, access_user_id
+    )
+    if not ok:
+        return False, {}, error
+    result: Tuple[bool, Dict[str, Any], Optional[str]] = (
+        True,
+        payload,
+        None,
+    )
+    with NEWAPI_MATCH_GROUPS_LOCK:
+        NEWAPI_MATCH_GROUPS_CACHE[cache_key] = result
+    return result
+
+
 def match_channel_upstream_binding(
     site: Dict[str, Any], channel_id: int, force_refresh: bool = False
 ) -> Tuple[bool, Dict[str, Any], Optional[str]]:
@@ -486,7 +523,7 @@ def match_channel_upstream_binding(
             persist_channel_match(admin_site_id, channel_id, "no_group", message, [])
             return False, {}, message
 
-        groups_ok, groups_payload, groups_error = fetch_newapi_groups_with_access_token(
+        groups_ok, groups_payload, groups_error = _cached_newapi_match_groups(
             upstream_base,
             str(upstream.get("access_token") or ""),
             str(upstream.get("access_user_id") or ""),

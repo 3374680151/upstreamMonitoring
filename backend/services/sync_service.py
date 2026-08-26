@@ -67,6 +67,7 @@ from backend.services.monitoring_service import (
     RECONCILE_MODE_DELETE,
     get_main_site_reconcile_mode,
 )
+from backend.services.channel_classification_service import ChannelClassificationService
 
 
 def record_admin_site_sync_error(admin_site_id: int, message: str) -> None:
@@ -532,12 +533,26 @@ def _sync_one_admin_site(
         if groups_error:
             raise RuntimeError(groups_error)
 
+        classification_service = ChannelClassificationService()
         with db_connection() as connection:
             try:
                 result = _sync_admin_site_snapshot_in_connection(
                     connection, admin, channels, groups, mode
                 )
                 connection.commit()
+                # 同步过程中直接做分类，复用已获取的 channels，避免二次 HTTP 请求
+                classification_result = None
+                try:
+                    classification_result = classification_service.classify_channels(
+                        admin_site_id, channels
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    print(
+                        f"[渠道分类] admin_site_id={admin_site_id} 失败：{exc}",
+                        flush=True,
+                    )
+                if classification_result:
+                    result["classification"] = classification_result
                 print(
                     "[主站同步] "
                     f"admin_site_id={admin_site_id} "
@@ -546,7 +561,8 @@ def _sync_one_admin_site(
                     f"imported={result.get('imported', 0)} "
                     f"conflicts={result.get('conflict_count', 0)} "
                     f"disabled={result.get('disabled', 0)} "
-                    f"deleted={result.get('deleted', 0)}",
+                    f"deleted={result.get('deleted', 0)}"
+                    + (f" classified={classification_result.get('matched', 0)}" if classification_result else ""),
                     flush=True,
                 )
                 return result

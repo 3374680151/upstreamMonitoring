@@ -180,6 +180,7 @@ const sub2ApiChannel = shallowRef<Channel | null>(null);
 const updatingChannelIds = shallowRef<Set<number>>(new Set());
 const actionError = ref("");
 const syncing = ref(false);
+const syncingAll = ref(false);
 
 // ---- 非响应式变量（跨渲染保持，不触发视图更新）----
 let loadVersion = 0;
@@ -433,6 +434,22 @@ async function syncCurrentMainSite() {
     await load(keyword.value);
   } finally {
     syncing.value = false;
+  }
+}
+
+async function syncAllMainSites() {
+  syncingAll.value = true;
+  try {
+    const synced = await handleSyncMainSites();
+    if (!synced) return;
+    groupFilter.value = null;
+    selectedChannelId.value = null;
+    sub2ApiChannel.value = null;
+    rowNote.value = {};
+    await loadAdminSites();
+    await load(keyword.value);
+  } finally {
+    syncingAll.value = false;
   }
 }
 
@@ -832,9 +849,20 @@ watch(
           </label>
           <Button
             variant="secondary"
+            aria-label="同步全部主站"
+            title="同步所有已配置的主站渠道和分组，并对账消失渠道"
+            :disabled="syncingAll || adminSites.length === 0"
+            :loading="syncingAll"
+            @click="syncAllMainSites"
+          >
+            <Cloud v-if="!syncingAll" :size="13" />
+            同步全部主站
+          </Button>
+          <Button
+            variant="secondary"
             aria-label="同步主站渠道"
             title="同步当前主站的全部渠道和分组，并对账消失渠道"
-            :disabled="siteId == null"
+            :disabled="siteId == null || syncingAll"
             :loading="syncing"
             @click="syncCurrentMainSite"
           >

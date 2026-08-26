@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ExternalLink, RefreshCw } from "lucide-vue-next";
 import { api } from "@/lib/api";
 import {
   probeSessionBridge,
@@ -22,8 +21,8 @@ const empty: SiteFormPayload = {
   platform: "newapi",
   base_url: "",
   interval_minutes: 3,
-  login_enabled: false,
-  auth_mode: "token",
+  login_enabled: true,
+  auth_mode: "browser",
   login_username: "",
   login_password: "",
   access_token: "",
@@ -110,8 +109,8 @@ function setPlatform(platform: Platform) {
       : {
           ...form.value,
           platform,
-          login_enabled: false,
-          auth_mode: "token",
+          login_enabled: true,
+          auth_mode: "browser",
           login_username: "",
           login_password: "",
           access_token: "",
@@ -189,14 +188,6 @@ const hasSavedSub2ApiPassword = computed(() =>
       props.site?.has_login_password,
   ),
 );
-const hasSavedSub2ApiRefresh = computed(() =>
-  Boolean(
-    sameSavedAuthMode.value &&
-      isSub2api.value &&
-      tokenMode.value &&
-      props.site?.has_refresh_token,
-  ),
-);
 const savedTokenHelp = computed(() =>
   props.site && (hasSavedNewApiToken.value || hasSavedSub2ApiToken.value)
     ? "当前已有令牌，留空保持不变；填写新值会替换原令牌"
@@ -208,22 +199,10 @@ const savedPasswordHelp = computed(() =>
     : "尚未配置，填写后启用账号密码登录",
 );
 
-async function runBrowserSync(targetSiteId: number): Promise<boolean> {
+async function runBrowserSync(targetSiteId: number): Promise<SiteSessionSyncState> {
   msg.value = "正在查找浏览器登录态";
   syncResult.value = null;
-  const result = await syncSiteBrowserSession(targetSiteId);
-  syncResult.value = result;
-  emit("saved");
-  if (result.status === "ready") {
-    msg.value = "浏览器登录态已同步，首次检测已完成";
-    toast.success(`渠道「${form.value.name}」登录态已同步`);
-    close();
-    return true;
-  }
-  const message = result.message || result.error_code || "登录态同步失败";
-  msg.value = message;
-  toast.info(`渠道已保存：${message}`);
-  return false;
+  return syncSiteBrowserSession(targetSiteId);
 }
 
 async function runNewApiPasswordLogin(targetSiteId: number): Promise<boolean> {
@@ -270,20 +249,31 @@ async function save() {
       targetSiteId = created.id;
       savedSiteId.value = created.id;
     }
+    emit("saved");
+    const successLabel = props.site
+      ? `渠道「${payload.name}」已保存`
+      : `渠道「${payload.name}」已添加`;
+
     if (browserMode.value) {
-      await runBrowserSync(targetSiteId);
+      const result = await runBrowserSync(targetSiteId);
+      syncResult.value = result;
+      if (result.status === "ready") {
+        toast.success(`${successLabel}，登录态已同步`);
+      } else {
+        const message = result.message || result.error_code || "登录态同步未完成";
+        toast.info(`${successLabel}：${message}；可稍后在列表中点击「同步登录态」重试`);
+      }
+      close();
       return;
     }
     if (newApiPasswordMode.value) {
       const loggedIn = await runNewApiPasswordLogin(targetSiteId);
-      if (!loggedIn) return;
+      if (!loggedIn) {
+        toast.info(`${successLabel}：请输入 2FA 验证码后再次点击保存`);
+        return;
+      }
     }
-    emit("saved");
-    toast.success(
-      props.site
-        ? `渠道「${payload.name}」已保存`
-        : `渠道「${payload.name}」已添加`,
-    );
+    toast.success(successLabel);
     close();
   } catch (err) {
     const message = errorText(err, "保存失败");
@@ -294,33 +284,13 @@ async function save() {
   }
 }
 
-async function retryBrowserSync() {
-  const targetSiteId = props.site?.id ?? savedSiteId.value;
-  if (!targetSiteId) return;
-  busy.value = true;
-  try {
-    await runBrowserSync(targetSiteId);
-  } catch (err) {
-    const message = errorText(err, "登录态同步失败");
-    msg.value = message;
-    toast.error(message);
-  } finally {
-    busy.value = false;
-  }
-}
-
-function openUpstreamLogin() {
-  const url = form.value.base_url.trim().replace(/\/+$/, "");
-  if (url) window.open(url, "_blank", "noopener,noreferrer");
-}
-
 async function testBrowserBridge() {
   testing.value = true;
   try {
     const available = await probeSessionBridge();
     msg.value = available
       ? "浏览器同步扩展已连接"
-      : "浏览器同步扩展未连接或版本过旧，请重新加载桌面项目中的 0.1.2 扩展并刷新页面";
+      : "浏览器同步扩展未连接或版本过旧，请重新加载桌面项目中的 0.1.3 扩展并刷新页面";
   } finally {
     testing.value = false;
   }
@@ -511,12 +481,19 @@ async function testAuth() {
               :model-value="form.auth_mode"
               @update:model-value="onAuthModeChange"
             >
+              <option value="browser">浏览器登录态同步</option>
               <option value="token">手动系统访问令牌</option>
               <option value="password">用户名密码登录</option>
-              <option value="browser">浏览器登录态同步</option>
             </Select>
           </Field>
-          <template v-if="tokenMode">
+          <template v-if="browserMode">
+            <div
+              class="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg"
+            >
+              保存后立即同步当前 Chrome 登录态；如失败可稍后在渠道列表中点击「同步登录态」重试。
+            </div>
+          </template>
+          <template v-else-if="tokenMode">
             <Field
               label="系统访问令牌（普通用户即可）"
               :help="hasSavedNewApiToken ? savedTokenHelp : '尚未配置，填写后可读取余额与隐藏分组'"
@@ -557,17 +534,11 @@ async function testAuth() {
               />
             </Field>
           </template>
-          <div
-            v-else
-            class="rounded-[var(--radius-md)] border border-line bg-info-bg px-3 py-2.5 text-[12.5px] text-info-fg"
-          >
-            在 Chrome 登录上游后保存，系统会同步当前登录态。适用于拦截后端 Python 请求的站点。
-          </div>
         </div>
       </div>
       <div v-else class="space-y-3 rounded-2xl border border-line bg-panel-soft p-3">
         <p class="text-[11px] text-ink-soft">
-          sub2api 默认从当前 Chrome 同步已经验证过的人机验证登录态；也保留账号密码和手动 token 模式。
+          sub2api 默认从当前 Chrome 同步已经验证过的人机验证登录态；账号密码留作兜底。
         </p>
         <Field label="认证方式">
           <Select
@@ -576,7 +547,6 @@ async function testAuth() {
           >
             <option value="browser">浏览器自动同步（推荐）</option>
             <option value="password">账号密码登录</option>
-            <option value="token">手动导入登录态</option>
           </Select>
         </Field>
         <template v-if="browserMode">
@@ -617,31 +587,6 @@ async function testAuth() {
             />
           </Field>
         </template>
-        <template v-else-if="tokenMode">
-          <Field
-            label="auth_token"
-            :help="hasSavedSub2ApiToken ? savedTokenHelp : '尚未配置，填写后可导入登录态'"
-          >
-            <Input
-              v-model="form.access_token"
-              type="password"
-              :placeholder="hasSavedSub2ApiToken ? '已保存，留空不修改' : '填写 auth_token'"
-            />
-          </Field>
-          <Field
-            label="refresh_token"
-            :help="hasSavedSub2ApiRefresh ? '当前已有 refresh_token，留空保持不变' : '可选，token 过期可自动刷新'"
-          >
-            <Input
-              v-model="form.refresh_token"
-              type="password"
-              :placeholder="hasSavedSub2ApiRefresh ? '已保存，留空不修改' : '可选'"
-            />
-          </Field>
-          <Field label="token_expires_at">
-            <Input v-model="form.token_expires_at" />
-          </Field>
-        </template>
       </div>
 
       <SwitchRow
@@ -677,7 +622,7 @@ async function testAuth() {
             :disabled="busy || testing"
             @click="testAuth"
           >
-            {{ isSub2api ? (tokenMode ? "测试登录态" : "测试登录") : "测试认证" }}
+            {{ isSub2api ? "测试登录" : "测试认证" }}
           </Button>
         </template>
         <Button
@@ -687,40 +632,6 @@ async function testAuth() {
           @click="save"
         >
           保存
-        </Button>
-      </div>
-      <div
-        v-if="browserMode && syncResult && syncResult.status !== 'ready'"
-        class="flex flex-wrap gap-2 rounded-xl border border-line bg-panel-soft p-3"
-      >
-        <Button
-          variant="secondary"
-          size="sm"
-          class="h-8"
-          :disabled="busy"
-          @click="openUpstreamLogin"
-        >
-          <ExternalLink :size="13" />
-          打开上游登录页
-        </Button>
-        <Button
-          variant="brand"
-          size="sm"
-          class="h-8"
-          :loading="busy"
-          @click="retryBrowserSync"
-        >
-          <RefreshCw v-if="!busy" :size="13" />
-          重新同步
-        </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          class="h-8"
-          :disabled="busy"
-          @click="close"
-        >
-          稍后处理
         </Button>
       </div>
       <div

@@ -333,37 +333,14 @@ async def sync_sites(request: Request):
         and entry.get("status") in {"fetch_failed", "sync_failed", "error"}
     ]
 
-    # 3. 渠道分类：对每个同步成功的主站，取渠道列表，探测平台类型并匹配倍率
+    # 3. 渠道分类：分类结果已内联到同步过程中，直接从 results 中汇总
     classification_results: list[dict[str, Any]] = []
     for entry in results:
         if not isinstance(entry, dict):
             continue
-        sync_admin_site_id = entry.get("admin_site_id")
-        status = entry.get("status")
-        if sync_admin_site_id is None or status not in ("synced", "reconcile"):
-            continue
-        try:
-            admin_site, _err, _code = get_admin_site_or_404(
-                int(sync_admin_site_id),
-            )
-            if not admin_site:
-                continue
-            _ok, channels, _meta, _error = fetch_admin_site_channels(
-                admin_site, "",
-            )
-            if channels:
-                classify_result = await run_in_threadpool(
-                    classification_service.classify_channels,
-                    int(sync_admin_site_id),
-                    channels,
-                )
-                classification_results.append(classify_result)
-        except Exception as exc:  # noqa: BLE001
-            print(
-                f"[渠道分类] admin_site_id={sync_admin_site_id} 失败：{exc}",
-                flush=True,
-            )
-
+        clf = entry.get("classification")
+        if isinstance(clf, dict):
+            classification_results.append(clf)
     total_classified = sum(
         int(item.get("matched") or 0)
         for item in classification_results

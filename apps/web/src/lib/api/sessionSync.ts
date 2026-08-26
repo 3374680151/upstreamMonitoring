@@ -9,6 +9,19 @@ import { request } from "./client";
 import type { SiteSessionSyncRequest, SiteSessionSyncState } from "../types";
 
 export const sessionSyncApi = {
+  tryShareSiteSessionSync: (siteId: number) =>
+    request<{
+      success: boolean;
+      data: {
+        shared: boolean;
+        source_site_id: number | null;
+        source_name: string;
+        message?: string;
+      };
+    }>(`/api/sites/${siteId}/session-sync/share`, {
+      method: "POST",
+      body: "{}",
+    }),
   createSiteSessionSync: (siteId: number) =>
     request<{ success: boolean; data: SiteSessionSyncRequest }>(
       `/api/sites/${siteId}/session-sync/requests`,

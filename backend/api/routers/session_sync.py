@@ -14,6 +14,7 @@ from backend.services.session_sync_service import (
     create_site_session_sync_request,
     fail_site_session_sync_request,
     get_site_session_sync_request,
+    share_site_browser_session,
 )
 
 
@@ -88,6 +89,13 @@ async def get_session_sync_request(site_id: int, request_id: str):
         return JSONResponse(
             {"success": False, "message": "同步请求不存在"}, status_code=404
         )
+    return JSONResponse({"success": True, "data": payload})
+
+
+@router.post("/sites/{site_id}/session-sync/share")
+async def share_session_sync(site_id: int):
+    """同注册域兄弟站点登录态复用：命中则直接落库返回 ready。"""
+    payload = await run_in_threadpool(share_site_browser_session, site_id)
     return JSONResponse({"success": True, "data": payload})
 
 

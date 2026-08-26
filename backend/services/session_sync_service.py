@@ -18,7 +18,11 @@ import secrets
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from backend.core.normalize import normalize_session_expiry, site_origin
+from backend.core.normalize import (
+    normalize_session_expiry,
+    registered_domain,
+    site_origin,
+)
 from backend.core.security import hash_session_sync_secret
 from backend.core.state import (
     BROWSER_AUTH_MODE,
@@ -29,7 +33,12 @@ from backend.core.state import (
     SESSION_SYNC_TTL_SECONDS,
 )
 from backend.core.time import APP_TIMEZONE, app_now, parse_iso_dt, utc_now_iso
-from backend.db.connection import db_execute, db_execute_rowcount, db_query_one
+from backend.db.connection import (
+    db_execute,
+    db_execute_rowcount,
+    db_query_all,
+    db_query_one,
+)
 
 # NewAPI / sub2api integration helpers are imported lazily inside
 # ``complete_session_sync_request``.  They are only needed at call time, and
@@ -212,6 +221,94 @@ def create_site_session_sync_request(
     if not site:
         return False, {}, "渠道不存在"
     return _create_session_sync_request(int(site_id), site)
+
+
+def share_site_browser_session(site_id: int) -> Dict[str, Any]:
+    """尝试把同注册域兄弟站点的浏览器登录态复用到本站点。
+
+    场景：同一家 sub2api 服务部署了 www.xxx.com（控制台，有登录 cookie）
+    和 api.xxx.com（API 域，无登录页）。同一账号在 www 域同步成功后，
+    api 域的站点直接复用这份 token（token 是账号级 JWT，对 API 域同样
+    有效），不需要扩展去一个没有登录态的域上再找一遍 cookie。
+    """
+    from backend.integrations.sub2api import validate_sub2api_browser_session
+
+    empty = {"shared": False, "source_site_id": None, "source_name": ""}
+    site = db_query_one(
+        """
+        SELECT id, name, base_url, platform, auth_mode, session_sync_status,
+               access_token, token_expires_at
+        FROM sites WHERE id = ?
+        """,
+        (int(site_id),),
+    )
+    if (
+        not site
+        or str(site.get("platform") or "").strip().lower() != "sub2api"
+        or str(site.get("auth_mode") or "").strip().lower() != BROWSER_AUTH_MODE
+    ):
+        return empty
+
+    # 自己已有有效登录态时无需复用
+    now_iso = app_now().isoformat(timespec="seconds")
+    own_token = str(site.get("access_token") or "").strip()
+    own_expiry = str(site.get("token_expires_at") or "").strip()
+    if (
+        site.get("session_sync_status") == "ready"
+        and own_token
+        and (not own_expiry or own_expiry > now_iso)
+    ):
+        return empty
+
+    domain = registered_domain(str(site.get("base_url") or ""))
+    if not domain:
+        return empty
+
+    candidates = db_query_all(
+        """
+        SELECT id, name, base_url, platform, auth_mode, session_sync_status,
+               access_token, refresh_token, token_expires_at
+        FROM sites
+        WHERE id != ?
+          AND platform = 'sub2api'
+          AND auth_mode = 'browser'
+          AND session_sync_status = 'ready'
+          AND access_token IS NOT NULL AND access_token != ''
+        """,
+        (int(site_id),),
+    )
+    source = None
+    for row in candidates:
+        if registered_domain(str(row.get("base_url") or "")) != domain:
+            continue
+        expiry = str(row.get("token_expires_at") or "").strip()
+        if expiry and expiry <= now_iso:
+            continue
+        source = row
+        break
+    if not source:
+        return empty
+
+    access = str(source.get("access_token") or "").strip()
+    refresh = str(source.get("refresh_token") or "").strip()
+    expires = str(source.get("token_expires_at") or "").strip()
+
+    # 复用前先对目标站点自己的 base_url 校验 token 有效性，
+    # 校验不过就走正常扩展同步，不写入垃圾 token
+    ok, _validated, error = validate_sub2api_browser_session(
+        str(site.get("base_url") or ""), access
+    )
+    if not ok:
+        return {**empty, "message": error or "兄弟站点登录态对当前渠道无效"}
+
+    persist_site_browser_session(
+        int(site_id), access, refresh, expires
+    )
+    return {
+        "shared": True,
+        "source_site_id": int(source["id"]),
+        "source_name": str(source.get("name") or ""),
+    }
 
 
 def get_site_session_sync_request(

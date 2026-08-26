@@ -164,6 +164,33 @@ def normalize_session_expiry(value: Any) -> str:
     return parsed.isoformat(timespec="seconds")
 
 
+_SECOND_LEVEL_SUFFIXES = {
+    "com.cn", "net.cn", "org.cn", "gov.cn", "co.uk", "org.uk", "com.au",
+    "co.jp", "com.br", "com.hk", "com.tw", "com.sg",
+}
+
+
+def registered_domain(base_url: str) -> str:
+    """提取注册域（如 text168.com），用于判断多个站点是否同属一家服务。
+
+    www.text168.com 与 api.text168.com 会得到相同的注册域，从而可以共享
+    同一份浏览器登录态（登录页在 www 上，API 在 api 上，账号是同一个）。
+    """
+    try:
+        hostname = urlparse(str(base_url or "").strip()).hostname
+    except (TypeError, ValueError):
+        return ""
+    hostname = str(hostname or "").strip().lower().rstrip(".")
+    if not hostname or hostname.startswith("[") or ":" in hostname:
+        return ""
+    labels = hostname.split(".")
+    if len(labels) < 2:
+        return hostname or ""
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _SECOND_LEVEL_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 def site_origin(base_url: str) -> str:
     try:
         parsed = urlparse(str(base_url or "").strip())

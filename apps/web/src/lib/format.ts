@@ -127,6 +127,14 @@ export function ratioLabel(item?: GroupItem | { ratio?: unknown; ratio_type?: st
   return ratio == null ? "-" : `${ratio}`;
 }
 
+/** × 风格倍率文本（渠道页 badge / hover 浮层用）；ratio_type=text 时原样返回 */
+export function ratioXText(item?: { ratio?: unknown; ratio_type?: string } | null): string {
+  const ratio = item?.ratio;
+  if (ratio === undefined || ratio === null || ratio === "") return "—";
+  if (item?.ratio_type === "text") return String(ratio);
+  return `×${String(ratio)}`;
+}
+
 export function groupPropertyText(item: GroupItem = {}): string {
   const values = [
     item.platform,

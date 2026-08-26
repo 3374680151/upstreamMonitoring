@@ -16,6 +16,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 from backend.core.config import HTTP_TIMEOUT_SECONDS
+from backend.repositories.admin_sites import (
+    get_cached_admin_channel_key,
+    is_admin_site_row,
+    persist_admin_channel_key,
+)
 from backend.core.normalize import (
     _channel_key_is_masked,
     _normalize_discovery_base_url,
@@ -861,6 +866,9 @@ def fetch_newapi_channel_detail(
 
 def site_newapi_channel_key_headers(site: Dict[str, Any]) -> Dict[str, str]:
     """Use the browser session for protected key reads when available."""
+    # 延迟导入：admin_site_service 顶层已导入本模块，顶层互导会循环
+    from backend.services.admin_site_service import _admin_browser_auth_headers
+
     browser_headers = _admin_browser_auth_headers(site)
     headers = browser_headers or site_newapi_headers(site)
     proof = str(site.get("security_proof") or "").strip()
@@ -904,6 +912,12 @@ def fetch_newapi_channel_key(
     # Admin-site rows carry browser session fields; refresh the short-lived
     # dashboard access token before every protected key read. Monitoring-site
     # rows do not have these fields and continue using their normal PAT.
+    # 延迟导入：admin_site_service 顶层已导入本模块，顶层互导会循环
+    from backend.services.admin_site_service import (
+        ensure_admin_site_browser_session,
+        refresh_admin_site_browser_session,
+    )
+
     if "browser_access_token" in site or "browser_session_id" in site:
         browser_ok, browser_error = ensure_admin_site_browser_session(site)
         if not browser_ok:

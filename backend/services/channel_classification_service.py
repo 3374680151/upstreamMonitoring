@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
+from cachetools import TTLCache
+
 from backend.integrations.http import (
     UpstreamHttpStatusError,
     send_upstream_request,
@@ -33,31 +35,32 @@ from backend.services.monitoring_service import detect_site
 class ChannelClassificationService:
     """同步主站后的渠道分类与倍率推断。"""
 
+    # 同域名平台探测结果缓存，避免同步时每个渠道重复发 HTTP 探测
+    _PLATFORM_DETECT_CACHE: "TTLCache[str, str]" = TTLCache(maxsize=1024, ttl=3600)
+
     # ------------------------------------------------------------------
     # 平台探测：根据上游 API 返回的数据格式判断 NewAPI / sub2api
     # ------------------------------------------------------------------
 
     def detect_platform(self, base_url: str) -> str:
-        """探测上游站点平台类型。
-
-        NewAPI 的 /api/user/groups 不需要认证，返回
-        ``{"success": true, "data": [...]}``。sub2api 没有这个端点，
-        返回 404 或完全不同的结构。
-
-        Returns:
-            "newapi" / "sub2api" / "unknown"
-        """
+        """探测上游站点平台类型（带进程内缓存）。"""
         normalized = normalize_base_url(base_url)
         if not normalized:
             return "unknown"
+        cached = self._PLATFORM_DETECT_CACHE.get(normalized)
+        if cached:
+            return cached
+        result = self._detect_platform_no_cache(normalized)
+        self._PLATFORM_DETECT_CACHE[normalized] = result
+        return result
 
+    def _detect_platform_no_cache(self, normalized: str) -> str:
         # 1. 试 NewAPI 公开分组接口
         ok, _payload, _error = fetch_newapi_groups(normalized)
         if ok:
             return "newapi"
 
         # 2. 试 sub2api 公开端点 /api/v1/auth/me
-        #    sub2api 即使没带 token，返回的也是 sub2api 风格的 401
         if self._looks_like_sub2api(normalized):
             return "sub2api"
 
@@ -90,22 +93,23 @@ class ChannelClassificationService:
         self,
         admin_site_id: int,
         channels: List[Dict[str, Any]],
+        *,
+        admin_platform: Optional[str] = None,
     ) -> Dict[str, Any]:
         """同步主站后自动分类渠道。
 
-        对每个渠道：
-        1. 取 base_url，探测上游平台类型
-        2. 找同 base_url 的上游监控站点
-        3. 用渠道 group 字段名匹配监控站点的分组倍率
-        4. 写入 channel_upstream_bindings，状态标 inferred
-
-        Returns:
-            分类结果摘要
+        Args:
+            admin_site_id: 主站 ID
+            channels: 主站渠道列表（取自同步快照）
+            admin_platform: 已废弃，保留参数仅为兼容旧调用，不再参与平台判断。
+                渠道平台一律以监控站点 DB 记录为准，避免主站平台误导 sub2api 站点。
         """
         total = len(channels or [])
         classified = 0
         platform_counts: Dict[str, int] = {"newapi": 0, "sub2api": 0, "unknown": 0}
         matched_count = 0
+        # 同批次按 base_url 缓存平台判断，确保同域名在这次同步中只真探一次
+        batch_platform_cache: Dict[str, str] = {}
 
         for channel in channels or []:
             if not isinstance(channel, dict):
@@ -125,25 +129,34 @@ class ChannelClassificationService:
                 platform_counts["unknown"] = platform_counts.get("unknown", 0) + 1
                 continue
 
-            # 探测上游平台类型
-            platform = self.detect_platform(base_url)
-            platform_counts[platform] = platform_counts.get(platform, 0) + 1
-
             # 找同 base_url 的上游监控站点
             monitor_site = find_monitor_site_for_channel(base_url)
             if not monitor_site:
+                platform_counts["unknown"] = platform_counts.get("unknown", 0) + 1
                 continue
 
-            # 如果探测出的平台类型和监控站点记录的不一致，修正监控站点
-            if platform in ("newapi", "sub2api"):
-                current_platform = str(monitor_site.get("platform") or "newapi").strip().lower()
-                if current_platform != platform:
-                    self._update_site_platform(int(monitor_site["id"]), platform)
+            # 平台推断优先级（全部零 HTTP，除非站点没有平台记录）：
+            # 1) 本批次缓存
+            # 2) 监控站点 DB 记录的 platform（绝大多数渠道命中这条）
+            # 3) 真正的 HTTP 探测（带类级 TTLCache）
+            cached = batch_platform_cache.get(base_url)
+            if cached:
+                platform = cached
+            else:
+                site_platform = str(monitor_site.get("platform") or "").strip().lower()
+                if site_platform in ("newapi", "sub2api"):
+                    platform = site_platform
+                else:
+                    platform = self.detect_platform(base_url)
+                    if platform in ("newapi", "sub2api"):
+                        self._update_site_platform(int(monitor_site["id"]), platform)
+                batch_platform_cache[base_url] = platform
+            platform_counts[platform] = platform_counts.get(platform, 0) + 1
 
             # 取监控站点的分组倍率数据
             upstream_groups = site_groups_from_row(monitor_site)
             if not upstream_groups:
-                # 新建的监控站点还没检测过，自动做一次检测拉取分组倍率
+                # 站点从未检测过才触发 detect_site；只要有任一分组缓存就跳过
                 try:
                     detect_site(int(monitor_site["id"]))
                     monitor_site = find_monitor_site_for_channel(base_url) or monitor_site

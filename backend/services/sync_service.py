@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -518,18 +519,31 @@ def _sync_one_admin_site(
 ) -> Dict[str, Any]:
     admin_site_id = int(admin.get("id") or 0)
     try:
-        ok, raw_channels, _channel_meta, channel_error = fetch_admin_site_channels(
-            admin, ""
-        )
-        if not ok:
+        # 单主站内并行拉取 channels / groups（两个独立HTTP，不等前一个再发下一个）
+        def _fetch_channels_task() -> Tuple[Any, Any, Any, Any]:
+            return fetch_admin_site_channels(admin, "")
+        def _fetch_groups_task() -> Tuple[Any, Any, Any]:
+            return fetch_admin_site_groups(admin)
+        with ThreadPoolExecutor(max_workers=2) as inner_pool:
+            fut_channels = inner_pool.submit(_fetch_channels_task)
+            fut_groups = inner_pool.submit(_fetch_groups_task)
+            ok_ch, raw_channels, _channel_meta, channel_error = fut_channels.result()
+            ok_gr, raw_groups, group_error = fut_groups.result()
+        if not ok_ch:
             raise RuntimeError(channel_error or "读取主站渠道失败")
-        ok, raw_groups, group_error = fetch_admin_site_groups(admin)
-        if not ok:
+        if not ok_gr:
             raise RuntimeError(group_error or "读取主站分组失败")
-        channels, channels_error = normalize_admin_sync_channels(raw_channels)
+        # 拿到原始数据后，channels/groups 的 normalize 也是CPU纯函数，也并行
+        def _norm_channels() -> Tuple[Any, Any]:
+            return normalize_admin_sync_channels(raw_channels)
+        def _norm_groups() -> Tuple[Any, Any]:
+            return normalize_admin_sync_groups(raw_groups)
+        with ThreadPoolExecutor(max_workers=2) as inner_pool:
+            (channels, channels_error), (groups, groups_error) = inner_pool.map(
+                lambda f: f(), [_norm_channels, _norm_groups]
+            )
         if channels_error:
             raise RuntimeError(channels_error)
-        groups, groups_error = normalize_admin_sync_groups(raw_groups)
         if groups_error:
             raise RuntimeError(groups_error)
 
@@ -618,10 +632,31 @@ def _run_admin_site_sync(
         ]
     mode = get_main_site_reconcile_mode()
     results: List[Dict[str, Any]] = []
-    for admin in admin_sites:
-        if not isinstance(admin, dict):
-            continue
-        results.append(_sync_one_admin_site(admin, mode))
+    # 多主站并发同步，默认线程池大小为主站数量（上限8），避免串行等每个主站的HTTP
+    valid_admins = [a for a in admin_sites if isinstance(a, dict)]
+    max_workers = max(1, min(8, len(valid_admins)))
+    if max_workers <= 1:
+        for admin in valid_admins:
+            results.append(_sync_one_admin_site(admin, mode))
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_map = {
+                pool.submit(_sync_one_admin_site, admin, mode): int(admin.get("id") or 0)
+                for admin in valid_admins
+            }
+            for future in as_completed(future_map):
+                try:
+                    results.append(future.result())
+                except Exception as exc:  # noqa: BLE001
+                    results.append({
+                        "admin_site_id": future_map.get(future),
+                        "status": "sync_failed",
+                        "message": str(exc) or "主站同步异常",
+                        "imported": 0,
+                        "disabled": 0,
+                        "reenabled": 0,
+                        "deleted": 0,
+                    })
 
     results.append(
         {

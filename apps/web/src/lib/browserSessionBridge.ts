@@ -78,7 +78,7 @@ function waitForBridgeMessage(
   });
 }
 
-export async function probeSessionBridge(timeoutMs = 800): Promise<boolean> {
+export async function probeSessionBridge(timeoutMs = 400): Promise<boolean> {
   const correlation = correlationId();
   try {
     const result = await waitForBridgeMessage(
@@ -208,6 +208,23 @@ function delay(milliseconds: number): Promise<void> {
 export async function syncSiteBrowserSession(
   siteId: number,
 ): Promise<SiteSessionSyncState> {
+  // 优先尝试复用同注册域（同一家服务）兄弟站点的登录态：
+  // 命中则直接 ready，扩展不必去没有登录页的 API 域上找 cookie
+  try {
+    const share = await api.tryShareSiteSessionSync(siteId);
+    if (share.data?.shared) {
+      return {
+        request_id: "",
+        target_kind: "site",
+        status: "ready",
+        platform: "sub2api",
+        target_origin: "",
+        message: `已复用同域名渠道「${share.data.source_name}」的登录态`,
+      };
+    }
+  } catch {
+    // 复用接口异常不阻塞正常同步流程
+  }
   const created = await api.createSiteSessionSync(siteId);
   return syncSiteSession(siteId, created.data);
 }
@@ -254,13 +271,17 @@ async function syncSiteSession(
     );
   }
 
-  const deadline = Date.now() + Math.max(5000, request.expires_in * 1000 + 3000);
+  const maxPollMs = Math.min(
+    Math.max(8000, request.expires_in * 1000),
+    30_000,
+  );
+  const deadline = Date.now() + maxPollMs;
   while (Date.now() < deadline) {
     const response = await api.getSiteSessionSync(siteId, request.request_id);
     if (SESSION_SYNC_TERMINAL_STATUSES.has(response.data.status)) {
       return response.data;
     }
-    await delay(400);
+    await delay(200);
   }
   return reportBridgeFailure(siteId, request, "SYNC_FAILED");
 }

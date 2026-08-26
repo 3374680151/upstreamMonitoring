@@ -69,7 +69,10 @@ watch(
         base_url: props.site.base_url,
         interval_minutes: props.site.interval_minutes || 3,
         login_enabled: !!props.site.login_enabled,
-        auth_mode: (props.site.auth_mode as AuthMode) || "token",
+        // 手动导入登录态（token）已废弃：旧数据回填时直接落到浏览器自动同步
+        auth_mode: (
+          props.site.auth_mode === "token" ? "browser" : props.site.auth_mode
+        ) as AuthMode,
         login_username: props.site.login_username || "",
         access_user_id: props.site.access_user_id || "",
         token_expires_at: props.site.token_expires_at || "",

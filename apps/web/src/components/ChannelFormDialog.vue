@@ -71,7 +71,7 @@ function toForm(channel: Channel | null, binding?: ChannelUpstreamBinding): Form
     auto_ban: Number(channel?.auto_ban ?? 1),
     upstream_base_url: String(binding?.upstream_base_url ?? ""),
     upstream_platform: (binding?.upstream_platform as Platform) || "newapi",
-    upstream_auth_mode: (binding?.auth_mode as AuthMode) || "token",
+    upstream_auth_mode: ((binding?.auth_mode as AuthMode) === "token" ? "password" : (binding?.auth_mode as AuthMode)) || "password",
     upstream_login_username: "",
     upstream_login_password: "",
     upstream_access_token: "",
@@ -165,19 +165,6 @@ const hasSavedSub2ApiPassword = computed(
     form.value.upstream_auth_mode === "password" &&
     Boolean(props.binding?.has_login_password),
 );
-const hasSavedSub2ApiToken = computed(
-  () =>
-    sameBindingAuthMode.value &&
-    form.value.upstream_auth_mode === "token" &&
-    Boolean(props.binding?.has_access_token),
-);
-const hasSavedSub2ApiRefresh = computed(
-  () =>
-    sameBindingAuthMode.value &&
-    form.value.upstream_auth_mode === "token" &&
-    Boolean(props.binding?.has_refresh_token),
-);
-
 const keyHelp = computed(() =>
   form.value.upstream_platform === "sub2api"
     ? `sub2api 必须用这个实际 key 查询所属分组和倍率；${originalKeyHint.value}`
@@ -422,55 +409,26 @@ async function handleSubmit() {
                 @update:model-value="patch('upstream_auth_mode', $event)"
               >
                 <option value="password">账号密码</option>
-                <option value="token">导入登录态</option>
               </Select>
             </Field>
-            <template v-if="form.upstream_auth_mode === 'password'">
-              <Field label="上游用户邮箱">
-                <Input
-                  :model-value="form.upstream_login_username"
-                  @update:model-value="patch('upstream_login_username', $event)"
-                />
-              </Field>
-              <Field
-                label="上游用户密码"
-                :help="hasSavedSub2ApiPassword ? '当前已保存，留空保持原密码' : '尚未配置，填写后用于登录'"
-              >
-                <Input
-                  type="password"
-                  :model-value="form.upstream_login_password"
-                  @update:model-value="patch('upstream_login_password', $event)"
-                  autocomplete="off"
-                  :placeholder="hasSavedSub2ApiPassword ? '已保存，留空不修改' : '填写上游密码'"
-                />
-              </Field>
-            </template>
-            <template v-else>
-              <Field
-                label="上游 auth_token"
-                :help="hasSavedSub2ApiToken ? '当前已保存，留空保持原 token' : '尚未配置，填写后导入登录态'"
-              >
-                <Input
-                  type="password"
-                  :model-value="form.upstream_access_token"
-                  @update:model-value="patch('upstream_access_token', $event)"
-                  autocomplete="off"
-                  :placeholder="hasSavedSub2ApiToken ? '已保存，留空不修改' : '填写 auth_token'"
-                />
-              </Field>
-              <Field
-                label="上游 refresh_token"
-                :help="hasSavedSub2ApiRefresh ? '当前已保存，留空保持原 refresh_token' : '可选；auth_token 过期后用于自动刷新登录态'"
-              >
-                <Input
-                  type="password"
-                  :model-value="form.upstream_refresh_token"
-                  @update:model-value="patch('upstream_refresh_token', $event)"
-                  autocomplete="off"
-                  :placeholder="hasSavedSub2ApiRefresh ? '已保存，留空不修改' : '可选'"
-                />
-              </Field>
-            </template>
+            <Field label="上游用户邮箱">
+              <Input
+                :model-value="form.upstream_login_username"
+                @update:model-value="patch('upstream_login_username', $event)"
+              />
+            </Field>
+            <Field
+              label="上游用户密码"
+              :help="hasSavedSub2ApiPassword ? '当前已保存，留空保持原密码' : '尚未配置，填写后用于登录'"
+            >
+              <Input
+                type="password"
+                :model-value="form.upstream_login_password"
+                @update:model-value="patch('upstream_login_password', $event)"
+                autocomplete="off"
+                :placeholder="hasSavedSub2ApiPassword ? '已保存，留空不修改' : '填写上游密码'"
+              />
+            </Field>
           </template>
         </div>
       </div>

@@ -124,7 +124,7 @@ SUB2API_SITE_AUTH_LOCKS = KeyedLockManager()
 # ---------------------------------------------------------------------------
 # 会话同步（浏览器桥接扩展）
 # ---------------------------------------------------------------------------
-SESSION_SYNC_TTL_SECONDS = 60
+SESSION_SYNC_TTL_SECONDS = 120
 SESSION_SYNC_TERMINAL_STATUSES = {
     "ready",
     "no_session",

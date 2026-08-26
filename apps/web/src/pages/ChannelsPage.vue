@@ -9,13 +9,16 @@ import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
 import Sub2ApiChannelTable from "@/components/Sub2ApiChannelTable.vue";
+import UpstreamGroupsPopover from "@/components/UpstreamGroupsPopover.vue";
 import { Button, EmptyState, Input, Select, Spinner } from "@/components/ui";
 import { claimAutomaticRefresh } from "@/lib/automaticRefresh";
 import { api } from "@/lib/api";
+import { ratioXText } from "@/lib/format";
 import { normalizedChannelStatus } from "@/lib/sub2apiChannel";
 import { explainUpstreamError } from "@/lib/upstreamError";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
+import { useConsoleData } from "@/composables/useConsoleData";
 import { useReconcileMode, type ReconcileMode } from "@/composables/useReconcileMode";
 import type {
   AdminSite,
@@ -23,6 +26,7 @@ import type {
   ChannelUpstreamBinding,
   ChannelUpstreamBindingPayload,
   GroupItem,
+  Site,
   Sub2ApiGroupRef,
 } from "@/lib/types";
 
@@ -64,22 +68,6 @@ function ratioText(item?: GroupItem): string {
   const ratio = item.ratio;
   if (ratio === undefined || ratio === null || ratio === "") return "—";
   return typeof ratio === "number" ? `×${ratio}` : String(ratio);
-}
-
-function bindingRatioText(ratio: unknown): string {
-  if (ratio === undefined || ratio === null || ratio === "") return "—";
-  return typeof ratio === "number" ? `×${ratio}` : `×${String(ratio)}`;
-}
-
-function currentKeySummary(binding?: ChannelUpstreamBinding): string {
-  const groups = binding?.matched_groups || [];
-  if (groups.length) {
-    return `✓ 当前 key：${groups
-      .map((item) => `${item.name} ${bindingRatioText(item.ratio)}`)
-      .join("、")}`;
-  }
-  if (!binding?.configured) return "待配置对应的本地监控登录态";
-  return binding.match_message || "尚未取得当前 key 的上游倍率";
 }
 
 function bindingStatusLabel(binding?: ChannelUpstreamBinding): string {
@@ -153,6 +141,8 @@ const enabled = ref(true);
 const { reconcileMode, handleReconcileModeChange } = useReconcileMode(enabled);
 const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
+// 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
+const { sites: monitorSites } = useConsoleData();
 
 // ---- state ----
 const adminSites = shallowRef<AdminSite[]>([]);
@@ -258,6 +248,42 @@ const upstreamConfigBinding = computed(() =>
     : undefined,
 );
 
+/** Base URL 归一化：去协议、去尾斜杠、小写，用于匹配 binding 上游与监控站点 */
+function normalizeBaseUrlKey(url: unknown): string {
+  return String(url || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+}
+
+/** 监控站点 base_url → 站点 索引，供渠道行解析自己的上游目录 */
+const monitorSiteByBaseUrl = computed(() => {
+  const map = new Map<string, Site>();
+  for (const site of monitorSites.value) {
+    const key = normalizeBaseUrlKey(site.base_url);
+    if (key) map.set(key, site);
+  }
+  return map;
+});
+
+/** 按渠道 binding 的上游 base_url 找同源监控站点的分组目录快照（登录态优先） */
+function upstreamCatalogFor(
+  binding?: ChannelUpstreamBinding,
+): { siteName: string; fetchedAt: string; groups: Record<string, GroupItem> } | null {
+  const key = normalizeBaseUrlKey(binding?.upstream_base_url);
+  if (!key) return null;
+  const site = monitorSiteByBaseUrl.value.get(key);
+  if (!site) return null;
+  const loginGroups = site.current_login_groups || {};
+  const groups =
+    site.login_enabled && Object.keys(loginGroups).length
+      ? loginGroups
+      : site.current_groups || {};
+  if (!Object.keys(groups).length) return null;
+  return { siteName: site.name, fetchedAt: site.last_check_at || "", groups };
+}
+
 /** NewAPI 渠道表格行：预计算所有 binding/note/状态，避免模板内重复调用 */
 const newApiRows = computed(() => {
   if (isSub2Api.value) return [];
@@ -277,6 +303,7 @@ const newApiRows = computed(() => {
       meta: statusMeta(channel.status),
       binding,
       matchedGroups,
+      upstreamCatalog: upstreamCatalogFor(binding),
       staleMatch,
       partialMatch,
       bindingError,
@@ -473,7 +500,7 @@ async function matchUpstream(ch: Channel) {
       ? binding.matched_groups?.length
         ? `${staleMatchPrefix(binding)} · 错误原因：${explained!.summary}`
         : `${bindingStatusLabel(binding)}：${explained!.summary}`
-      : currentKeySummary(binding);
+      : "✓ 当前 key 上游倍率已刷新";
     rowNote.value = {
       ...rowNote.value,
       [ch.id]: { ok: response.success && !staleMatch, text: note },
@@ -1057,16 +1084,23 @@ watch(
                     </div>
                   </td>
                   <td class="max-w-0 py-3 pr-3">
-                    <div v-if="row.matchedGroups.length" class="flex max-w-full flex-wrap gap-1 overflow-hidden">
-                      <Badge
-                        v-for="item in row.matchedGroups"
-                        :key="item.name"
-                        :tone="item.available_to_login === false ? 'warning' : 'success'"
-                        class="max-w-full truncate"
-                      >
-                        {{ item.name }} {{ bindingRatioText(item.ratio) }}
-                      </Badge>
-                    </div>
+                    <UpstreamGroupsPopover
+                      v-if="row.matchedGroups.length"
+                      :catalog="row.upstreamCatalog"
+                      :matched-groups="row.matchedGroups"
+                    >
+                      <div class="flex max-w-full flex-wrap gap-1 overflow-hidden">
+                        <Badge
+                          v-for="item in row.matchedGroups"
+                          :key="item.name"
+                          :tone="item.available_to_login === false ? 'warning' : 'success'"
+                          class="max-w-full truncate"
+                          :title="item.name"
+                        >
+                          {{ ratioXText(item) }}
+                        </Badge>
+                      </div>
+                    </UpstreamGroupsPopover>
                     <Badge
                       v-else
                       :tone="bindingTone(row.binding?.match_status)"
@@ -1089,13 +1123,6 @@ watch(
                       :title="row.binding?.match_message || '部分分组数据不完整'"
                     >
                       部分匹配：{{ row.binding?.match_message || "部分分组数据不完整" }}
-                    </div>
-                    <div
-                      v-else-if="row.binding?.matched_groups?.length"
-                      class="mt-1 truncate text-[10px] text-ink-soft"
-                      :title="currentKeySummary(row.binding)"
-                    >
-                      {{ currentKeySummary(row.binding) }}
                     </div>
                   </td>
                   <td class="py-3 pr-3 tabular-nums text-ink">
@@ -1204,7 +1231,7 @@ watch(
                 {{ item.name }}
               </td>
               <td class="py-2 pr-3 tabular-nums">
-                {{ bindingRatioText(item.ratio) }}
+                {{ ratioXText(item) }}
               </td>
               <td class="py-2 pr-3">
                 <Badge

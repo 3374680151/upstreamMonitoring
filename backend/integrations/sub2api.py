@@ -23,6 +23,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse
 
 from backend.core.normalize import normalize_base_url
+from backend.integrations.http import (
+    _upstream_response_details,
+    _upstream_response_message,
+    admin_request_json,
+    request_json,
+)
 from backend.core.state import (
     ADMIN_SUB2API_EXPIRY_SKEW_SECONDS,
     ADMIN_SUB2API_SESSION_LOCKS,
@@ -34,6 +40,11 @@ from backend.core.state import (
     SUB2API_SITE_AUTH_LOCKS,
 )
 from backend.core.time import app_now, utc_now_iso
+from backend.services.session_sync_service import (
+    _site_session_sync_request_error,
+    mark_site_browser_session_expired,
+    persist_site_browser_session,
+)
 from backend.db.connection import (
     _q,
     db_connection,

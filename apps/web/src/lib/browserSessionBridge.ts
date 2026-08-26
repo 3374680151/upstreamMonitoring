@@ -8,8 +8,16 @@ import { api } from "./api";
 const BRIDGE_VERSION = "upstream-session-bridge/v2";
 const PAGE_SOURCE = "upstream-console";
 const EXTENSION_SOURCE = "upstream-session-bridge";
-export const EXTENSION_REQUIRED_MESSAGE =
-  "浏览器同步扩展未连接或版本过旧，请在 chrome://extensions 重新加载桌面项目中的 0.1.5 扩展，再刷新本页";
+export function extensionRequiredMessage(): string {
+  const origin = window.location.origin;
+  const hostname = window.location.hostname;
+  // 扩展的 content script 只注入 localhost / 127.0.0.1，
+  // 用局域网 IP 或其他域名访问控制台时探测必然失败
+  if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+    return `浏览器同步扩展无法在当前地址（${origin}）工作：请改用 http://localhost:5173 或 http://localhost:8000 访问控制台`;
+  }
+  return `浏览器同步扩展未连接或版本过旧：请在 chrome://extensions 重新加载 0.1.5 扩展，然后强制刷新本页（Cmd+Shift+R）；当前页面 ${origin}`;
+}
 const SESSION_SYNC_TERMINAL_STATUSES = new Set<SessionSyncStatus>([
   "ready",
   "no_session",
@@ -192,7 +200,7 @@ async function reportBridgeFailure(
       SYNC_FAILED: "failed",
     };
     const messages: Record<typeof code, string> = {
-      EXTENSION_UNAVAILABLE: EXTENSION_REQUIRED_MESSAGE,
+      EXTENSION_UNAVAILABLE: extensionRequiredMessage(),
       ORIGIN_PERMISSION_REQUIRED: "扩展需要该站点的读取权限",
       COOKIE_PERMISSION_REQUIRED:
         "扩展需要读取 NewAPI 登录 Cookie 的权限，请允许后重新同步",
@@ -244,7 +252,7 @@ async function syncSiteSession(
       siteId,
       request,
       "EXTENSION_UNAVAILABLE",
-      EXTENSION_REQUIRED_MESSAGE,
+      extensionRequiredMessage(),
     );
   }
 

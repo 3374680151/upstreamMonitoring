@@ -6,7 +6,7 @@ import SiteTable from "@/components/SiteTable.vue";
 import { Button, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import {
-  EXTENSION_REQUIRED_MESSAGE,
+  extensionRequiredMessage,
   probeSessionBridge,
   syncSiteBrowserSession,
 } from "@/lib/browserSessionBridge";
@@ -178,9 +178,9 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
     // 先探测扩展连通性：未连接时直接中止，避免逐站创建必失败的同步请求
     const extensionReady = await probeSessionBridge();
     if (!extensionReady) {
-      lines.push(`✗ ${EXTENSION_REQUIRED_MESSAGE}`);
+      lines.push(`✗ ${extensionRequiredMessage()}`);
       syncResult.value = lines.join("\n");
-      toast.error(EXTENSION_REQUIRED_MESSAGE);
+      toast.error(extensionRequiredMessage());
       return;
     }
     for (const site of targets) {

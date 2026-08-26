@@ -267,21 +267,20 @@ const monitorSiteByBaseUrl = computed(() => {
   return map;
 });
 
-/** 按渠道 binding 的上游 base_url 找同源监控站点的分组目录快照（登录态优先） */
-function upstreamCatalogFor(
+/** 按渠道上游地址找同源监控站点。
+ *  继承监控站登录态时 binding 不落 upstream_base_url，与后端
+ *  find_monitor_site_for_channel 一致：以渠道自身 base_url 为准。 */
+function upstreamSiteFor(
+  channel: Channel,
   binding?: ChannelUpstreamBinding,
-): { siteName: string; fetchedAt: string; groups: Record<string, GroupItem> } | null {
-  const key = normalizeBaseUrlKey(binding?.upstream_base_url);
+): Site | null {
+  const key =
+    normalizeBaseUrlKey(binding?.upstream_base_url) ||
+    normalizeBaseUrlKey(channel.base_url);
   if (!key) return null;
   const site = monitorSiteByBaseUrl.value.get(key);
   if (!site) return null;
-  const loginGroups = site.current_login_groups || {};
-  const groups =
-    site.login_enabled && Object.keys(loginGroups).length
-      ? loginGroups
-      : site.current_groups || {};
-  if (!Object.keys(groups).length) return null;
-  return { siteName: site.name, fetchedAt: site.last_check_at || "", groups };
+  return site;
 }
 
 /** NewAPI 渠道表格行：预计算所有 binding/note/状态，避免模板内重复调用 */
@@ -303,7 +302,7 @@ const newApiRows = computed(() => {
       meta: statusMeta(channel.status),
       binding,
       matchedGroups,
-      upstreamCatalog: upstreamCatalogFor(binding),
+      upstreamSite: upstreamSiteFor(channel, binding),
       staleMatch,
       partialMatch,
       bindingError,
@@ -1100,11 +1099,10 @@ watch(
                   </td>
                   <td class="max-w-0 py-3 pr-3">
                     <UpstreamGroupsPopover
-                      v-if="row.matchedGroups.length"
-                      :catalog="row.upstreamCatalog"
+                      :site="row.upstreamSite"
                       :matched-groups="row.matchedGroups"
                     >
-                      <div class="flex max-w-full flex-wrap gap-1 overflow-hidden">
+                      <div v-if="row.matchedGroups.length" class="flex max-w-full flex-wrap gap-1 overflow-hidden">
                         <Badge
                           v-for="item in row.matchedGroups"
                           :key="item.name"
@@ -1115,15 +1113,15 @@ watch(
                           {{ ratioXText(item) }}
                         </Badge>
                       </div>
+                      <Badge
+                        v-else
+                        :tone="bindingTone(row.binding?.match_status)"
+                        class="max-w-full truncate"
+                        :title="bindingTooltip(row.binding)"
+                      >
+                        {{ bindingStatusLabel(row.binding) }}
+                      </Badge>
                     </UpstreamGroupsPopover>
-                    <Badge
-                      v-else
-                      :tone="bindingTone(row.binding?.match_status)"
-                      class="max-w-full truncate"
-                      :title="bindingTooltip(row.binding)"
-                    >
-                      {{ bindingStatusLabel(row.binding) }}
-                    </Badge>
                     <div
                       v-if="row.staleMatch"
                       class="mt-1 truncate text-[10px] text-warning-fg"

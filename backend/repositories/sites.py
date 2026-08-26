@@ -512,21 +512,16 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
                     fields.append("browser_access_expires_at = ?")
                     params.append(0)
             elif auth_mode == BROWSER_AUTH_MODE:
-                fields.append("login_username = ?")
-                params.append("")
-                fields.append("login_password = ?")
-                params.append("")
-                if not same_auth_mode:
-                    fields.append("access_token = ?")
-                    params.append("")
-                    fields.append("access_user_id = ?")
-                    params.append("")
-                    fields.append("browser_refresh_cookie = ?")
-                    params.append(None)
-                    fields.append("browser_session_id = ?")
-                    params.append(None)
-                    fields.append("browser_access_expires_at = ?")
-                    params.append(0)
+                # 浏览器登录态优先，但保留用户名密码 / 令牌作为回退凭证：
+                # 留空即保留（与整表单「空值保留旧值」语义一致），填写即替换。
+                # 旧会话字段同样保留——从密码模式切来时密码登录留下的
+                # refresh cookie 仍可用，浏览器同步失败时监控可自动回退。
+                if login_username:
+                    fields.append("login_username = ?")
+                    params.append(login_username)
+                if login_password:
+                    fields.append("login_password = ?")
+                    params.append(login_password)
             else:
                 fields.append("login_username = ?")
                 params.append("")

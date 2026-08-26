@@ -294,7 +294,9 @@ def _share_newapi_site_browser_session(
         )
         if not ok:
             continue
-        persist_newapi_site_browser_session(int(site_id), session)
+        persist_newapi_site_browser_session(
+            int(site_id), session, preserve_login_credentials=True
+        )
         return {
             "shared": True,
             "source_site_id": int(row["id"]),
@@ -792,7 +794,9 @@ def complete_session_sync_request(
                 if sync_error:
                     applied, apply_error = False, sync_error
             if applied:
-                persist_newapi_site_browser_session(int(site_id), session)
+                persist_newapi_site_browser_session(
+                    int(site_id), session, preserve_login_credentials=True
+                )
     else:
         finish_session_sync_request(
             str(request_id), "failed", "UNSUPPORTED_TARGET", "当前同步目标暂不支持"

@@ -66,14 +66,11 @@ const hasSub2ApiSite = computed(() =>
     (site) => truthy(site.enabled) && site.platform === "sub2api",
   ),
 );
-// NewAPI 批量同步只针对已是浏览器登录态的渠道：token / 密码模式不自动切换，
+// 只要有启用的 NewAPI 渠道就显示按钮；token / 密码模式不自动切换，
 // 避免批量把正在用令牌的渠道切进浏览器模式后同步失败、反而丢掉原认证方式。
-const hasNewApiBrowserSite = computed(() =>
+const hasNewApiSite = computed(() =>
   sites.value.some(
-    (site) =>
-      truthy(site.enabled) &&
-      site.platform === "newapi" &&
-      site.auth_mode === "browser",
+    (site) => truthy(site.enabled) && site.platform === "newapi",
   ),
 );
 
@@ -170,7 +167,7 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
   if (!targets.length) {
     toast.info(
       targetPlatform === "newapi"
-        ? "暂无启用浏览器登录态的 NewAPI 渠道"
+        ? "暂无浏览器登录态的 NewAPI 渠道：请先在「编辑渠道」中把认证方式切换为浏览器登录态同步"
         : "暂无启用的 sub2api 渠道",
     );
     return;
@@ -248,10 +245,10 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
             同步 sub2api 登录态{{ browserSyncProgress }}
           </Button>
           <Button
-            v-if="hasNewApiBrowserSite"
+            v-if="hasNewApiSite"
             variant="secondary"
             :loading="syncingBrowser"
-            title="一键同步所有浏览器登录态的 NewAPI 渠道；令牌/密码模式不会被自动切换"
+            title="一键同步所有浏览器登录态的 NewAPI 渠道；令牌/密码模式不会被自动切换，需在编辑渠道中手动改为浏览器登录态"
             @click="syncBrowserSessions('newapi')"
           >
             同步 NewAPI 登录态{{ browserSyncProgress }}

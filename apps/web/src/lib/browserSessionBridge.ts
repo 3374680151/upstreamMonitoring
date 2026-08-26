@@ -9,7 +9,7 @@ const BRIDGE_VERSION = "upstream-session-bridge/v2";
 const PAGE_SOURCE = "upstream-console";
 const EXTENSION_SOURCE = "upstream-session-bridge";
 const EXTENSION_REQUIRED_MESSAGE =
-  "浏览器同步扩展未连接或版本过旧，请重新加载桌面项目中的 0.1.3 扩展并刷新页面";
+  "浏览器同步扩展未连接或版本过旧，请在 chrome://extensions 重新加载桌面项目中的 0.1.4 扩展，再刷新本页";
 const SESSION_SYNC_TERMINAL_STATUSES = new Set<SessionSyncStatus>([
   "ready",
   "no_session",
@@ -80,11 +80,11 @@ function waitForBridgeMessage(
 
 export async function probeSessionBridge(timeoutMs = 400): Promise<boolean> {
   const correlation = correlationId();
-  try {
-    const result = await waitForBridgeMessage(
+  const probe = (ms: number) =>
+    waitForBridgeMessage(
       correlation,
       "UPSTREAM_SESSION_BRIDGE_ACK",
-      timeoutMs,
+      ms,
       () => {
         window.postMessage(
           {
@@ -96,8 +96,14 @@ export async function probeSessionBridge(timeoutMs = 400): Promise<boolean> {
           window.location.origin,
         );
       },
-    );
-    return result.ok === true;
+    ).then((result) => result.ok === true);
+  try {
+    return await probe(timeoutMs);
+  } catch {
+    // MV3 service worker 冷启动可能超过首轮超时，拉长窗口再试一次
+  }
+  try {
+    return await probe(1600);
   } catch {
     return false;
   }

@@ -61,11 +61,19 @@ const filtered = computed(() => {
   });
 });
 
-const hasBrowserSyncSite = computed(() =>
+const hasSub2ApiSite = computed(() =>
+  sites.value.some(
+    (site) => truthy(site.enabled) && site.platform === "sub2api",
+  ),
+);
+// NewAPI 批量同步只针对已是浏览器登录态的渠道：token / 密码模式不自动切换，
+// 避免批量把正在用令牌的渠道切进浏览器模式后同步失败、反而丢掉原认证方式。
+const hasNewApiBrowserSite = computed(() =>
   sites.value.some(
     (site) =>
       truthy(site.enabled) &&
-      (site.platform === "sub2api" || site.platform === "newapi"),
+      site.platform === "newapi" &&
+      site.auth_mode === "browser",
   ),
 );
 
@@ -148,15 +156,23 @@ async function syncAllFromMain(): Promise<void> {
   }
 }
 
-async function syncBrowserSessions(): Promise<void> {
+async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promise<void> {
   if (syncingBrowser.value) return;
-  const targets = sites.value.filter(
-    (site) =>
-      truthy(site.enabled) &&
-      (site.platform === "sub2api" || site.platform === "newapi"),
-  );
+  const targets = sites.value.filter((site) => {
+    if (!truthy(site.enabled) || site.platform !== targetPlatform)
+      return false;
+    // NewAPI 只同步已是浏览器登录态的渠道；sub2api 保持自动切换行为
+    if (targetPlatform === "newapi" && site.auth_mode !== "browser")
+      return false;
+    return true;
+  });
+  const platformLabel = targetPlatform === "sub2api" ? "sub2api" : "NewAPI";
   if (!targets.length) {
-    toast.info("暂无启用的渠道");
+    toast.info(
+      targetPlatform === "newapi"
+        ? "暂无启用浏览器登录态的 NewAPI 渠道"
+        : "暂无启用的 sub2api 渠道",
+    );
     return;
   }
   syncingBrowser.value = true;
@@ -164,7 +180,7 @@ async function syncBrowserSessions(): Promise<void> {
   const failed: string[] = [];
   let index = 0;
   // 实时日志：每完成一个站点就追加一行并刷新列表，让状态即时可见
-  const lines: string[] = [`开始同步 ${targets.length} 个渠道的登录态…`];
+  const lines: string[] = [`开始同步 ${targets.length} 个 ${platformLabel} 渠道的登录态…`];
   syncResult.value = lines.join("\n");
   try {
     for (const site of targets) {
@@ -209,7 +225,7 @@ async function syncBrowserSessions(): Promise<void> {
   if (failed.length) {
     toast.info(`登录态同步完成，${failed.length} 个失败，详见同步结果`);
   } else {
-    toast.success(`已完成 ${done.length} 个渠道的登录态同步`);
+    toast.success(`已完成 ${done.length} 个 ${platformLabel} 渠道的登录态同步`);
   }
 }
 </script>
@@ -223,13 +239,22 @@ async function syncBrowserSessions(): Promise<void> {
       <template #action>
         <div class="flex flex-wrap items-center gap-2">
           <Button
-            v-if="hasBrowserSyncSite"
+            v-if="hasSub2ApiSite"
             variant="secondary"
             :loading="syncingBrowser"
-            title="一键同步所有启用渠道（sub2api / NewAPI）的浏览器登录态；非浏览器登录模式的渠道会自动切换后再同步"
-            @click="syncBrowserSessions"
+            title="一键同步所有启用 sub2api 渠道的浏览器登录态；非浏览器登录模式的渠道会自动切换后再同步"
+            @click="syncBrowserSessions('sub2api')"
           >
-            同步登录态{{ browserSyncProgress }}
+            同步 sub2api 登录态{{ browserSyncProgress }}
+          </Button>
+          <Button
+            v-if="hasNewApiBrowserSite"
+            variant="secondary"
+            :loading="syncingBrowser"
+            title="一键同步所有浏览器登录态的 NewAPI 渠道；令牌/密码模式不会被自动切换"
+            @click="syncBrowserSessions('newapi')"
+          >
+            同步 NewAPI 登录态{{ browserSyncProgress }}
           </Button>
           <Button
             variant="brand"

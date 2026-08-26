@@ -275,28 +275,6 @@ async function readNewApiTargetSession(
     });
     const legacySession = legacyResults?.[0]?.result || null;
     if (legacySession?.access_token) return { session: legacySession };
-    if (legacySession?.access_user_id) {
-      setDiagnosticStage("page_cookie_probe");
-      const verified = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: verifyNewApiCookieSessionInPage,
-        world: "MAIN",
-      });
-      const cookieIdentity = verified?.[0]?.result;
-      if (cookieIdentity?.access_user_id === legacySession.access_user_id) {
-        setDiagnosticStage("cookie_read");
-        const cookies = await chrome.cookies.getAll({ url: targetOrigin });
-        const browserCookie = selectNewApiBrowserCookie(cookies);
-        if (browserCookie) {
-          return {
-            session: {
-              access_user_id: cookieIdentity.access_user_id,
-              browser_cookie: browserCookie,
-            },
-          };
-        }
-      }
-    }
   }
 
   setDiagnosticStage("page_memory_read");
@@ -332,20 +310,47 @@ async function readNewApiTargetSession(
     world: "MAIN",
   });
   const refreshResult = refreshResults?.[0]?.result;
-  if (refreshResult?.kind !== "success") return { session: null };
-
-  setDiagnosticStage("cookie_read");
-  const cookie = await chrome.cookies.get({
-    url: targetOrigin,
-    name: "new_api_refresh",
-  });
-  const refreshCookie = selectNewApiRefreshCookie(cookie ? [cookie] : []);
-  return {
-    session: normalizeNewApiRefreshBundle(
+  if (refreshResult?.kind === "success") {
+    setDiagnosticStage("cookie_read");
+    const cookie = await chrome.cookies.get({
+      url: targetOrigin,
+      name: "new_api_refresh",
+    });
+    const refreshCookie = selectNewApiRefreshCookie(cookie ? [cookie] : []);
+    const bundle = normalizeNewApiRefreshBundle(
       refreshResult.bundle,
       refreshCookie,
-    ),
-  };
+    );
+    if (bundle) return { session: bundle };
+  }
+
+  // 最后兜底：gin 会话 cookie 探测。只要浏览器在该域上有活的登录会话
+  // （例如登录时没勾「记住我」，没有 new_api_refresh cookie），会话 cookie
+  // 就能让 /api/user/self 通过；把整个 cookie 串交给后端复用。
+  if (targetKind === "site") {
+    setDiagnosticStage("page_cookie_probe");
+    const verified = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: verifyNewApiCookieSessionInPage,
+      world: "MAIN",
+    });
+    const cookieIdentity = verified?.[0]?.result;
+    if (cookieIdentity?.access_user_id) {
+      setDiagnosticStage("cookie_read");
+      const cookies = await chrome.cookies.getAll({ url: targetOrigin });
+      const browserCookie = selectNewApiBrowserCookie(cookies);
+      if (browserCookie) {
+        return {
+          session: {
+            access_user_id: cookieIdentity.access_user_id,
+            browser_cookie: browserCookie,
+          },
+        };
+      }
+    }
+  }
+
+  return { session: null };
 }
 
 async function submitCompletion(request, payload) {

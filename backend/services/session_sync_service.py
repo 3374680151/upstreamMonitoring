@@ -580,7 +580,8 @@ def finish_session_sync_request(
                         AND r.admin_site_id IS NULL
                         AND r.platform = ?
                         AND r.target_origin = ?
-                        AND r.status IN ('validating', 'pending', 'ready', 'failed', 'expired')
+                        AND r.status IN ('validating', 'pending', 'ready', 'failed', 'expired',
+                                         'no_session', 'extension_unavailable', 'permission_required')
                   )
                 """,
                 (

@@ -119,7 +119,7 @@ def site_summary(
         "interval_minutes": site["interval_minutes"],
         "login_enabled": bool(site.get("login_enabled")),
         "auth_mode": (
-            "token"
+            site.get("auth_mode") or "token"
             if str(site.get("platform") or "newapi").strip().lower() == "newapi"
             else site.get("auth_mode") or "password"
         ),
@@ -128,29 +128,20 @@ def site_summary(
         "has_access_token": bool(site.get("access_token")),
         "has_refresh_token": bool(site.get("refresh_token")),
         "has_browser_session": bool(
-            str(site.get("platform") or "newapi").strip().lower() == "sub2api"
-            and site.get("access_token")
-            and site.get("browser_session_id")
+            site.get("access_token")
+            and (
+                site.get("browser_session_id")
+                or site.get("browser_refresh_cookie")
+                or site.get("browser_cookie")
+            )
         ),
         "token_expires_at": site.get("token_expires_at") or "",
         "access_user_id": site.get("access_user_id") or "",
         "login_last_error": site.get("login_last_error"),
         "login_last_check_at": site.get("login_last_check_at"),
-        "session_sync_status": (
-            site.get("session_sync_status") or "not_requested"
-            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
-            else "not_requested"
-        ),
-        "session_sync_error": (
-            site.get("session_sync_error")
-            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
-            else None
-        ),
-        "session_synced_at": (
-            site.get("session_synced_at")
-            if str(site.get("platform") or "newapi").strip().lower() == "sub2api"
-            else None
-        ),
+        "session_sync_status": site.get("session_sync_status") or "not_requested",
+        "session_sync_error": site.get("session_sync_error"),
+        "session_synced_at": site.get("session_synced_at"),
         "status": site["status"],
         "last_error": site["last_error"],
         "last_check_at": site["last_check_at"],

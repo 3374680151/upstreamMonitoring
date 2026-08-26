@@ -8,7 +8,7 @@ import { api } from "./api";
 const BRIDGE_VERSION = "upstream-session-bridge/v2";
 const PAGE_SOURCE = "upstream-console";
 const EXTENSION_SOURCE = "upstream-session-bridge";
-const EXTENSION_REQUIRED_MESSAGE =
+export const EXTENSION_REQUIRED_MESSAGE =
   "浏览器同步扩展未连接或版本过旧，请在 chrome://extensions 重新加载桌面项目中的 0.1.5 扩展，再刷新本页";
 const SESSION_SYNC_TERMINAL_STATUSES = new Set<SessionSyncStatus>([
   "ready",

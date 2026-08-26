@@ -5,7 +5,11 @@ import Panel from "@/components/Panel.vue";
 import SiteTable from "@/components/SiteTable.vue";
 import { Button, Input, Select } from "@/components/ui";
 import { api } from "@/lib/api";
-import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
+import {
+  EXTENSION_REQUIRED_MESSAGE,
+  probeSessionBridge,
+  syncSiteBrowserSession,
+} from "@/lib/browserSessionBridge";
 import type { Platform, SiteFormPayload } from "@/lib/types";
 import { truthy } from "@/lib/format";
 import { useToast } from "@/composables/useToast";
@@ -171,6 +175,14 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
   const lines: string[] = [`开始同步 ${targets.length} 个 ${platformLabel} 渠道的登录态…`];
   syncResult.value = lines.join("\n");
   try {
+    // 先探测扩展连通性：未连接时直接中止，避免逐站创建必失败的同步请求
+    const extensionReady = await probeSessionBridge();
+    if (!extensionReady) {
+      lines.push(`✗ ${EXTENSION_REQUIRED_MESSAGE}`);
+      syncResult.value = lines.join("\n");
+      toast.error(EXTENSION_REQUIRED_MESSAGE);
+      return;
+    }
     for (const site of targets) {
       index += 1;
       browserSyncProgress.value = ` ${index}/${targets.length}`;

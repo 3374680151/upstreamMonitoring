@@ -110,10 +110,10 @@ async function handleCopyWechat() {
             :key="item.to"
             :to="item.to"
             custom
-            v-slot="{ isActive, isExactActive, navigate }"
+            v-slot="{ href, isActive, isExactActive, navigate }"
           >
             <a
-              href="#"
+              :href="href"
               :class="[
                 'inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 text-[13px] font-medium outline-none transition-[background-color,color] duration-[var(--motion-base)]',
                 item.exact
@@ -124,7 +124,7 @@ async function handleCopyWechat() {
                     ? 'bg-panel text-ink-strong shadow-[var(--shadow-hairline)]'
                     : 'text-ink-muted hover:bg-panel-soft hover:text-ink-strong',
               ]"
-              @click.prevent="navigate"
+              @click="navigate"
             >
               <component :is="item.icon" :size="14" :stroke-width="1.7" />
               {{ item.label }}
@@ -195,10 +195,10 @@ async function handleCopyWechat() {
             :key="item.to"
             :to="item.to"
             custom
-            v-slot="{ isActive, isExactActive, navigate }"
+            v-slot="{ href, isActive, isExactActive, navigate }"
           >
             <a
-              href="#"
+              :href="href"
               :class="[
                 'inline-flex min-h-9 items-center gap-2 rounded-[var(--radius-sm)] px-3 py-1.5 text-[13px] font-medium outline-none transition-[background-color,color] duration-[var(--motion-base)]',
                 item.exact
@@ -209,7 +209,7 @@ async function handleCopyWechat() {
                     ? 'bg-panel text-ink-strong shadow-[var(--shadow-hairline)]'
                     : 'text-ink-muted hover:bg-panel hover:text-ink-strong',
               ]"
-              @click.prevent="navigate"
+              @click="navigate"
             >
               <component :is="item.icon" :size="15" :stroke-width="1.7" />
               {{ item.label }}

@@ -551,15 +551,15 @@ def finish_session_sync_request(
         # Atomicity guarantee: a newer request may have been claimed while
         # this one was in flight.  Only touch the site if this request is
         # still the active one for the target.
-        if row.get("site_id") is not None and platform == "sub2api":
+        if row.get("site_id") is not None and platform in ("sub2api", "newapi"):
             active = db_query_one(
                 """
                 SELECT id FROM browser_session_sync_requests
                 WHERE site_id = ? AND admin_site_id IS NULL
-                  AND platform = 'sub2api'
+                  AND platform = ?
                   AND target_origin = ? AND status = 'validating'
                 """,
-                (int(row["site_id"]), target_origin),
+                (int(row["site_id"]), platform, target_origin),
             )
             if active and str(active.get("id") or "") != request_id_value:
                 return True
@@ -570,7 +570,7 @@ def finish_session_sync_request(
                     session_synced_at = CASE WHEN ? = 'ready' THEN ? ELSE session_synced_at END,
                     updated_at = ?
                 WHERE s.id = ?
-                  AND s.platform = 'sub2api'
+                  AND s.platform = ?
                   AND s.auth_mode = 'browser'
                   AND EXISTS (
                       SELECT 1
@@ -578,7 +578,7 @@ def finish_session_sync_request(
                       WHERE r.id = ?
                         AND r.site_id = s.id
                         AND r.admin_site_id IS NULL
-                        AND r.platform = 'sub2api'
+                        AND r.platform = ?
                         AND r.target_origin = ?
                         AND r.status IN ('validating', 'pending', 'ready', 'failed', 'expired')
                   )
@@ -590,7 +590,9 @@ def finish_session_sync_request(
                     now,
                     now,
                     int(row["site_id"]),
+                    platform,
                     request_id_value,
+                    platform,
                     target_origin,
                 ),
             )

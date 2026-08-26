@@ -155,21 +155,12 @@ async function syncAllFromMain(): Promise<void> {
 
 async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promise<void> {
   if (syncingBrowser.value) return;
-  const targets = sites.value.filter((site) => {
-    if (!truthy(site.enabled) || site.platform !== targetPlatform)
-      return false;
-    // NewAPI 只同步已是浏览器登录态的渠道；sub2api 保持自动切换行为
-    if (targetPlatform === "newapi" && site.auth_mode !== "browser")
-      return false;
-    return true;
-  });
+  const targets = sites.value.filter(
+    (site) => truthy(site.enabled) && site.platform === targetPlatform,
+  );
   const platformLabel = targetPlatform === "sub2api" ? "sub2api" : "NewAPI";
   if (!targets.length) {
-    toast.info(
-      targetPlatform === "newapi"
-        ? "暂无浏览器登录态的 NewAPI 渠道：请先在「编辑渠道」中把认证方式切换为浏览器登录态同步"
-        : "暂无启用的 sub2api 渠道",
-    );
+    toast.info(`暂无启用的 ${platformLabel} 渠道`);
     return;
   }
   syncingBrowser.value = true;
@@ -248,7 +239,7 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
             v-if="hasNewApiSite"
             variant="secondary"
             :loading="syncingBrowser"
-            title="一键同步所有浏览器登录态的 NewAPI 渠道；令牌/密码模式不会被自动切换，需在编辑渠道中手动改为浏览器登录态"
+            title="一键同步所有启用 NewAPI 渠道的浏览器登录态；令牌/密码模式的渠道会自动切换为浏览器登录态后再同步"
             @click="syncBrowserSessions('newapi')"
           >
             同步 NewAPI 登录态{{ browserSyncProgress }}

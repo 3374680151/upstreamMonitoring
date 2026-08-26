@@ -61,9 +61,11 @@ const filtered = computed(() => {
   });
 });
 
-const hasSub2ApiSite = computed(() =>
+const hasBrowserSyncSite = computed(() =>
   sites.value.some(
-    (site) => truthy(site.enabled) && site.platform === "sub2api",
+    (site) =>
+      truthy(site.enabled) &&
+      (site.platform === "sub2api" || site.platform === "newapi"),
   ),
 );
 
@@ -146,13 +148,15 @@ async function syncAllFromMain(): Promise<void> {
   }
 }
 
-async function syncSub2ApiBrowserSessions(): Promise<void> {
+async function syncBrowserSessions(): Promise<void> {
   if (syncingBrowser.value) return;
   const targets = sites.value.filter(
-    (site) => truthy(site.enabled) && site.platform === "sub2api",
+    (site) =>
+      truthy(site.enabled) &&
+      (site.platform === "sub2api" || site.platform === "newapi"),
   );
   if (!targets.length) {
-    toast.info("暂无启用的 sub2api 渠道");
+    toast.info("暂无启用的渠道");
     return;
   }
   syncingBrowser.value = true;
@@ -160,7 +164,7 @@ async function syncSub2ApiBrowserSessions(): Promise<void> {
   const failed: string[] = [];
   let index = 0;
   // 实时日志：每完成一个站点就追加一行并刷新列表，让状态即时可见
-  const lines: string[] = [`开始同步 ${targets.length} 个 sub2api 渠道的登录态…`];
+  const lines: string[] = [`开始同步 ${targets.length} 个渠道的登录态…`];
   syncResult.value = lines.join("\n");
   try {
     for (const site of targets) {
@@ -168,7 +172,7 @@ async function syncSub2ApiBrowserSessions(): Promise<void> {
       browserSyncProgress.value = ` ${index}/${targets.length}`;
       const label = `「${site.name}」`;
       try {
-        // 非 browser 模式的 sub2api 渠道先切到浏览器登录态（空凭证字段后端保留原值）
+        // 非 browser 模式的渠道先切到浏览器登录态（空凭证字段后端保留原值）
         if (site.auth_mode !== "browser") {
           await api.updateSite(site.id, toBrowserSwitchPayload(site));
         }
@@ -205,7 +209,7 @@ async function syncSub2ApiBrowserSessions(): Promise<void> {
   if (failed.length) {
     toast.info(`登录态同步完成，${failed.length} 个失败，详见同步结果`);
   } else {
-    toast.success(`已完成 ${done.length} 个 sub2api 渠道的登录态同步`);
+    toast.success(`已完成 ${done.length} 个渠道的登录态同步`);
   }
 }
 </script>
@@ -219,11 +223,11 @@ async function syncSub2ApiBrowserSessions(): Promise<void> {
       <template #action>
         <div class="flex flex-wrap items-center gap-2">
           <Button
-            v-if="hasSub2ApiSite"
+            v-if="hasBrowserSyncSite"
             variant="secondary"
             :loading="syncingBrowser"
-            title="一键同步所有启用 sub2api 渠道的浏览器登录态；非浏览器登录模式的渠道会自动切换后再同步"
-            @click="syncSub2ApiBrowserSessions"
+            title="一键同步所有启用渠道（sub2api / NewAPI）的浏览器登录态；非浏览器登录模式的渠道会自动切换后再同步"
+            @click="syncBrowserSessions"
           >
             同步登录态{{ browserSyncProgress }}
           </Button>

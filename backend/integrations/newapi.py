@@ -1551,6 +1551,63 @@ def _newapi_status_from_payload(payload: Any) -> Optional[int]:
             return int(raw)
     return None
 
+def _newapi_site_fallback_request(
+    site: Dict[str, Any],
+    url: str,
+    payload: Optional[Dict[str, Any]],
+    method: str,
+) -> Tuple[bool, Any, Optional[str]]:
+    """浏览器会话不可用时的凭证回退：用户名密码登录 → 系统访问令牌。
+
+    仅在站点保留了回退凭证（login_username/login_password 或
+    access_token/access_user_id）时生效；密码登录成功会把新会话落库
+    （保留回退凭证），令牌兜底不改变任何持久化状态。
+    """
+    base = normalize_base_url(str(site.get("base_url") or ""))
+    username = str(site.get("login_username") or "").strip()
+    password = str(site.get("login_password") or "")
+    if base and username and password:
+        ok, auth_data, _error = _newapi_password_login_bundle(
+            base,
+            username,
+            password,
+            access_user_id=str(site.get("access_user_id") or ""),
+            previous_refresh_cookie=str(site.get("browser_refresh_cookie") or ""),
+        )
+        if ok and auth_data and not auth_data.get("requires_2fa"):
+            site_id = int(site.get("id") or 0)
+            if site_id > 0:
+                try:
+                    persist_newapi_site_browser_session(
+                        site_id,
+                        auth_data,
+                        auth_mode=str(site.get("auth_mode") or BROWSER_AUTH_MODE),
+                        preserve_login_credentials=True,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            site.update(auth_data)
+            headers = newapi_site_browser_auth_headers(site)
+            ok_req, raw, error = request_json(
+                url, headers=headers, payload=payload, method=method
+            )
+            if ok_req:
+                return True, raw, None
+            # 密码登录成功但请求失败：继续尝试令牌兜底
+    access_token = str(site.get("access_token") or "").strip()
+    access_user_id = str(site.get("access_user_id") or "").strip()
+    if access_token and access_user_id:
+        headers = newapi_auth_headers(access_token, access_user_id)
+        proof = str(site.get("security_proof") or "").strip()
+        if proof:
+            headers["X-Security-Proof"] = proof
+        ok_req, raw, error = request_json(
+            url, headers=headers, payload=payload, method=method
+        )
+        if ok_req:
+            return True, raw, None
+    return False, {}, None
+
 def newapi_browser_request(
     site: Dict[str, Any],
     method: str,
@@ -1590,6 +1647,12 @@ def newapi_browser_request(
             site.update(latest)
         ready, ready_error = ensure_newapi_site_browser_session(site)
         if not ready:
+            # 浏览器会话不可用：回退到站点保留的凭证（密码登录 / 令牌）
+            fallback_ok, fallback_raw, _fallback_error = _newapi_site_fallback_request(
+                site, url, payload, method
+            )
+            if fallback_ok:
+                return True, fallback_raw, None
             return False, {}, ready_error or "登录态已过期，请重新登录"
         headers = newapi_site_browser_auth_headers(site)
         ok, raw, error = request_json(url, headers=headers, payload=payload, method=method)

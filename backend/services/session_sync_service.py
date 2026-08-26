@@ -223,17 +223,98 @@ def create_site_session_sync_request(
     return _create_session_sync_request(int(site_id), site)
 
 
+def _share_newapi_site_browser_session(
+    site_id: int, site: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """NewAPI 版同注册域登录态复用。
+
+    与 sub2api 分支同理：同域兄弟站点（如 www / api 双域部署）已同步
+    成功的浏览器登录态（access_token + refresh cookie + session id）是
+    账号级凭据，对目标域同样有效。复用前先对目标站点自己的 base_url
+    做一次真实校验（读账户 + 分组），校验不过就继续找下一个候选，
+    全部不行则回退到正常扩展同步。
+    """
+    # 懒加载避免 import 环（见模块顶部注释）
+    from backend.integrations.newapi import (
+        persist_newapi_site_browser_session,
+        validate_newapi_site_browser_session,
+    )
+
+    empty = {"shared": False, "source_site_id": None, "source_name": ""}
+    if (
+        not site
+        or str(site.get("auth_mode") or "").strip().lower() != BROWSER_AUTH_MODE
+    ):
+        return empty
+
+    # 自己已有登录态时无需复用；过期由刷新链路兜底
+    own_token = str(site.get("access_token") or "").strip()
+    if site.get("session_sync_status") == "ready" and own_token:
+        return empty
+
+    domain = registered_domain(str(site.get("base_url") or ""))
+    if not domain:
+        return empty
+
+    candidates = db_query_all(
+        """
+        SELECT id, name, base_url, access_token, access_user_id,
+               browser_cookie, browser_refresh_cookie, browser_session_id,
+               browser_access_expires_at
+        FROM sites
+        WHERE id != ?
+          AND platform = 'newapi'
+          AND auth_mode = 'browser'
+          AND session_sync_status = 'ready'
+          AND access_token IS NOT NULL AND access_token != ''
+        """,
+        (int(site_id),),
+    )
+    for row in candidates:
+        if registered_domain(str(row.get("base_url") or "")) != domain:
+            continue
+        session = {
+            "access_token": str(row.get("access_token") or "").strip(),
+            "access_user_id": str(row.get("access_user_id") or "").strip(),
+            "browser_cookie": str(row.get("browser_cookie") or "").strip(),
+            "browser_refresh_cookie": str(
+                row.get("browser_refresh_cookie") or ""
+            ).strip(),
+            "browser_session_id": str(
+                row.get("browser_session_id") or ""
+            ).strip(),
+            "browser_access_expires_at": row.get(
+                "browser_access_expires_at"
+            ) or 0,
+        }
+        if not session["access_token"] or not session["access_user_id"]:
+            continue
+        ok, _validated, _error = validate_newapi_site_browser_session(
+            str(site.get("base_url") or ""), session
+        )
+        if not ok:
+            continue
+        persist_newapi_site_browser_session(
+            int(site_id), session, preserve_login_credentials=True
+        )
+        return {
+            "shared": True,
+            "source_site_id": int(row["id"]),
+            "source_name": str(row.get("name") or ""),
+        }
+    return empty
+
+
 def share_site_browser_session(site_id: int) -> Dict[str, Any]:
     """尝试把同注册域兄弟站点的浏览器登录态复用到本站点。
 
-    场景：同一家 sub2api 服务部署了 www.xxx.com（控制台，有登录 cookie）
+    场景：同一家服务部署了 www.xxx.com（控制台，有登录 cookie）
     和 api.xxx.com（API 域，无登录页）。同一账号在 www 域同步成功后，
-    api 域的站点直接复用这份 token（token 是账号级 JWT，对 API 域同样
-    有效），不需要扩展去一个没有登录态的域上再找一遍 cookie。
+    api 域的站点直接复用这份登录态（账号级凭据对 API 域同样有效），
+    不需要扩展去一个没有登录态的域上再找一遍 cookie。
+    sub2api 与 NewAPI 平台均支持。
     """
-    from backend.integrations.sub2api import validate_sub2api_browser_session
-
-    empty = {"shared": False, "source_site_id": None, "source_name": ""}
+    platform = ""
     site = db_query_one(
         """
         SELECT id, name, base_url, platform, auth_mode, session_sync_status,
@@ -242,11 +323,17 @@ def share_site_browser_session(site_id: int) -> Dict[str, Any]:
         """,
         (int(site_id),),
     )
-    if (
-        not site
-        or str(site.get("platform") or "").strip().lower() != "sub2api"
-        or str(site.get("auth_mode") or "").strip().lower() != BROWSER_AUTH_MODE
-    ):
+    if site:
+        platform = str(site.get("platform") or "").strip().lower()
+    if platform == "newapi":
+        return _share_newapi_site_browser_session(site_id, site)
+    if platform != "sub2api":
+        return {"shared": False, "source_site_id": None, "source_name": ""}
+
+    from backend.integrations.sub2api import validate_sub2api_browser_session
+
+    empty = {"shared": False, "source_site_id": None, "source_name": ""}
+    if str(site.get("auth_mode") or "").strip().lower() != BROWSER_AUTH_MODE:
         return empty
 
     # 自己已有有效登录态时无需复用
@@ -466,15 +553,15 @@ def finish_session_sync_request(
         # Atomicity guarantee: a newer request may have been claimed while
         # this one was in flight.  Only touch the site if this request is
         # still the active one for the target.
-        if row.get("site_id") is not None and platform == "sub2api":
+        if row.get("site_id") is not None and platform in ("sub2api", "newapi"):
             active = db_query_one(
                 """
                 SELECT id FROM browser_session_sync_requests
                 WHERE site_id = ? AND admin_site_id IS NULL
-                  AND platform = 'sub2api'
+                  AND platform = ?
                   AND target_origin = ? AND status = 'validating'
                 """,
-                (int(row["site_id"]), target_origin),
+                (int(row["site_id"]), platform, target_origin),
             )
             if active and str(active.get("id") or "") != request_id_value:
                 return True
@@ -485,7 +572,7 @@ def finish_session_sync_request(
                     session_synced_at = CASE WHEN ? = 'ready' THEN ? ELSE session_synced_at END,
                     updated_at = ?
                 WHERE s.id = ?
-                  AND s.platform = 'sub2api'
+                  AND s.platform = ?
                   AND s.auth_mode = 'browser'
                   AND EXISTS (
                       SELECT 1
@@ -493,9 +580,10 @@ def finish_session_sync_request(
                       WHERE r.id = ?
                         AND r.site_id = s.id
                         AND r.admin_site_id IS NULL
-                        AND r.platform = 'sub2api'
+                        AND r.platform = ?
                         AND r.target_origin = ?
-                        AND r.status IN ('validating', 'pending', 'ready', 'failed', 'expired')
+                        AND r.status IN ('validating', 'pending', 'ready', 'failed', 'expired',
+                                         'no_session', 'extension_unavailable', 'permission_required')
                   )
                 """,
                 (
@@ -505,7 +593,9 @@ def finish_session_sync_request(
                     now,
                     now,
                     int(row["site_id"]),
+                    platform,
                     request_id_value,
+                    platform,
                     target_origin,
                 ),
             )
@@ -704,7 +794,9 @@ def complete_session_sync_request(
                 if sync_error:
                     applied, apply_error = False, sync_error
             if applied:
-                persist_newapi_site_browser_session(int(site_id), session)
+                persist_newapi_site_browser_session(
+                    int(site_id), session, preserve_login_credentials=True
+                )
     else:
         finish_session_sync_request(
             str(request_id), "failed", "UNSUPPORTED_TARGET", "当前同步目标暂不支持"

@@ -288,14 +288,19 @@ const sections = computed(() => {
                   <span v-else class="text-[11.5px] text-ink-faint">无</span>
                   <template v-if="site.platform === 'newapi'">
                     <Badge
-                      v-if="site.access_user_id && site.has_access_token"
+                      v-if="site.auth_mode === 'browser'"
+                      :tone="sessionSyncTone(site.session_sync_status)"
+                      >{{ sessionSyncLabel(site.session_sync_status) }}</Badge
+                    >
+                    <Badge
+                      v-else-if="site.access_user_id && site.has_access_token"
                       tone="info"
                       >用户登录</Badge
                     >
                     <Badge
                       v-else
                       tone="warning"
-                      title="NewAPI 不使用浏览器同步，请在「更多 → 编辑渠道」中配置普通用户系统访问令牌和用户 ID"
+                      title="请在「更多 → 编辑渠道」中开启认证增强，支持浏览器登录态同步、系统访问令牌或账号密码登录"
                       >未登录，需要配置登录</Badge
                     >
                   </template>
@@ -333,7 +338,6 @@ const sections = computed(() => {
                   <Button
                     v-if="
                       truthy(site.enabled) &&
-                      site.platform === 'sub2api' &&
                       site.auth_mode === 'browser' &&
                       isSessionSyncRetryable(site.session_sync_status)
                     "

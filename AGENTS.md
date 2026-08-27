@@ -18,7 +18,7 @@
 |----|------|
 | 后端 | `backend/`（FastAPI + Uvicorn；数据访问直连 **MySQL**，驱动 PyMySQL，连接池复用 SQLAlchemy Engine）+ 根目录 `app.py`（兼容启动入口） |
 | 前端 | `apps/web`（Vue 3 + Vite 7 + Tailwind 4 + vue-router，priceai-ui 风格；不再使用 React） |
-| 数据 | **MySQL**（`DB_*` 走 `.env`；运行期数据全部在 MySQL，SQLite 仅作迁移源） |
+| 数据 | **MySQL**（`DB_*` 走 `.env`，运行期数据全部在 MySQL） |
 | 部署 | `python3 app.py` / Docker Compose（自带 `mysql:8.4`） |
 
 ---
@@ -27,7 +27,7 @@
 
 1. 对用户默认**简体中文**。
 2. UI 必须遵循 skill **`priceai-ui`**（`.agents/skills/priceai-ui/SKILL.md`）。
-3. **兼容现有 MySQL 数据**，禁止未确认清空用户数据；`data/` 里的旧 SQLite 与备份整体 gitignore。
+3. **兼容现有 MySQL 数据**，禁止未确认清空用户数据。
 4. 密钥（DB 密码、token、webhook、cookie、refresh_token）只放本地 `.env` 或 MySQL 表，勿写入源码 / git / 对话明文；UI 展示一律走 `mask_channel_key` / `mask_newapi_user_token_key`。
 5. 推送通道：邮件 + 企业微信；不主动复活 QQ 推送。
 6. **优先用成熟三方库，不手写基础设施**：凡是成熟库已解决、且与单进程架构匹配的通用问题（连接池 / 定时调度 / .env 解析 / HTTP 客户端 / TTL 缓存等），一律用现成包，不要自己造轮子。后端依赖白名单：
@@ -77,10 +77,8 @@ upstream/
 │   ├── src/                     # 入口、路由、页面、组件、composables、api 客户端、类型、token
 │   ├── vite.config.ts           # 别名 @ → src，/api 代理到 8000
 │   └── package.json
-├── data/                        # 旧 SQLite 与迁移残留（gitignore）
 ├── docs/                        # 产品说明、浏览器同步剩余工作
 ├── design/                      # PriceAI 风格调研
-├── scripts/migrate_sqlite_to_mysql.py
 ├── tests/                       # 已有测试（默认不再新增）
 ├── .agents/skills/priceai-ui    # 前端 UI 规范 skill
 ├── AGENTS.md                    # 本文件
@@ -168,7 +166,6 @@ cd apps/web && npm run build && cd ../.. && python3 app.py
 
 ## 不要做
 
-- 不要丢掉用户 `data/app.db`（仅迁移源，整体 gitignore）
 - 不要改成深色 Linear 风却声称 PriceAI
 - 不要为「好看」删监控字段与检测能力
 - **依赖纪律**：白名单外新增后端依赖必须先登记 AGENTS.md 并说明理由；禁止引入 Celery / RQ / Redis 队列、Django / Flask、Tortoise / 异步 ORM；SQLAlchemy 仅限连接池用途，禁写 ORM 模型

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import threading
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -113,14 +114,26 @@ _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 def _is_connection_reset(exc: BaseException) -> bool:
+    """连接被上游掐断（应回退 curl_cffi 兼容传输）。
+
+    Cloudflare 类前置对 stdlib TLS 指纹的拦截有两种表现：
+    1. 直接 RST 连接 → ConnectionResetError / "connection reset by peer"；
+    2. 握手或读阶段静默断开 → ssl.SSLEOFError
+       （str 即 "EOF occurred in violation of protocol (_ssl.c:1129)"）。
+    两者同源，均回退 libcurl TLS 栈重试。
+    """
     seen = set()
     current: Optional[BaseException] = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, ConnectionResetError):
+        if isinstance(current, (ConnectionResetError, ssl.SSLError)):
             return True
         text = str(current).lower()
-        if "connection reset by peer" in text or "econnreset" in text:
+        if (
+            "connection reset by peer" in text
+            or "econnreset" in text
+            or "eof occurred in violation of protocol" in text
+        ):
             return True
         current = current.__cause__ or current.__context__
     return False
@@ -133,7 +146,7 @@ def _fetch_with_curl(
     data: Optional[bytes],
     timeout: float,
 ) -> UpstreamResponse:
-    """连接被重置时的兼容传输：curl_cffi 走 libcurl TLS 栈。"""
+    """连接被重置 / TLS 被指纹拦截掐断时的兼容传输：curl_cffi 走 libcurl TLS 栈。"""
     kwargs: Dict[str, Any] = {
         "headers": dict(headers),
         "data": data if data is not None else b"",

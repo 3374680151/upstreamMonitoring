@@ -190,9 +190,9 @@ async function save() {
   msg.value = "";
   try {
     await persistAdminSite(payload);
-    // NewAPI 添加时填了 2FA 码：保存后立即验证并触发全量渠道 key 刷新，
-    // 让渠道页直接展示完整 key + 倍率（进度由渠道页轮询展示）。
-    if (payload.platform === "newapi" && securityCode.value.trim() && !props.site) {
+    // NewAPI 填了 2FA 码（添加或编辑均生效）：保存后立即验证并触发全量渠道
+    // key 刷新，让渠道页直接展示完整 key + 倍率（进度由渠道页轮询展示）。
+    if (payload.platform === "newapi" && securityCode.value.trim()) {
       const targetId = verifyTargetId.value;
       if (targetId == null) throw new Error("后端未返回新主站 ID");
       msg.value = "2FA 验证中，正在启动全量渠道 key 刷新...";
@@ -212,10 +212,8 @@ async function save() {
   } catch (error) {
     const message = errorText(error, "保存失败");
     const siteSaved = !!props.site || createdSiteId.value != null;
-    msg.value = siteSaved && !props.site
-      ? `主站已保存，但 2FA 验证未通过：${message}`
-      : message;
-    toast.error(siteSaved && !props.site ? `2FA 验证失败：${message}` : `保存主站失败：${message}`);
+    msg.value = siteSaved ? `主站已保存，但 2FA 验证未通过：${message}` : message;
+    toast.error(siteSaved ? `2FA 验证失败：${message}` : `保存主站失败：${message}`);
   } finally {
     busy.value = false;
   }
@@ -288,7 +286,7 @@ async function verifyKeyAccess() {
         </div>
 
         <div class="border-t border-line-soft pt-4">
-          <Field label="主站 2FA 验证码" :help="editing ? '用于 NewAPI 渠道 key 安全验证' : '保存时将自动验证，并触发全量渠道 key 刷新，完成后渠道页直接展示完整倍率'">
+          <Field label="主站 2FA 验证码" help="保存时将自动验证并触发全量渠道 key 刷新，也可直接点击右侧按钮验证">
             <div class="flex flex-wrap gap-2">
               <Input v-model="securityCode" class="min-w-0 flex-1" inputmode="numeric" autocomplete="one-time-code" :placeholder="site?.has_security_proof ? '已验证，可重新验证' : '当前验证码'" />
               <Button variant="secondary" :loading="verifyingSecurity" :disabled="busy || testing || verifyTargetId == null" @click="verifyKeyAccess">

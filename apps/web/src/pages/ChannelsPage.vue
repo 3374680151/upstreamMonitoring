@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { Cloud, KeyRound, Percent, RefreshCw } from "lucide-vue-next";
 import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
+import AdminTwoFaDialog from "@/components/AdminTwoFaDialog.vue";
 import Badge from "@/components/Badge.vue";
 import ChannelPriorityDialog from "@/components/ChannelPriorityDialog.vue";
 import PageHeader from "@/components/PageHeader.vue";
@@ -73,7 +74,7 @@ function bindingStatusLabel(binding?: ChannelUpstreamBinding): string {
   if (status === "refresh_error" || status === "error") return "刷新失败";
   if (status === "needs_key_verification") return "需要安全验证";
   if (status === "missing_key") return "缺少渠道 key";
-  if (status === "key_not_found") return "key 未匹配";
+  if (status === "key_not_found") return "上游分组已失效";
   if (status === "no_group") return "未配置分组";
   if (status === "inferred") return "分组名匹配";
   if (status === "inferred_partial") return "分组名部分匹配";
@@ -97,6 +98,9 @@ function staleMatchPrefix(binding?: ChannelUpstreamBinding): string {
   }
   if (binding?.match_status === "missing_key") {
     return "缺少渠道 key，显示上次成功倍率";
+  }
+  if (binding?.match_status === "key_not_found") {
+    return "上游分组已失效，显示上次成功倍率";
   }
   return "刷新失败，显示上次成功倍率";
 }
@@ -184,6 +188,12 @@ const isSub2Api = computed(() => currentAdminSite.value?.platform === "sub2api")
 const currentKeyRefresh = computed(() => currentAdminSite.value?.key_refresh || null);
 const currentRatioRefresh = computed(() => currentAdminSite.value?.ratio_refresh || null);
 const ratioRefreshTriggering = ref(false);
+
+// ---- 主站 2FA 就地验证弹窗（proof 缺失或批次暂停时，刷新动作先补验证再续跑）----
+const twoFaDialogOpen = ref(false);
+const twoFaIntent = ref<"key" | "ratio">("key");
+/** 验证通过后要重放的待办动作；非响应式，与触发时的上下文绑定 */
+let pendingTwoFaAction: (() => Promise<void>) | null = null;
 
 const keyRefreshStatusText = computed(() => {
   const progress = currentKeyRefresh.value;
@@ -429,6 +439,10 @@ async function pollKeyRefreshProgress() {
 
 async function triggerFullKeyRefresh() {
   if (siteId.value == null || isSub2Api.value) return;
+  if (securityVerifyNeeded("key")) {
+    requestSecurityVerify("key", triggerFullKeyRefresh);
+    return;
+  }
   keyRefreshTriggering.value = true;
   actionError.value = "";
   try {
@@ -449,6 +463,10 @@ async function triggerFullKeyRefresh() {
 
 async function triggerFullRatioRefresh() {
   if (siteId.value == null) return;
+  if (securityVerifyNeeded("ratio")) {
+    requestSecurityVerify("ratio", triggerFullRatioRefresh);
+    return;
+  }
   ratioRefreshTriggering.value = true;
   actionError.value = "";
   try {
@@ -465,6 +483,46 @@ async function triggerFullRatioRefresh() {
   } finally {
     ratioRefreshTriggering.value = false;
   }
+}
+
+// ---- 主站 2FA 就地验证：入口拦截 + 验证后续跑 ----
+/** NewAPI 主站 proof 缺失（从未验证/已失效）或对应批次已暂停时，先补 2FA 再刷新 */
+function securityVerifyNeeded(intent: "key" | "ratio"): boolean {
+  const site = currentAdminSite.value;
+  if (!site || site.platform !== "newapi") return false;
+  const progress = intent === "key" ? currentKeyRefresh.value : currentRatioRefresh.value;
+  if (progress?.status === "paused") return true;
+  return !site.has_security_proof;
+}
+
+function requestSecurityVerify(intent: "key" | "ratio", resume: () => Promise<void>) {
+  twoFaIntent.value = intent;
+  pendingTwoFaAction = resume;
+  twoFaDialogOpen.value = true;
+}
+
+async function submitAdminTwoFa(code: string) {
+  const targetId = siteId.value;
+  if (targetId == null) throw new Error("请先选择主站");
+  const result = await api.verifyAdminSiteKeyAccess(targetId, code);
+  if (!result.success) {
+    throw new Error(result.message || "主站安全验证失败");
+  }
+  toast.success("主站 2FA 验证通过");
+  // 后端验证成功即自动启动/续跑全量 key 批次；刷新主站列表接上最新 proof 与进度，
+  // 再按触发时的原始动作续跑（工具栏批次 or 单渠道操作）。
+  await loadAdminSites();
+  ensureKeyRefreshPolling();
+  const resume = pendingTwoFaAction;
+  pendingTwoFaAction = null;
+  if (resume) {
+    await resume();
+  }
+}
+
+function onTwoFaDialogClose() {
+  twoFaDialogOpen.value = false;
+  pendingTwoFaAction = null;
 }
 
 async function refreshChannelMatches(
@@ -626,6 +684,10 @@ async function syncAllMainSites() {
 
 async function matchUpstream(ch: Channel) {
   if (siteId.value == null) return;
+  if (securityVerifyNeeded("ratio")) {
+    requestSecurityVerify("ratio", () => matchUpstream(ch));
+    return;
+  }
   matching.value = new Set(matching.value).add(ch.id);
   actionError.value = "";
   try {
@@ -712,6 +774,10 @@ async function matchUpstream(ch: Channel) {
 
 async function refreshChannelKey(ch: Channel) {
   if (siteId.value == null || refreshingKeyIds.value.size > 0) return;
+  if (securityVerifyNeeded("key")) {
+    requestSecurityVerify("key", () => refreshChannelKey(ch));
+    return;
+  }
   refreshingKeyIds.value = new Set([ch.id]);
   actionError.value = "";
   try {
@@ -1446,6 +1512,14 @@ watch(
       @close="adminFormOpen = false"
       :on-saved="loadAdminSites"
       :on-verified="onAdminVerified"
+    />
+
+    <AdminTwoFaDialog
+      :open="twoFaDialogOpen"
+      :site-name="currentAdminSite?.name"
+      :intent="twoFaIntent"
+      :on-submit="submitAdminTwoFa"
+      @close="onTwoFaDialogClose"
     />
   </div>
 </template>

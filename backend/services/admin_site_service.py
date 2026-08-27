@@ -225,13 +225,16 @@ def refresh_admin_site_browser_session(
 
 
 def ensure_admin_site_browser_session(
-    site: Dict[str, Any], verification_code: str = ""
+    site: Dict[str, Any], verification_code: str = "", force: bool = False
 ) -> Tuple[bool, Optional[str]]:
     """Ensure the admin site has a dashboard session usable by /api/verify.
 
     NewAPI deliberately rejects PAT/system-token authentication for secure
     verification. The normal dashboard login produces a session-bound access
     token, which is what protected channel-key reads require.
+
+    ``force=True`` 时忽略任何已存会话、用 ``verification_code`` 重新走密码 + 2FA
+    登录（用于显式做 key 读取安全验证），避免旧会话（尤其 NewAPI 未返回过期时间时）吞掉动态码。
     """
     now = int(time.time())
     access_token = str(site.get("browser_access_token") or "").strip()
@@ -243,6 +246,14 @@ def ensure_admin_site_browser_session(
     base = normalize_base_url(str(site.get("base_url") or ""))
     refresh_cookie = str(site.get("browser_refresh_cookie") or "").strip()
     has_existing_session = bool(access_token and session_id)
+
+    # 显式验证 key 读取：必须忽略旧会话、用本次 2FA 码重新登录。
+    # 否则“过期时间未知(0)即复用”的分支会直接吞掉动态码，导致 /api/verify
+    # 跑在“未经过 2FA 的会话”上而报“2FA 未认证”。
+    if force:
+        has_existing_session = False
+        access_token = ""
+        session_id = ""
 
     # 部分 NewAPI 版本不返回 access_expires_at。此时 0 代表“未知”，不是“已过期”；
     # 只要已有 access token + session，就应继续复用，避免第二次读取又走密码登录，
@@ -415,7 +426,8 @@ def verify_admin_site_channel_key_access(
     code = str(code or "").strip()
     if not code:
         return False, "请输入主站 2FA 验证码"
-    browser_ok, browser_error = ensure_admin_site_browser_session(site, code)
+    # 必须强制用本次动态码重新登录，不能复用可能未经过 2FA 的旧会话。
+    browser_ok, browser_error = ensure_admin_site_browser_session(site, code, force=True)
     if not browser_ok:
         return False, browser_error or "主站网页登录失败"
     base = normalize_base_url(site["base_url"])

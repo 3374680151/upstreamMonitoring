@@ -9,7 +9,12 @@ import {
   type PerfSummaryModel,
   type PricingResponse,
 } from "@/lib/perf";
-import type { ChannelMatchedGroup, GroupItem, Site } from "@/lib/types";
+import type {
+  ChannelMatchedGroup,
+  GroupItem,
+  ModelHealth,
+  Site,
+} from "@/lib/types";
 
 /**
  * 渠道「当前 key 上游倍率」的 hover 浮层：
@@ -35,6 +40,8 @@ const popoverEl = ref<HTMLElement | null>(null);
 const style = ref<Record<string, string>>({});
 const pricing = shallowRef<PricingResponse | null>(null);
 const perfModels = shallowRef<PerfSummaryModel[]>([]);
+/** sub2api 站点：models_by_group 模型健康缓存（与倍率弹窗同源） */
+const models = shallowRef<Record<string, ModelHealth[]> | null>(null);
 const detailLoading = ref(false);
 const detailError = ref("");
 let loadedSiteId: number | null = null;
@@ -76,12 +83,6 @@ const perfMap = computed(() =>
 );
 
 function groupSummary(name: string) {
-  const models = (pricing.value?.data || []).filter((model) =>
-    modelInGroup(model, name),
-  );
-  const measured = models
-    .map((model) => perfMap.value.get(model.model_name))
-    .filter((model): model is PerfSummaryModel => Boolean(model));
   const average = (values: Array<number | undefined>): number | null => {
     const valid: number[] = values.flatMap((value) =>
       Number.isFinite(Number(value)) ? [Number(value)] : [],
@@ -90,11 +91,37 @@ function groupSummary(name: string) {
       ? valid.reduce((sum, value) => sum + value, 0) / valid.length
       : null;
   };
+  if (props.site?.platform !== "newapi") {
+    // sub2api：与倍率弹窗 summarizeLegacyGroup 同源（模型健康缓存）
+    const list = models.value?.[name] || [];
+    return {
+      modelCount: list.length,
+      monitoredCount: list.filter(
+        (model) => model.status && model.status !== "configured",
+      ).length,
+      successRate: average(
+        list.map((model) => model.availability_7d ?? undefined),
+      ),
+      avgLatencyMs: average(
+        list.map(
+          (model) => model.latency_ms ?? model.ping_latency_ms ?? undefined,
+        ),
+      ),
+      avgTps: null,
+      sampleCount: null,
+    };
+  }
+  const catalogModels = (pricing.value?.data || []).filter((model) =>
+    modelInGroup(model, name),
+  );
+  const measured = catalogModels
+    .map((model) => perfMap.value.get(model.model_name))
+    .filter((model): model is PerfSummaryModel => Boolean(model));
   const samples = measured
     .map((model) => Number(model.request_count))
     .filter((value) => Number.isFinite(value));
   return {
-    modelCount: models.length,
+    modelCount: catalogModels.length,
     monitoredCount: measured.length,
     successRate: average(measured.map((model) => model.success_rate)),
     avgLatencyMs: average(measured.map((model) => model.avg_latency_ms)),
@@ -173,35 +200,41 @@ function positionPopover(): void {
 
 async function loadDetails(): Promise<void> {
   const site = props.site;
-  if (
-    !site ||
-    site.platform !== "newapi" ||
-    loadedSiteId === site.id ||
-    detailLoading.value
-  ) {
+  if (!site || loadedSiteId === site.id || detailLoading.value) {
     return;
   }
   detailLoading.value = true;
   detailError.value = "";
   pricing.value = null;
   perfModels.value = [];
+  models.value = null;
   try {
-    const [pricingResult, perfResult] = await Promise.allSettled([
-      api.sitePricing(site.id),
-      api.sitePerfSummary(site.id, 1),
-    ]);
-    if (loadedSiteId === site.id || props.site?.id !== site.id) return;
-    if (pricingResult.status === "fulfilled") {
-      pricing.value = pricingResult.value;
+    if (site.platform === "newapi") {
+      const [pricingResult, perfResult] = await Promise.allSettled([
+        api.sitePricing(site.id),
+        api.sitePerfSummary(site.id, 1),
+      ]);
+      if (props.site?.id !== site.id) return;
+      if (pricingResult.status === "fulfilled") {
+        pricing.value = pricingResult.value;
+        loadedSiteId = site.id;
+      } else {
+        detailError.value = "模型清单读取失败";
+      }
+      if (perfResult.status === "fulfilled") {
+        perfModels.value = perfResult.value.data?.models || [];
+      } else if (!detailError.value) {
+        detailError.value = "模型状态读取失败";
+      }
     } else {
-      detailError.value = "模型清单读取失败";
+      // sub2api：与倍率弹窗同源，读站点模型健康缓存（availability/延迟）
+      const resp = await api.siteModels(site.id);
+      if (props.site?.id !== site.id) return;
+      models.value = resp.models_by_group || {};
+      loadedSiteId = site.id;
     }
-    if (perfResult.status === "fulfilled") {
-      perfModels.value = perfResult.value.data?.models || [];
-    } else if (!detailError.value) {
-      detailError.value = "模型状态读取失败";
-    }
-    if (pricingResult.status === "fulfilled") loadedSiteId = site.id;
+  } catch {
+    detailError.value = "模型状态读取失败";
   } finally {
     detailLoading.value = false;
   }
@@ -287,7 +320,7 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-2 py-2">
                   <GroupSummaryBar
-                    v-if="pricing"
+                    v-if="pricing || models"
                     :summary="groupSummary(row.name)"
                     :collapsed="false"
                   />

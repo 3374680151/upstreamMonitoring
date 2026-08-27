@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Upstream 登录态同步",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "按需将已登录上游站点的会话安全同步到本机 Upstream。",
   "permissions": ["tabs", "scripting", "storage", "cookies"],
   "host_permissions": [

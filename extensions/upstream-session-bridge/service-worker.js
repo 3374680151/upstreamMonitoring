@@ -61,10 +61,20 @@ function readNewApiLegacySessionInPage() {
 }
 
 async function verifyNewApiCookieSessionInPage() {
+  // 众多 NewAPI fork 的前端拦截器会给每个请求加 New-Api-User 头
+  // （值取 localStorage.uid），部分后端据此校验会话归属；
+  // 探测请求必须完全模仿前端行为，否则登录着也会被判无会话。
+  const requestHeaders = { Accept: "application/json" };
+  try {
+    const storedUid = String(localStorage.getItem("uid") || "").trim();
+    if (storedUid) requestHeaders["New-Api-User"] = storedUid;
+  } catch {
+    // localStorage 不可用时退化为纯 cookie 探测
+  }
   try {
     const accountResponse = await fetch("/api/user/self", {
       credentials: "include",
-      headers: { Accept: "application/json" },
+      headers: requestHeaders,
       cache: "no-store",
     });
     const accountPayload = await accountResponse.json();
@@ -75,7 +85,7 @@ async function verifyNewApiCookieSessionInPage() {
     for (const path of ["/api/user/self/groups", "/api/user/groups"]) {
       const groupsResponse = await fetch(path, {
         credentials: "include",
-        headers: { Accept: "application/json" },
+        headers: requestHeaders,
         cache: "no-store",
       });
       let groupsPayload = null;

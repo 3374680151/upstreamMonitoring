@@ -97,6 +97,13 @@ MAIN_CHANNEL_KEY_CACHE: TTLCache = TTLCache(
     maxsize=1024, ttl=MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS
 )
 
+# 主站「全量渠道 key 刷新批次」：一次性后台任务（手动触发 / 2FA 验证后触发）。
+# trigger 端点写入条目并派生单次 daemon 线程逐渠道刷新（受上面的串行 + 2s 最小
+# 间隔 + 429 冷却保护）；进度条目由 /api/admin/sites 序列化轮询读取。键为
+# admin_site_id。进程重启即失效，重新触发即可。
+ADMIN_KEY_REFRESH_BATCH_LOCK = threading.RLock()
+ADMIN_KEY_REFRESH_BATCHES: Dict[int, Dict[str, Any]] = {}
+
 
 # ---------------------------------------------------------------------------
 # 浏览器会话锁（管理站 / NewAPI 普通站 / sub2api 管理端）

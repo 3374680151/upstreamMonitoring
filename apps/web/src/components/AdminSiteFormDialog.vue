@@ -50,6 +50,10 @@ const testing = ref(false);
 const securityCode = ref("");
 const verifyingSecurity = ref(false);
 const liveSite = shallowRef<AdminSite | null>(props.site);
+/** 添加模式：保存成功后记住新主站 ID，供 2FA 验证直接使用 */
+const createdSiteId = ref<number | null>(null);
+/** 2FA 验证目标：编辑站点优先，否则用本次新建的主站 */
+const verifyTargetId = computed<number | null>(() => props.site?.id ?? createdSiteId.value);
 
 watch(
   () => [props.open, props.site?.id] as const,
@@ -58,6 +62,7 @@ watch(
     liveSite.value = props.site;
     msg.value = "";
     securityCode.value = "";
+    createdSiteId.value = props.site?.id ?? null;
     form.value = props.site
       ? {
           platform: props.site.platform || "newapi",
@@ -166,6 +171,7 @@ async function persistAdminSite(payload: AdminSiteFormPayload): Promise<void> {
   }
   const created = await api.createAdminSite(payload);
   if (!created.id) throw new Error("后端未返回新主站 ID");
+  createdSiteId.value = created.id;
   await props.onSaved();
 }
 
@@ -184,33 +190,54 @@ async function save() {
   msg.value = "";
   try {
     await persistAdminSite(payload);
+    // NewAPI 添加时填了 2FA 码：保存后立即验证并触发全量渠道 key 刷新，
+    // 让渠道页直接展示完整 key + 倍率（进度由渠道页轮询展示）。
+    if (payload.platform === "newapi" && securityCode.value.trim() && !props.site) {
+      const targetId = verifyTargetId.value;
+      if (targetId == null) throw new Error("后端未返回新主站 ID");
+      msg.value = "2FA 验证中，正在启动全量渠道 key 刷新...";
+      const result = await api.verifyAdminSiteKeyAccess(targetId, securityCode.value.trim());
+      if (!result.success) {
+        // 站点已保存；保留弹窗让用户修正验证码后重试（或手动关闭）
+        throw new Error(result.message || "主站安全验证失败");
+      }
+      securityCode.value = "";
+      toast.success("2FA 验证通过，已启动全量渠道 key 刷新");
+      // 批次刚在 verify 里启动：再刷一次主站列表，让渠道页接上进度轮询
+      await props.onSaved();
+      await props.onVerified?.();
+    }
     toast.success(props.site ? `主站「${payload.name}」已保存` : `主站「${payload.name}」已添加`);
     emit("close");
   } catch (error) {
     const message = errorText(error, "保存失败");
-    msg.value = message;
-    toast.error(`保存主站失败：${message}`);
+    const siteSaved = !!props.site || createdSiteId.value != null;
+    msg.value = siteSaved && !props.site
+      ? `主站已保存，但 2FA 验证未通过：${message}`
+      : message;
+    toast.error(siteSaved && !props.site ? `2FA 验证失败：${message}` : `保存主站失败：${message}`);
   } finally {
     busy.value = false;
   }
 }
 
 async function verifyKeyAccess() {
-  const site = props.site;
-  if (!site || site.platform !== "newapi") return;
+  const targetId = verifyTargetId.value;
+  const platform = form.value.platform;
+  if (targetId == null || platform !== "newapi") return;
   if (!securityCode.value.trim()) { msg.value = "请输入主站当前 2FA 验证码"; return; }
   verifyingSecurity.value = true;
   msg.value = "验证主站 key 读取权限中...";
   try {
-    const result = await api.verifyAdminSiteKeyAccess(site.id, securityCode.value.trim());
+    const result = await api.verifyAdminSiteKeyAccess(targetId, securityCode.value.trim());
     if (!result.success) throw new Error(result.message || "主站安全验证失败");
     securityCode.value = "";
     msg.value = "主站 key 读取权限已验证";
-    toast.success("主站 key 读取权限已验证");
+    toast.success("主站 key 读取权限已验证，已启动全量渠道 key 刷新");
     await props.onSaved();
     await props.onVerified?.();
     const response = await api.adminSites();
-    const latest = response.data?.find((item) => item.id === site.id);
+    const latest = response.data?.find((item) => item.id === targetId);
     if (latest) liveSite.value = latest;
   } catch (error) {
     const message = errorText(error, "主站安全验证失败");
@@ -261,10 +288,10 @@ async function verifyKeyAccess() {
         </div>
 
         <div class="border-t border-line-soft pt-4">
-          <Field label="主站 2FA 验证码" help="用于 NewAPI 渠道 key 安全验证">
+          <Field label="主站 2FA 验证码" :help="editing ? '用于 NewAPI 渠道 key 安全验证' : '保存时将自动验证，并触发全量渠道 key 刷新，完成后渠道页直接展示完整倍率'">
             <div class="flex flex-wrap gap-2">
               <Input v-model="securityCode" class="min-w-0 flex-1" inputmode="numeric" autocomplete="one-time-code" :placeholder="site?.has_security_proof ? '已验证，可重新验证' : '当前验证码'" />
-              <Button variant="secondary" :loading="verifyingSecurity" :disabled="busy || testing || !site" @click="verifyKeyAccess">
+              <Button variant="secondary" :loading="verifyingSecurity" :disabled="busy || testing || verifyTargetId == null" @click="verifyKeyAccess">
                 验证 key 读取
               </Button>
             </div>

@@ -457,47 +457,36 @@ def verify_admin_site_channel_key_access(
     refreshed_site = db_query_one(
         "SELECT * FROM admin_sites WHERE id = ?", (admin_site_id,)
     )
-    from backend.services.sync_service import refresh_next_admin_site_channel_key
+    # 2FA 验证通过即触发全量渠道 key 刷新批次（后台逐渠道执行），
+    # 不再同步刷新单个 key——完整进度经 /api/admin/sites 的
+    # key_refresh 字段轮询展示。
+    from backend.services.sync_service import trigger_admin_site_full_key_refresh
 
-    refresh_result = refresh_next_admin_site_channel_key(refreshed_site or site)
-    if not refresh_result.get("success"):
+    trigger_result = trigger_admin_site_full_key_refresh(refreshed_site or site)
+    completed_at = utc_now_iso()
+    if not trigger_result.get("success"):
         db_execute(
             """
             UPDATE admin_sites SET key_sync_last_at = ?, key_sync_last_error = ?,
                 updated_at = ? WHERE id = ?
             """,
             (
-                utc_now_iso(),
-                str(refresh_result.get("message") or "读取渠道 key 失败"),
-                utc_now_iso(),
+                completed_at,
+                str(trigger_result.get("message") or "触发全量渠道 key 刷新失败"),
+                completed_at,
                 admin_site_id,
             ),
         )
         return False, (
-            "2FA 验证已通过，但读取渠道 key 失败："
-            f"{refresh_result.get('message') or '未知错误'}"
+            "2FA 验证已通过，但启动全量渠道 key 刷新失败："
+            f"{trigger_result.get('message') or '未知错误'}"
         )
-    completed_at = utc_now_iso()
-    refreshed_admin = refreshed_site or site
-    if refreshed_admin.get("key_sync_enabled"):
-        interval = max(
-            5,
-            min(1440, int(refreshed_admin.get("key_sync_interval_minutes") or 5)),
-        )
-        next_at = (
-            completed_at
-            if int(refresh_result.get("batch_remaining") or 0) > 0
-            else (app_now() + timedelta(minutes=interval)).isoformat(timespec="seconds")
-        )
-    else:
-        next_at = refreshed_admin.get("key_sync_next_at")
     db_execute(
         """
-        UPDATE admin_sites SET key_sync_last_at = ?, key_sync_next_at = ?,
-            key_sync_last_error = NULL, key_sync_backoff_until = NULL,
+        UPDATE admin_sites SET key_sync_last_at = ?, key_sync_last_error = NULL,
             key_sync_failure_count = 0, updated_at = ? WHERE id = ?
         """,
-        (completed_at, next_at, completed_at, admin_site_id),
+        (completed_at, completed_at, admin_site_id),
     )
     return True, None
 

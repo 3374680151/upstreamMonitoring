@@ -391,6 +391,17 @@ export type ChannelGroupsResponse = {
   message?: string;
 };
 
+/** 全量渠道 key 刷新批次进度（后端进程内存态，/api/admin/sites 轮询返回） */
+export type AdminKeyRefreshProgress = {
+  status: "running" | "paused" | "done" | "failed" | string;
+  total: number;
+  done: number;
+  failed: number;
+  message?: string | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+};
+
 /** 管理站点：统一入口，后端按 NewAPI / sub2api 平台适配。 */
 export type AdminSite = {
   id: number;
@@ -416,6 +427,8 @@ export type AdminSite = {
   key_sync_last_error?: string | null;
   key_sync_backoff_until?: string | null;
   key_sync_failure_count?: number;
+  /** 全量 key 刷新批次进度；无批次时后端不返回该字段 */
+  key_refresh?: AdminKeyRefreshProgress;
   created_at?: string;
   updated_at?: string;
 };

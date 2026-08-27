@@ -15,7 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from backend.core.normalize import _channel_key_is_masked, mask_channel_in_place
 from backend.core.time import utc_now_iso
-from backend.db.connection import db_execute
+from backend.db.connection import db_execute, db_query_all
 from backend.integrations.newapi import (
     aggregate_newapi_channel_candidates,
     batch_channel_operation,
@@ -55,6 +55,10 @@ from backend.services.channel_match_service import (
     get_channel_upstream_binding,
     list_channel_upstream_bindings,
     match_channel_upstream_binding,
+)
+from backend.services.sync_service import (
+    admin_site_key_refresh_progress,
+    trigger_admin_site_full_key_refresh,
 )
 
 
@@ -96,6 +100,11 @@ def _delete_admin_site(admin_site_id: int) -> None:
 @router.get("/admin/sites")
 async def list_admin_sites():
     data = await run_in_threadpool(list_admin_sites_payload)
+    # 全量 key 刷新批次进度（进程内存读，轻量，不进线程池）
+    for item in data:
+        progress = admin_site_key_refresh_progress(int(item["id"]))
+        if progress:
+            item["key_refresh"] = progress
     return JSONResponse({"data": data})
 
 
@@ -498,6 +507,77 @@ async def key_refresh(admin_site_id: int, channel_id: int):
                 else "渠道 key 已保存，但倍率刷新失败"
             ),
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full key refresh (POST /admin/sites/{id}/channels/keys/refresh)
+# ---------------------------------------------------------------------------
+
+@router.post("/admin/sites/{admin_site_id}/channels/keys/refresh")
+async def refresh_all_channel_keys(admin_site_id: int):
+    site, error, status = get_admin_site_or_404(admin_site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if _platform(site) != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "仅 NewAPI 主站支持全量刷新渠道 key"},
+            status_code=405,
+        )
+    result = await run_in_threadpool(trigger_admin_site_full_key_refresh, site)
+    if not result.get("success"):
+        return JSONResponse(
+            {"success": False, "message": result.get("message")}, status_code=400
+        )
+    return JSONResponse(
+        {
+            "success": True,
+            "data": {
+                "already_running": bool(result.get("already_running")),
+                "progress": result.get("progress"),
+            },
+            "message": (
+                "全量 key 刷新已在进行中"
+                if result.get("already_running")
+                else "已启动全量渠道 key 刷新"
+            ),
+        }
+    )
+
+
+@router.post("/admin/sites/keys/refresh-all")
+async def refresh_all_sites_channel_keys():
+    """为所有 NewAPI 主站各启动一个全量渠道 key 刷新批次（sub2api 跳过）。"""
+    sites = await run_in_threadpool(
+        db_query_all, "SELECT * FROM admin_sites ORDER BY id ASC"
+    )
+    triggered: list[dict] = []
+    skipped = 0
+    for site in sites:
+        if _platform(site) != "newapi":
+            skipped += 1
+            continue
+        result = await run_in_threadpool(trigger_admin_site_full_key_refresh, site)
+        triggered.append(
+            {
+                "admin_site_id": int(site["id"]),
+                "name": site.get("name"),
+                "success": bool(result.get("success")),
+                "message": result.get("message"),
+                "progress": result.get("progress"),
+            }
+        )
+    ok_count = sum(1 for item in triggered if item["success"])
+    return JSONResponse(
+        {
+            "success": ok_count > 0 or not triggered,
+            "data": {"triggered": triggered, "skipped_sub2api": skipped},
+            "message": (
+                f"已为 {ok_count} 个 NewAPI 主站启动全量 key 刷新"
+                if ok_count
+                else "没有可刷新的 NewAPI 主站"
+            ),
+        }
     )
 
 

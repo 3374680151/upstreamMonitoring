@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, shallowRef, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { Cloud, KeyRound, RefreshCw } from "lucide-vue-next";
 import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
 import Badge from "@/components/Badge.vue";
@@ -148,6 +148,7 @@ const siteId = ref<number | null>(null);
 const adminLoading = ref(true);
 const adminFormOpen = ref(false);
 const editingAdmin = shallowRef<AdminSite | null>(null);
+const keyRefreshTriggering = ref(false);
 
 const channels = shallowRef<Channel[]>([]);
 const groups = shallowRef<Record<string, GroupItem>>({});
@@ -180,6 +181,21 @@ const currentAdminSite = computed(
   () => adminSites.value.find((site) => site.id === siteId.value) || null,
 );
 const isSub2Api = computed(() => currentAdminSite.value?.platform === "sub2api");
+const currentKeyRefresh = computed(() => currentAdminSite.value?.key_refresh || null);
+
+const keyRefreshStatusText = computed(() => {
+  const progress = currentKeyRefresh.value;
+  if (!progress) return "";
+  const failedSuffix = progress.failed ? ` · 失败 ${progress.failed}` : "";
+  if (progress.status === "running") {
+    return `key 刷新中 ${progress.done}/${progress.total}${failedSuffix}`;
+  }
+  if (progress.status === "paused") return "key 刷新已暂停，需重新验证 2FA";
+  if (progress.status === "failed") {
+    return `key 刷新失败${progress.message ? `：${progress.message}` : ""}`;
+  }
+  return `key 刷新完成 ${progress.done}/${progress.total}${failedSuffix}`;
+});
 
 const allowedGroupNames = computed(() =>
   groupCatalogReady.value ? new Set(Object.keys(groups.value)) : null,
@@ -320,11 +336,74 @@ async function loadAdminSites() {
     } else {
       siteId.value = list[0]?.id ?? null;
     }
+    // 全量 key 刷新批次已在后台跑（例如刚在添加弹窗里完成 2FA 验证）：接上进度轮询
+    const current = list.find((site) => site.id === siteId.value);
+    if (current?.key_refresh?.status === "running") ensureKeyRefreshPolling();
   } catch (err) {
     adminSites.value = [];
     error.value = errorText(err, "主站列表加载失败");
   } finally {
     adminLoading.value = false;
+  }
+}
+
+// ---- 全量渠道 key 刷新（后台批次 + 进度轮询）----
+let keyRefreshTimer: number | null = null;
+
+function stopKeyRefreshPolling() {
+  if (keyRefreshTimer != null) {
+    window.clearInterval(keyRefreshTimer);
+    keyRefreshTimer = null;
+  }
+}
+
+function ensureKeyRefreshPolling() {
+  if (keyRefreshTimer != null) return;
+  keyRefreshTimer = window.setInterval(() => void pollKeyRefreshProgress(), 10_000);
+}
+
+async function pollKeyRefreshProgress() {
+  const targetId = siteId.value;
+  if (targetId == null) return;
+  try {
+    const response = await api.adminSites();
+    const list = response.data || [];
+    adminSites.value = list;
+    const progress = list.find((site) => site.id === targetId)?.key_refresh;
+    if (!progress || progress.status === "paused" || progress.status === "failed") {
+      stopKeyRefreshPolling();
+      return;
+    }
+    if (progress.status === "done") {
+      stopKeyRefreshPolling();
+      toast.success(
+        `渠道 key 全量刷新完成：成功 ${progress.done}/${progress.total}` +
+          (progress.failed ? `，失败 ${progress.failed}` : ""),
+      );
+      await load(keyword.value);
+    }
+  } catch {
+    // 进度轮询失败不打断页面
+  }
+}
+
+async function triggerFullKeyRefresh() {
+  if (siteId.value == null || isSub2Api.value) return;
+  keyRefreshTriggering.value = true;
+  actionError.value = "";
+  try {
+    const response = await api.refreshAllChannelKeys(siteId.value);
+    if (!response.success) throw new Error(response.message || "触发全量渠道 key 刷新失败");
+    await pollKeyRefreshProgress();
+    if (response.data?.progress?.status === "running" || currentKeyRefresh.value?.status === "running") {
+      ensureKeyRefreshPolling();
+    }
+    toast.info(response.message || "已启动全量渠道 key 刷新");
+  } catch (err) {
+    const message = errorText(err, "触发全量 key 刷新失败");
+    toast.error(message);
+  } finally {
+    keyRefreshTriggering.value = false;
   }
 }
 
@@ -736,6 +815,10 @@ onMounted(() => {
   void loadAdminSites();
 });
 
+onUnmounted(() => {
+  stopKeyRefreshPolling();
+});
+
 watch(
   [siteId, () => currentAdminSite.value?.platform],
   () => {
@@ -870,6 +953,32 @@ watch(
             <Cloud v-if="!syncing" :size="13" />
             同步主站
           </Button>
+          <Button
+            v-if="!isSub2Api"
+            variant="secondary"
+            aria-label="刷新全部渠道 key"
+            title="立即刷新当前主站全部渠道 key 并重新匹配上游倍率"
+            :disabled="siteId == null || keyRefreshTriggering"
+            :loading="keyRefreshTriggering"
+            @click="triggerFullKeyRefresh"
+          >
+            <KeyRound v-if="!keyRefreshTriggering" :size="13" />
+            刷新全部 key
+          </Button>
+          <span
+            v-if="currentKeyRefresh"
+            :class="[
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+              currentKeyRefresh.status === 'running'
+                ? 'bg-sunken text-ink-muted'
+                : currentKeyRefresh.status === 'paused' || currentKeyRefresh.status === 'failed'
+                  ? 'bg-danger-bg text-danger-fg'
+                  : 'bg-success-bg text-success-fg',
+            ]"
+            :title="currentKeyRefresh.message || undefined"
+          >
+            {{ keyRefreshStatusText }}
+          </span>
           <Button
             variant="secondary"
             :disabled="!currentAdminSite"

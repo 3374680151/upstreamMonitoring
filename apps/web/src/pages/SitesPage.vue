@@ -43,6 +43,8 @@ const syncingAll = ref(false);
 // 正在同步登录态的平台（null = 空闲），两个按钮各自显示自己的 loading
 const syncingBrowserPlatform = ref<"sub2api" | "newapi" | null>(null);
 const browserSyncProgress = ref<{ platform: string; text: string } | null>(null);
+// 全量渠道 key 刷新（所有 NewAPI 主站，后台批次）
+const refreshingAllKeys = ref(false);
 const syncResult = ref("");
 
 const filtered = computed(() => {
@@ -158,6 +160,44 @@ async function syncAllFromMain(): Promise<void> {
   }
 }
 
+async function refreshAllMainSiteKeys(): Promise<void> {
+  if (refreshingAllKeys.value) return;
+  refreshingAllKeys.value = true;
+  try {
+    const result = await api.refreshAllSitesChannelKeys();
+    if (result.success === false) {
+      throw new Error(result.message || "触发全量 key 刷新失败");
+    }
+    const triggered = result.data?.triggered || [];
+    const okRows = triggered.filter((row) => row.success);
+    const failRows = triggered.filter((row) => !row.success);
+    const lines = [
+      `已为 ${okRows.length} 个 NewAPI 主站启动全量渠道 key 刷新（后台执行，进度见渠道页）…`,
+      ...okRows.map(
+        (row) =>
+          `✓ 主站「${row.name || `#${row.admin_site_id}`}」：共 ${row.progress?.total ?? 0} 个渠道`,
+      ),
+      ...failRows.map(
+        (row) => `✗ 主站「${row.name || `#${row.admin_site_id}`}」：${row.message || "启动失败"}`,
+      ),
+    ];
+    syncResult.value = lines.join("\n");
+    if (failRows.length) {
+      toast.info(`全量 key 刷新已启动，${failRows.length} 个主站启动失败`);
+    } else if (okRows.length) {
+      toast.success(`已为 ${okRows.length} 个 NewAPI 主站启动全量 key 刷新`);
+    } else {
+      toast.info("没有可刷新的 NewAPI 主站");
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    syncResult.value = `全量 key 刷新启动失败：${message}`;
+    toast.error(`全量 key 刷新启动失败：${message}`);
+  } finally {
+    refreshingAllKeys.value = false;
+  }
+}
+
 async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promise<void> {
   if (syncingBrowserPlatform.value) return;
   const targets = sites.value.filter(
@@ -262,6 +302,14 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
             }}
           </Button>
           <Button
+            variant="secondary"
+            :loading="refreshingAllKeys"
+            title="为所有 NewAPI 主站立即刷新全部渠道 key 并重新匹配倍率（后台执行，进度见渠道页）"
+            @click="refreshAllMainSiteKeys"
+          >
+            刷新全部主站 key
+          </Button>
+          <Button
             variant="brand"
             :loading="syncingAll"
             title="同步所有主站的完整渠道、分组和本地来源关联"
@@ -278,7 +326,7 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
       class="rounded-[var(--radius-sm)] border border-line bg-panel-soft px-3 py-2 text-sm text-ink"
     >
       <div class="mb-1 flex items-center justify-between">
-        <span class="font-semibold text-ink-strong">主站同步结果</span>
+        <span class="font-semibold text-ink-strong">同步结果</span>
         <button
           class="text-[11px] text-ink-muted hover:text-ink-strong"
           @click="syncResult = ''"

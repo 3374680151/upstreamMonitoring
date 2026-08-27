@@ -9,6 +9,7 @@
  */
 import { request } from "./client";
 import type {
+  AdminKeyRefreshProgress,
   AdminSite,
   AdminSiteFormPayload,
   Channel,
@@ -95,6 +96,35 @@ export const adminSitesApi = {
         binding?: ChannelUpstreamBinding;
       };
     }>(`/api/admin/sites/${adminSiteId}/channels/${channelId}/key/refresh`, {
+      method: "POST",
+      body: "{}",
+    }),
+  /** 触发当前主站的全量渠道 key 刷新批次（后台执行，返回初始进度） */
+  refreshAllChannelKeys: (adminSiteId: number) =>
+    request<{
+      success: boolean;
+      message?: string;
+      data?: { already_running: boolean; progress?: AdminKeyRefreshProgress };
+    }>(`/api/admin/sites/${adminSiteId}/channels/keys/refresh`, {
+      method: "POST",
+      body: "{}",
+    }),
+  /** 为所有 NewAPI 主站触发全量渠道 key 刷新批次 */
+  refreshAllSitesChannelKeys: () =>
+    request<{
+      success: boolean;
+      message?: string;
+      data?: {
+        triggered: Array<{
+          admin_site_id: number;
+          name?: string;
+          success: boolean;
+          message?: string;
+          progress?: AdminKeyRefreshProgress;
+        }>;
+        skipped_sub2api: number;
+      };
+    }>("/api/admin/sites/keys/refresh-all", {
       method: "POST",
       body: "{}",
     }),

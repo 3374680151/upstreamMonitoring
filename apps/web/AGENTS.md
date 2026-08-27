@@ -35,7 +35,7 @@ apps/web/src/
 │   ├── PageHeader.vue / Panel.vue / StatCard.vue / Badge.vue
 │   ├── ChangeTable.vue / ChangeValue.vue
 │   ├── SiteTable.vue / SiteFormDialog.vue / RatiosDialog.vue
-│   ├── ChannelDiscoveryPanel.vue / ChannelFormDialog.vue / ChannelPriorityDialog.vue
+│   ├── ChannelDiscoveryPanel.vue / ChannelPriorityDialog.vue
 │   ├── AdminSiteFormDialog.vue
 │   ├── Sub2ApiChannelDialog.vue / Sub2ApiChannelTable.vue / Sub2ApiPricingEditor.vue / Sub2ApiNumberField.vue
 │   ├── MainSiteHealthPanel.vue
@@ -105,7 +105,7 @@ apps/web/src/
 | `SiteTable.vue` | 渠道列表（平台折叠分组、行内检测/同步、「更多」菜单） |
 | `SiteFormDialog.vue` / `RatiosDialog.vue` | 监控站点新增编辑 / 分组倍率弹窗 |
 | `ChannelDiscoveryPanel.vue` | 主站渠道 → 监控站点发现导入 |
-| `ChannelFormDialog.vue` / `ChannelPriorityDialog.vue` | 渠道上游配置 / 优先级编辑 |
+| `ChannelPriorityDialog.vue` | 渠道优先级编辑 |
 | `AdminSiteFormDialog.vue` | 主站 CRUD 表单 |
 | `Sub2ApiChannel*` / `Sub2ApiPricingEditor.vue` | sub2api 渠道表格 / 编辑 / 计费阶梯 |
 | `MainSiteHealthPanel.vue` | 总览页主站健康区块 |

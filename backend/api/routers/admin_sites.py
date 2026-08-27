@@ -55,7 +55,6 @@ from backend.services.channel_match_service import (
     get_channel_upstream_binding,
     list_channel_upstream_bindings,
     match_channel_upstream_binding,
-    save_channel_upstream_binding,
 )
 
 
@@ -605,44 +604,6 @@ async def create_channel(admin_site_id: int, request: Request):
                 and not _channel_key_is_masked(body.get("key"))
             )
     return JSONResponse(response)
-
-
-# ---------------------------------------------------------------------------
-# Update channel mapping (PUT /admin/sites/{id}/channels/{cid}/mapping)
-# ---------------------------------------------------------------------------
-
-@router.put("/admin/sites/{admin_site_id}/channels/{channel_id}/mapping")
-async def update_channel_mapping(
-    admin_site_id: int,
-    channel_id: int,
-    request: Request,
-):
-    site, error, status = get_admin_site_or_404(admin_site_id)
-    if error:
-        return JSONResponse(error, status_code=status)
-    if _platform(site) == "sub2api":
-        return JSONResponse(
-            {"success": False, "message": "sub2api 主站不使用渠道 key 匹配配置"},
-            status_code=405,
-        )
-    body = await _read_json_body(request)
-    if not isinstance(body, dict):
-        return JSONResponse(
-            {"success": False, "message": "匹配配置内容无效"}, status_code=400
-        )
-    ok, error = await run_in_threadpool(
-        save_channel_upstream_binding, admin_site_id, channel_id, body,
-    )
-    if not ok:
-        return JSONResponse(
-            {"success": False, "message": error}, status_code=400
-        )
-    return JSONResponse({
-        "success": True,
-        "data": channel_upstream_binding_payload(
-            get_channel_upstream_binding(admin_site_id, channel_id)
-        ),
-    })
 
 
 # ---------------------------------------------------------------------------

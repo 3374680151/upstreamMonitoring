@@ -11,60 +11,6 @@ class Sub2ApiChannelKeyMatchingTests(unittest.TestCase):
         with app.SUB2API_REFRESH_LOCKS_GUARD:
             app.SUB2API_REFRESH_CACHE.clear()
 
-    def test_channel_binding_does_not_reuse_newapi_token_after_switching_protocol(self):
-        existing = {
-            "upstream_base_url": "https://upstream.example",
-            "upstream_platform": "newapi",
-            "auth_mode": "token",
-            "access_token": "newapi-user-token",
-            "access_user_id": "115",
-            "channel_key": "sk-current",
-        }
-        with patch.object(app, "get_channel_upstream_binding", return_value=existing), \
-             patch.object(app, "db_execute") as save:
-            ok, error = app.save_channel_upstream_binding(
-                2,
-                21,
-                {
-                    "upstream_base_url": "https://upstream.example",
-                    "upstream_platform": "sub2api",
-                    "auth_mode": "token",
-                    "access_token": "",
-                    "refresh_token": "",
-                },
-            )
-
-        self.assertFalse(ok)
-        self.assertIn("auth_token", error)
-        save.assert_not_called()
-
-    def test_channel_binding_preserves_credentials_within_same_protocol(self):
-        existing = {
-            "upstream_base_url": "https://upstream.example",
-            "upstream_platform": "sub2api",
-            "auth_mode": "token",
-            "access_token": "saved-access",
-            "refresh_token": "saved-refresh",
-            "channel_key": "sk-current",
-        }
-        with patch.object(app, "get_channel_upstream_binding", return_value=existing), \
-             patch.object(app, "db_execute") as save:
-            ok, error = app.save_channel_upstream_binding(
-                2,
-                21,
-                {
-                    "upstream_base_url": "https://upstream.example",
-                    "upstream_platform": "sub2api",
-                    "auth_mode": "token",
-                },
-            )
-
-        self.assertTrue(ok)
-        self.assertIsNone(error)
-        params = save.call_args.args[1]
-        self.assertIn("saved-access", params)
-        self.assertIn("saved-refresh", params)
-
     def test_password_mode_reuses_single_login_for_groups_and_keys(self):
         main_site = {"id": 2}
         monitor_site = {

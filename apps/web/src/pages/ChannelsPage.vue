@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, shallowRef, watch } from "vue";
-import { Cloud, KeyRound, RefreshCw, Settings2 } from "lucide-vue-next";
+import { Cloud, KeyRound, RefreshCw } from "lucide-vue-next";
 import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
 import Badge from "@/components/Badge.vue";
-import ChannelFormDialog from "@/components/ChannelFormDialog.vue";
 import ChannelPriorityDialog from "@/components/ChannelPriorityDialog.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
@@ -24,7 +23,6 @@ import type {
   AdminSite,
   Channel,
   ChannelUpstreamBinding,
-  ChannelUpstreamBindingPayload,
   GroupItem,
   Site,
   Sub2ApiGroupRef,
@@ -165,7 +163,6 @@ const matching = shallowRef<Set<number>>(new Set());
 const refreshingKeyIds = shallowRef<Set<number>>(new Set());
 const rowNote = shallowRef<Record<number, { ok: boolean; text: string }>>({});
 const priorityChannel = shallowRef<Channel | null>(null);
-const upstreamConfigChannel = shallowRef<Channel | null>(null);
 const sub2ApiChannel = shallowRef<Channel | null>(null);
 const updatingChannelIds = shallowRef<Set<number>>(new Set());
 const actionError = ref("");
@@ -241,12 +238,6 @@ const selectedBindingStale = computed(() =>
   isStaleMatchStatus(selectedBinding.value?.match_status),
 );
 const selectedBindingError = computed(() => bindingFailure(selectedBinding.value));
-
-const upstreamConfigBinding = computed(() =>
-  upstreamConfigChannel.value
-    ? upstreamBindings.value[String(upstreamConfigChannel.value.id)]
-    : undefined,
-);
 
 /** Base URL 归一化：去协议、去尾斜杠、小写，用于匹配 binding 上游与监控站点 */
 function normalizeBaseUrlKey(url: unknown): string {
@@ -704,37 +695,6 @@ async function submitSub2ApiChannel(patch: Partial<Channel>): Promise<void> {
   }
 }
 
-async function onUpstreamConfigSubmit(
-  _payload: Partial<Channel>,
-  bindingPayload: ChannelUpstreamBindingPayload,
-): Promise<void> {
-  if (!upstreamConfigChannel.value || siteId.value == null) return;
-  const channel = upstreamConfigChannel.value;
-  const result = await api.saveChannelUpstreamBinding(
-    siteId.value,
-    channel.id,
-    bindingPayload,
-  );
-  if (!result.success) {
-    throw new Error(result.message || "保存上游配置失败");
-  }
-  upstreamBindings.value = {
-    ...upstreamBindings.value,
-    [String(channel.id)]:
-      result.data || {
-        configured: !!bindingPayload.upstream_base_url,
-        upstream_base_url: bindingPayload.upstream_base_url,
-        upstream_platform: bindingPayload.upstream_platform,
-        auth_mode: bindingPayload.auth_mode,
-        match_status: "unmatched",
-        matched_groups: [],
-      },
-  };
-  toast.success(
-    `渠道「${channel.name || `#${channel.id}`}」上游配置已保存`,
-  );
-}
-
 async function onPrioritySubmit(priority: number): Promise<void> {
   if (!priorityChannel.value) return;
   return submitForm(priorityChannel.value, priority);
@@ -1181,16 +1141,6 @@ watch(
                       >
                         编辑优先级
                       </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        class="whitespace-nowrap"
-                        title="配置该渠道的上游认证，用于 key 精确匹配分组倍率"
-                        @click="upstreamConfigChannel = row.channel"
-                      >
-                        <Settings2 :size="13" />
-                        配置上游
-                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -1294,16 +1244,6 @@ watch(
       :groups="sub2ApiGroups"
       @close="sub2ApiChannel = null"
       :on-submit="submitSub2ApiChannel"
-    />
-
-    <ChannelFormDialog
-      v-if="upstreamConfigChannel && siteId != null"
-      open
-      :channel="upstreamConfigChannel"
-      :binding="upstreamConfigBinding"
-      :group-names="Object.keys(groups).sort()"
-      @close="upstreamConfigChannel = null"
-      :on-submit="onUpstreamConfigSubmit"
     />
 
     <AdminSiteFormDialog

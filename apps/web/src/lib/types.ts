@@ -370,18 +370,6 @@ export type ChannelUpstreamBinding = {
   matched_at?: string | null;
 };
 
-export type ChannelUpstreamBindingPayload = {
-  upstream_base_url: string;
-  upstream_platform: Platform | string;
-  auth_mode: AuthMode | string;
-  login_username?: string;
-  login_password?: string;
-  access_token?: string;
-  access_user_id?: string;
-  refresh_token?: string;
-  channel_key?: string;
-};
-
 export type ChannelListResponse = {
   success: boolean;
   data?: Channel[];

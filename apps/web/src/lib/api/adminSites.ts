@@ -16,7 +16,6 @@ import type {
   ChannelGroupsResponse,
   ChannelListResponse,
   ChannelUpstreamBinding,
-  ChannelUpstreamBindingPayload,
   Platform,
 } from "../types";
 
@@ -75,15 +74,6 @@ export const adminSitesApi = {
   channelUpstreamBindings: (adminSiteId: number) =>
     request<{ success: boolean; data?: Record<string, ChannelUpstreamBinding>; message?: string }>(
       `/api/admin/sites/${adminSiteId}/channel-mappings`,
-    ),
-  saveChannelUpstreamBinding: (
-    adminSiteId: number,
-    channelId: number,
-    payload: ChannelUpstreamBindingPayload,
-  ) =>
-    request<{ success: boolean; data?: ChannelUpstreamBinding; message?: string }>(
-      `/api/admin/sites/${adminSiteId}/channels/${channelId}/mapping`,
-      { method: "PUT", body: JSON.stringify(payload) },
     ),
   matchChannelUpstreamBinding: (adminSiteId: number, channelId: number, forceRefresh = false) =>
     request<{ success: boolean; data?: ChannelUpstreamBinding; message?: string }>(

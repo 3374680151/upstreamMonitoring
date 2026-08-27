@@ -432,21 +432,11 @@ def init_db() -> None:
 
                 run_sub2api_browser_first_migration_once(cur)
 
-                # Local NewAPI monitoring uses a manually configured system
-                # token + user ID.  Normalize legacy rows created by the old
-                # site-browser-sync flow without touching tokens, snapshots,
-                # groups, or change history.  NewAPI admin-site browser
-                # sessions live in admin_sites and are intentionally kept.
-                cur.execute(
-                    """
-                    UPDATE sites
-                    SET auth_mode = 'token',
-                        session_sync_status = 'not_requested',
-                        session_sync_error = NULL,
-                        session_synced_at = NULL
-                    WHERE platform = 'newapi' AND auth_mode = 'browser'
-                    """
-                )
+                # 说明：这里曾有一段把 newapi + browser 行强制归一化为 token
+                # 的启动期 UPDATE，那是 NewAPI 浏览器登录态同步落地前的过渡
+                # 清理。现在 NewAPI browser 已是一等认证方式（扩展同步 + 刷新
+                # 链路 + CAS 写入），该归一化会在每次重启时把用户同步好的
+                # 登录态打回 token 模式，属于破坏行为，已删除且不迁移补跑。
 
                 cur.execute("SELECT id FROM notification_settings WHERE id = 1")
                 if not cur.fetchone():

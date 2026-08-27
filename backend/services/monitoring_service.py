@@ -183,8 +183,14 @@ def build_site_account_payload(site: Dict[str, Any]) -> Tuple[int, Dict[str, Any
     """统一账户额度出口：按平台分发到 NewAPI /api/user/self 或 sub2api /api/v1/auth/me。"""
     platform = site.get("platform") or "newapi"
     if platform == "newapi":
-        if not (site.get("login_enabled") and site.get("access_token") and site.get("access_user_id")):
-            return 409, {"success": False, "message": "该 NewAPI 站点未配置系统访问令牌，无法读取账户额度"}
+        if not site.get("login_enabled"):
+            return 409, {
+                "success": False,
+                "message": "该 NewAPI 站点未开启认证增强监控，无法读取账户额度",
+            }
+        # 凭据是否齐全交给下层判定：browser / password 模式走统一执行器
+        # （支持 cookie-only 会话），token 模式缺令牌时由
+        # fetch_newapi_account 返回「缺少系统访问令牌」的准确提示。
         ok, data, error_message = fetch_newapi_account_for_site(site)
         if not ok:
             return 502, {"success": False, "message": error_message or "读取 NewAPI 账户失败"}

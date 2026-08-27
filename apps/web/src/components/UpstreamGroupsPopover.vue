@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import GroupSummaryBar from "@/components/GroupSummaryBar.vue";
 import { api } from "@/lib/api";
 import { fmtTime, groupPropertyText, ratioXText } from "@/lib/format";
@@ -32,7 +32,11 @@ interface Props {
 const props = defineProps<Props>();
 
 const POPOVER_MAX_WIDTH = 920;
+const POPOVER_MAX_HEIGHT = 620;
+const POPOVER_MIN_HEIGHT = 200;
 const VIEWPORT_MARGIN = 8;
+/** 浮层与触发元素的间距 */
+const FLIP_GAP = 6;
 
 const open = ref(false);
 const triggerEl = ref<HTMLElement | null>(null);
@@ -179,28 +183,24 @@ function positionPopover(): void {
     Math.max(rect.left, VIEWPORT_MARGIN),
     window.innerWidth - width - VIEWPORT_MARGIN,
   );
-  const maxHeight = Math.min(
-    620,
-    Math.max(260, window.innerHeight - 2 * VIEWPORT_MARGIN - 16),
+  // 按触发元素上/下两侧的真实剩余空间夹 maxHeight（fixed 定位相对视口）：
+  // 优先放下方，下方太窄且上方更宽裕时翻到上方；内容超出时靠内部滚动。
+  // 这样异步加载完分组表格后浮层再长也不会越过视口底边。
+  const spaceBelow = window.innerHeight - rect.bottom - FLIP_GAP - VIEWPORT_MARGIN;
+  const spaceAbove = rect.top - FLIP_GAP - VIEWPORT_MARGIN;
+  const showAbove = spaceBelow < POPOVER_MIN_HEIGHT && spaceAbove > spaceBelow;
+  const maxHeight = Math.max(
+    POPOVER_MIN_HEIGHT,
+    Math.min(POPOVER_MAX_HEIGHT, showAbove ? spaceAbove : spaceBelow),
   );
   style.value = {
     left: `${Math.max(left, VIEWPORT_MARGIN)}px`,
-    top: `${rect.bottom + 6}px`,
     width: `${width}px`,
     maxHeight: `${maxHeight}px`,
+    ...(showAbove
+      ? { bottom: `${window.innerHeight - rect.top + FLIP_GAP}px` }
+      : { top: `${rect.bottom + FLIP_GAP}px` }),
   };
-  // 先渲染再量实际高度：下方放不下时翻到触发元素上方。
-  void nextTick(() => {
-    const pop = popoverEl.value;
-    if (!pop) return;
-    const height = pop.offsetHeight;
-    if (rect.bottom + 6 + height > window.innerHeight - VIEWPORT_MARGIN) {
-      style.value = {
-        ...style.value,
-        top: `${Math.max(VIEWPORT_MARGIN, rect.top - height - 6)}px`,
-      };
-    }
-  });
 }
 
 async function loadDetails(): Promise<void> {
@@ -245,7 +245,11 @@ async function loadDetails(): Promise<void> {
   }
 }
 
-function onViewportChange(): void {
+function onViewportChange(event: Event): void {
+  // 浮层自身列表的滚动会以 capture 冒到 window，不算视口变化，
+  // 否则用户在浮层里一滚动整个浮层就被关掉。
+  const target = event.target as Node | null;
+  if (target && popoverEl.value?.contains(target)) return;
   if (open.value) closeNow();
 }
 

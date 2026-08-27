@@ -823,6 +823,14 @@ def complete_session_sync_request(
         from backend.services.monitoring_service import detect_site
 
         detection = detect_site(int(site_id))
+        # 兜底令牌：开关开启且尚未存储时，趁会话有效向上游拉一次；
+        # 失败只跳过本次补取，不影响已达成的 ready 终态。
+        try:
+            from backend.integrations.newapi import refresh_site_system_access_token
+
+            refresh_site_system_access_token(int(site_id), force=False)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         detection = None
     return 200, {

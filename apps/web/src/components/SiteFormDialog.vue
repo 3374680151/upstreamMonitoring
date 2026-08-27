@@ -30,6 +30,7 @@ const empty: SiteFormPayload = {
   token_expires_at: "",
   access_user_id: "",
   enabled: true,
+  system_token_fallback_enabled: false,
 };
 
 const props = defineProps<{ open: boolean; site: Site | null }>();
@@ -77,6 +78,8 @@ watch(
         access_user_id: props.site.access_user_id || "",
         token_expires_at: props.site.token_expires_at || "",
         enabled: !!props.site.enabled,
+        system_token_fallback_enabled:
+          !!props.site.system_token_fallback_enabled,
       };
     } else {
       form.value = { ...empty };
@@ -150,6 +153,15 @@ const tokenMode = computed(() => form.value.auth_mode === "token");
 const browserMode = computed(() => form.value.auth_mode === "browser");
 const passwordMode = computed(() => form.value.auth_mode === "password");
 const newApiPasswordMode = computed(() => !isSub2api.value && passwordMode.value);
+const systemTokenFallbackVisible = computed(
+  () => !isSub2api.value && (browserMode.value || passwordMode.value),
+);
+const systemTokenFallbackHelp = computed(() => {
+  const state = props.site?.has_system_access_token
+    ? "当前已存兜底令牌"
+    : "尚未生成兜底令牌";
+  return `开启后，登录态同步（或密码登录）成功且尚未生成时会自动向上游生成系统访问令牌并保存；浏览器会话失效时用它继续读余额与分组。当前：${state}。上游每次生成都会作废旧的系统访问令牌，如需轮换请在渠道详情页手动重新生成。`;
+});
 const sameSavedPlatform = computed(() =>
   Boolean(props.site && props.site.platform === form.value.platform),
 );
@@ -489,6 +501,16 @@ async function testAuth() {
               <option value="password">用户名密码登录</option>
             </Select>
           </Field>
+          <template v-if="systemTokenFallbackVisible">
+            <SwitchRow
+              label="会话失效时用系统访问令牌兜底"
+              :checked="form.system_token_fallback_enabled"
+              @update:checked="set('system_token_fallback_enabled', $event)"
+            />
+            <p class="text-[11px] leading-relaxed text-ink-soft">
+              {{ systemTokenFallbackHelp }}
+            </p>
+          </template>
           <template v-if="browserMode">
             <div
               class="rounded-[var(--radius-md)] border border-line bg-success-bg px-3 py-2.5 text-[12.5px] text-success-fg"

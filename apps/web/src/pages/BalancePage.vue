@@ -67,7 +67,7 @@ function queryOneSite(site: Site) {
       <EmptyState
         dense
         title="还没有配置渠道"
-        description="先在「渠道监控」添加站点并填写登录信息（NewAPI 系统访问令牌 / sub2api 账号或登录态）。"
+        description="先在「渠道监控」添加站点并填写登录信息（NewAPI 浏览器登录态 / 密码 / 令牌，sub2api 账号或登录态）。"
       />
     </Panel>
   </div>

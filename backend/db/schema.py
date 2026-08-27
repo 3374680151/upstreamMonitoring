@@ -67,6 +67,8 @@ DDL_STATEMENTS = [
         browser_cookie TEXT,
         browser_session_id VARCHAR(255),
         browser_access_expires_at BIGINT,
+        system_access_token TEXT,
+        system_token_fallback_enabled TINYINT NOT NULL DEFAULT 0,
         created_at VARCHAR(40) NOT NULL,
         updated_at VARCHAR(40) NOT NULL,
         KEY idx_sites_enabled_next_check (enabled, next_check_at)
@@ -323,6 +325,8 @@ SITES_COLUMN_ADDITIONS = {
     "browser_cookie": "TEXT",
     "browser_session_id": "VARCHAR(255)",
     "browser_access_expires_at": "BIGINT",
+    "system_access_token": "TEXT",
+    "system_token_fallback_enabled": "TINYINT NOT NULL DEFAULT 0",
 }
 NOTIFICATION_COLUMN_ADDITIONS = {
     "email_enabled": "TINYINT NOT NULL DEFAULT 0",

@@ -129,6 +129,12 @@ export const monitoringApi = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  /** 手动重新生成兜底系统访问令牌（会重置上游该账号的系统访问令牌） */
+  regenerateSystemToken: (siteId: number) =>
+    request<{ success: boolean; message?: string }>(
+      `/api/sites/${siteId}/system-token`,
+      { method: "POST" },
+    ),
   loginNewApiSite: (siteId: number, twoFactorCode = "") =>
     request<{
       success: boolean;

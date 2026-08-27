@@ -1583,11 +1583,13 @@ def _newapi_site_fallback_request(
     payload: Optional[Dict[str, Any]],
     method: str,
 ) -> Tuple[bool, Any, Optional[str]]:
-    """浏览器会话不可用时的凭证回退：用户名密码登录 → 系统访问令牌。
+    """浏览器会话不可用时的凭证回退：用户名密码登录 → 系统访问令牌 → 兜底令牌。
 
-    仅在站点保留了回退凭证（login_username/login_password 或
-    access_token/access_user_id）时生效；密码登录成功会把新会话落库
-    （保留回退凭证），令牌兜底不改变任何持久化状态。
+    仅在站点保留了回退凭证（login_username/login_password、
+    access_token/access_user_id 或 system_access_token）时生效；密码登录成功
+    会把新会话落库（保留回退凭证），令牌兜底不改变任何持久化状态。
+    system_access_token 是用户 opt-in 后自动生成的兜底系统访问令牌，长期
+    有效，放在最后一级。
     """
     base = normalize_base_url(str(site.get("base_url") or ""))
     username = str(site.get("login_username") or "").strip()
@@ -1620,13 +1622,21 @@ def _newapi_site_fallback_request(
             if ok_req:
                 return True, raw, None
             # 密码登录成功但请求失败：继续尝试令牌兜底
-    access_token = str(site.get("access_token") or "").strip()
     access_user_id = str(site.get("access_user_id") or "").strip()
+    access_token = str(site.get("access_token") or "").strip()
     if access_token and access_user_id:
         headers = newapi_auth_headers(access_token, access_user_id)
         proof = str(site.get("security_proof") or "").strip()
         if proof:
             headers["X-Security-Proof"] = proof
+        ok_req, raw, error = request_json(
+            url, headers=headers, payload=payload, method=method
+        )
+        if ok_req:
+            return True, raw, None
+    system_token = str(site.get("system_access_token") or "").strip()
+    if system_token and access_user_id:
+        headers = newapi_auth_headers(system_token, access_user_id)
         ok_req, raw, error = request_json(
             url, headers=headers, payload=payload, method=method
         )
@@ -1664,7 +1674,8 @@ def newapi_browser_request(
         latest = db_query_one(
             """
             SELECT access_token, access_user_id, browser_cookie, browser_refresh_cookie,
-                   browser_session_id, browser_access_expires_at, auth_mode
+                   browser_session_id, browser_access_expires_at, auth_mode,
+                   login_username, login_password, system_access_token
             FROM sites WHERE id = ?
             """,
             (int(site.get("id") or 0),),
@@ -1915,6 +1926,11 @@ def login_newapi_site_with_password(
         site["auth_mode"] = "password"
         groups_ok, groups_payload, groups_error = fetch_newapi_groups_for_site(site)
         groups = parse_groups_payload(groups_payload) if groups_ok else {}
+        # 兜底令牌：开关开启且尚未存储时趁会话有效拉一次；失败不阻断登录结果。
+        try:
+            refresh_site_system_access_token(site_id, force=False)
+        except Exception:  # noqa: BLE001
+            pass
         return True, {
             "groups_count": len(groups),
             "warning": None
@@ -2023,6 +2039,62 @@ def ensure_newapi_site_browser_session(
     if expires_at <= 0 or expires_at > int(time.time()) + 60:
         return True, None
     return refresh_newapi_site_browser_session(site)
+
+def fetch_newapi_system_access_token(
+    site: Dict[str, Any]
+) -> Tuple[bool, str, Optional[str]]:
+    """用当前登录态向上游申请（重置）该用户的系统访问令牌。
+
+    NewAPI 的 ``GET /api/user/token`` 每次调用都会重新生成系统访问令牌并
+    立即作废旧令牌，调用方必须拿到用户显式 opt-in；本函数只负责请求与
+    解析，生成时机由 :func:`refresh_site_system_access_token` 控制。
+    """
+    if str(site.get("platform") or "newapi").strip().lower() != "newapi":
+        return False, "", "只有 NewAPI 站点支持读取系统访问令牌"
+    ok, payload, error = newapi_browser_request(site, "GET", "/api/user/token")
+    if not ok:
+        return False, "", error or "读取系统访问令牌失败"
+    if not isinstance(payload, dict) or not payload.get("success"):
+        message = str(payload.get("message") or "") if isinstance(payload, dict) else ""
+        return False, "", message or "系统访问令牌响应异常"
+    data = payload.get("data")
+    token = ""
+    if isinstance(data, str):
+        token = data.strip()
+    elif isinstance(data, dict):
+        token = str(data.get("token") or data.get("access_token") or "").strip()
+    if not token:
+        return False, "", "系统访问令牌响应没有返回令牌内容"
+    return True, token, None
+
+def refresh_site_system_access_token(
+    site_id: int, force: bool = False
+) -> Tuple[bool, Optional[str]]:
+    """拉取并持久化 NewAPI 站点的兜底系统访问令牌（opt-in）。
+
+    force=False 时若已存有令牌则直接跳过（「首次自动」语义，避免反复重置
+    上游令牌）；force=True 用于手动「重新生成」。返回 ``(ok, error)``。
+    """
+    if int(site_id or 0) <= 0:
+        return False, "渠道记录无效"
+    with _newapi_site_browser_session_lock(int(site_id)):
+        site = db_query_one("SELECT * FROM sites WHERE id = ?", (int(site_id),))
+        if not site:
+            return False, "渠道不存在"
+        if str(site.get("platform") or "").strip().lower() != "newapi":
+            return False, "只有 NewAPI 站点支持兜底系统访问令牌"
+        if not int(site.get("system_token_fallback_enabled") or 0):
+            return False, "请先在渠道编辑中开启「会话失效时用系统访问令牌兜底」"
+        if not force and str(site.get("system_access_token") or "").strip():
+            return True, None
+        ok, token, error = fetch_newapi_system_access_token(site)
+        if not ok:
+            return False, error
+        db_execute(
+            "UPDATE sites SET system_access_token = ?, updated_at = ? WHERE id = ?",
+            (token, utc_now_iso(), int(site_id)),
+        )
+        return True, None
 
 def fetch_newapi_account_for_site(
     site: Dict[str, Any]

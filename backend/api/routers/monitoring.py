@@ -84,6 +84,37 @@ def account(site_id: int):
     return JSONResponse(payload, status_code=response_status)
 
 
+@router.post("/sites/{site_id}/system-token")
+def refresh_system_token(site_id: int):
+    """手动重新生成兜底系统访问令牌（会重置上游该账号的系统访问令牌）。"""
+    site, error, status = get_site_or_404(site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    if (site.get("platform") or "newapi") != "newapi":
+        return JSONResponse(
+            {"success": False, "message": "只有 NewAPI 站点支持兜底系统访问令牌"},
+            status_code=400,
+        )
+    if not int(site.get("system_token_fallback_enabled") or 0):
+        return JSONResponse(
+            {"success": False, "message": "请先在渠道编辑中开启「会话失效时用系统访问令牌兜底」"},
+            status_code=409,
+        )
+    try:
+        ok, error_message = service.refresh_system_token(site_id)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"success": False, "message": f"生成兜底令牌失败：{exc}"},
+            status_code=500,
+        )
+    if not ok:
+        return JSONResponse(
+            {"success": False, "message": error_message or "生成兜底令牌失败"},
+            status_code=502,
+        )
+    return {"success": True, "message": "兜底系统访问令牌已生成并保存"}
+
+
 @router.get("/sites/{site_id}/discovery-links")
 def discovery_links(site_id: int):
     site, error, status = get_site_or_404(site_id)

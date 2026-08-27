@@ -127,6 +127,10 @@ def site_summary(
         "has_login_password": bool(site.get("login_password")),
         "has_access_token": bool(site.get("access_token")),
         "has_refresh_token": bool(site.get("refresh_token")),
+        "has_system_access_token": bool(site.get("system_access_token")),
+        "system_token_fallback_enabled": bool(
+            site.get("system_token_fallback_enabled")
+        ),
         "has_browser_session": bool(
             site.get("access_token")
             and (
@@ -219,6 +223,12 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
     refresh_token = str(body.get("refresh_token") or "").strip()
     token_expires_at = str(body.get("token_expires_at") or "").strip()
     auth_mode = str(body.get("auth_mode") or "password").strip().lower()
+    # 兜底系统访问令牌开关：仅 NewAPI 有意义；令牌内容永远由服务端生成，
+    # 不接受客户端传值。
+    system_token_fallback = (
+        bool(body.get("system_token_fallback_enabled"))
+        and platform == "newapi"
+    )
     if platform not in {"newapi", "sub2api"}:
         return False, None, "platform invalid", False
     if auth_mode not in {"password", "token", BROWSER_AUTH_MODE}:
@@ -245,8 +255,8 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
         site_id = db_execute(
             """
             INSERT INTO sites
-            (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
+            (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, system_token_fallback_enabled, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
             """,
             (
                 name,
@@ -297,6 +307,7 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
                 if platform == "sub2api"
                 and auth_mode in {"token", BROWSER_AUTH_MODE}
                 else "",
+                1 if system_token_fallback else 0,
                 _next_check_iso(interval),
                 now,
                 now,
@@ -486,6 +497,10 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
                 params.append(None)
                 fields.append("session_synced_at = ?")
                 params.append(None)
+                fields.append("system_token_fallback_enabled = ?")
+                params.append(0)
+                fields.append("system_access_token = ?")
+                params.append("")
         else:
             fields.append("refresh_token = ?")
             params.append("")
@@ -556,6 +571,19 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
                 params.append(None)
                 fields.append("session_synced_at = ?")
                 params.append(None)
+    # 兜底系统访问令牌开关独立于 login_enabled 处理：开启仅存标记（令牌由
+    # 服务端在同步/登录成功后生成）；关闭时同时清掉已存令牌，语义可预期。
+    # 客户端传入的 system_access_token 一律忽略。
+    if "system_token_fallback_enabled" in body:
+        flag_enabled = (
+            bool(body["system_token_fallback_enabled"])
+            and target_platform == "newapi"
+        )
+        fields.append("system_token_fallback_enabled = ?")
+        params.append(1 if flag_enabled else 0)
+        if not flag_enabled and site.get("system_access_token"):
+            fields.append("system_access_token = ?")
+            params.append("")
     if "status" in body:
         fields.append("status = ?")
         params.append(str(body["status"]))

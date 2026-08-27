@@ -89,6 +89,7 @@ function toBrowserSwitchPayload(site: {
   platform: Platform | string;
   interval_minutes: number;
   enabled: boolean | number;
+  system_token_fallback_enabled?: boolean | number;
 }): SiteFormPayload {
   return {
     name: site.name,
@@ -104,6 +105,7 @@ function toBrowserSwitchPayload(site: {
     token_expires_at: "",
     access_user_id: "",
     enabled: truthy(site.enabled),
+    system_token_fallback_enabled: truthy(site.system_token_fallback_enabled),
   };
 }
 

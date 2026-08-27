@@ -63,7 +63,7 @@ function snapshotGroupCount(snapshot: SiteSnapshot): number {
 
 const toast = useToast();
 const route = useRoute();
-const { sites, selectedId, setSelectedId } = useConsoleData();
+const { sites, selectedId, setSelectedId, refresh } = useConsoleData();
 
 const routeId = computed(() => {
   const raw = route.params.id;
@@ -99,6 +99,25 @@ async function loadAccount() {
     toast.error(message);
   } finally {
     accountLoading.value = false;
+  }
+}
+
+const regenerating = shallowRef(false);
+const canRegenerateSystemToken = computed(
+  () => !isSub2api.value && truthy(site.value?.system_token_fallback_enabled),
+);
+
+async function regenerateSystemToken() {
+  if (!activeId.value) return;
+  regenerating.value = true;
+  try {
+    const resp = await api.regenerateSystemToken(activeId.value);
+    toast.success(resp.message || "兜底系统访问令牌已生成并保存");
+    await refresh();
+  } catch (err) {
+    toast.error(errorText(err, "生成兜底令牌失败"));
+  } finally {
+    regenerating.value = false;
   }
 }
 
@@ -217,7 +236,7 @@ const isSub2api = computed(() => site.value?.platform === "sub2api");
 const accountSubtitle = computed(() =>
   isSub2api.value
     ? "登录后读取 /api/v1/auth/me：余额与订阅用量"
-    : "凭系统访问令牌读取 /api/user/self：剩余额度与用量",
+    : "凭该账号登录态（浏览器会话 / 密码 / 令牌）读取 /api/user/self：剩余额度与用量",
 );
 const balanceLabel = computed(() =>
   isSub2api.value ? "账户余额" : "剩余额度",
@@ -238,7 +257,7 @@ const modeNote = computed(() => {
       : "当前渠道使用 sub2api 普通用户账号登录，检测该账号实际可见的分组倍率和用户专属倍率。";
   }
   return truthy(s.login_enabled)
-    ? "当前渠道已开启认证增强监控，检测时会优先使用系统访问令牌采集该账号可见的隐藏用户分组或专属分组。"
+    ? "当前渠道已开启认证增强监控，检测时用该账号的登录态（浏览器会话 / 密码 / 令牌）采集该账号可见的隐藏用户分组或专属分组。"
     : "当前渠道只监控公开 /api/user/groups。若该站存在特殊分组，可在编辑渠道中开启认证增强监控。";
 });
 const accountHint = computed(
@@ -394,15 +413,39 @@ const hasSubscriptions = computed(
 
     <Panel title="账户额度" :subtitle="accountSubtitle">
       <template #action>
-        <Button
-          variant="secondary"
-          :loading="accountLoading"
-          @click="loadAccount"
-        >
-          {{ accountButtonText }}
-        </Button>
+        <div class="flex flex-col items-end gap-1.5">
+          <Button
+            variant="secondary"
+            :loading="accountLoading"
+            @click="loadAccount"
+          >
+            {{ accountButtonText }}
+          </Button>
+          <Button
+            v-if="canRegenerateSystemToken"
+            variant="ghost"
+            size="sm"
+            :loading="regenerating"
+            @click="regenerateSystemToken"
+          >
+            {{
+              site?.has_system_access_token
+                ? "重新生成兜底令牌"
+                : "生成兜底令牌"
+            }}
+          </Button>
+        </div>
       </template>
 
+      <div
+        v-if="!isSub2api && truthy(site?.system_token_fallback_enabled)"
+        class="mb-3 flex items-center gap-2 text-[12px] text-ink-soft"
+      >
+        <Badge :tone="site?.has_system_access_token ? 'success' : 'neutral'" dot>
+          {{ site?.has_system_access_token ? "兜底令牌已配置" : "兜底令牌未生成" }}
+        </Badge>
+        <span>浏览器会话失效时自动改用兜底系统访问令牌读取数据。</span>
+      </div>
       <div
         v-if="accountError"
         class="rounded-[var(--radius-md)] border border-warning-fg/30 bg-warning-bg px-4 py-3 text-[13px] text-warning-fg"

@@ -72,6 +72,9 @@ export type Site = {
   session_sync_error?: string | null;
   session_synced_at?: string | null;
   has_browser_session?: boolean;
+  /** 兜底系统访问令牌（服务端生成，仅回传脱敏布尔） */
+  has_system_access_token?: boolean;
+  system_token_fallback_enabled?: boolean | number;
 };
 
 export type ChannelDiscoveryCandidate = {
@@ -469,6 +472,7 @@ export type SiteFormPayload = {
   token_expires_at: string;
   access_user_id: string;
   enabled: boolean;
+  system_token_fallback_enabled: boolean;
 };
 
 /** 站点历史快照（GET /api/sites/{id}/snapshots）— 对应 snapshots 表透传 */

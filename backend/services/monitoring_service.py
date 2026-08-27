@@ -53,6 +53,7 @@ from backend.integrations.newapi import (
     normalize_newapi_account,
     parse_groups_payload,
     parse_newapi_models_by_group,
+    refresh_site_system_access_token,
 )
 from backend.integrations.sub2api import (
     _strip_sub2api_auth_context,
@@ -614,6 +615,10 @@ class MonitoringService:
 
     def account(self, site: dict[str, Any]):
         return build_site_account_payload(site)
+
+    def refresh_system_token(self, site_id: int) -> Tuple[bool, Optional[str]]:
+        """手动重新生成兜底系统访问令牌（会重置上游该账号的系统访问令牌）。"""
+        return refresh_site_system_access_token(int(site_id), force=True)
 
     def check(self, site_id: int):
         return detect_site(site_id)

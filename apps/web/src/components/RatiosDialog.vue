@@ -279,6 +279,12 @@ const rows = computed(() =>
     summary: isNewApi.value
       ? summarizeNewApiGroup(name, pricing.value, perfMap.value)
       : summarizeLegacyGroup(name, models.value),
+    // sub2api：模型健康缓存已加载且该分组无数据 → 上游不允许监控
+    upstreamBlocked:
+      !isNewApi.value &&
+      models.value !== null &&
+      !error.value &&
+      !(models.value[name] || []).length,
   })),
 );
 
@@ -399,19 +405,25 @@ function errorText(reason: unknown): string {
                 {{ ratioLabel(row.item) }}
               </td>
               <td class="py-3 pr-3">
-                <GroupSummaryBar :summary="row.summary" :collapsed="row.collapsed" />
-                <ModelCell
-                  v-if="!row.collapsed"
-                  v-model:expanded="expanded"
-                  :site-id="site!.id"
-                  :group-name="row.name"
-                  :models="models"
-                  :pricing="pricing"
-                  :perf-map="perfMap"
-                  :is-new-api="isNewApi"
-                  :perf-loading="perfLoading"
-                  :error="isNewApi ? catalogError : error"
-                />
+                <span
+                  v-if="row.upstreamBlocked"
+                  class="text-[12.5px] font-semibold text-warning-fg"
+                >上游不允许监控</span>
+                <template v-else>
+                  <GroupSummaryBar :summary="row.summary" :collapsed="row.collapsed" />
+                  <ModelCell
+                    v-if="!row.collapsed"
+                    v-model:expanded="expanded"
+                    :site-id="site!.id"
+                    :group-name="row.name"
+                    :models="models"
+                    :pricing="pricing"
+                    :perf-map="perfMap"
+                    :is-new-api="isNewApi"
+                    :perf-loading="perfLoading"
+                    :error="isNewApi ? catalogError : error"
+                  />
+                </template>
               </td>
               <td class="py-3 text-[12.5px] text-ink-muted">
                 {{ groupPropertyText(row.item || {}) }}

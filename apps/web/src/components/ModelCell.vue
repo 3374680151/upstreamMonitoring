@@ -100,8 +100,8 @@ function toggleExpanded(key: string) {
   </span>
   <!-- Legacy: show model cards -->
   <div v-else class="space-y-2">
-    <span v-if="!legacyRows.length" class="text-[12.5px] text-ink-soft">
-      上游未返回该分组的模型数据
+    <span v-if="!legacyRows.length" class="text-[12.5px] font-semibold text-warning-fg">
+      上游不允许监控
     </span>
     <div
       v-for="row in legacyRows"

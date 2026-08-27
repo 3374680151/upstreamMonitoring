@@ -82,6 +82,11 @@ const perfMap = computed(() =>
   buildPerfMap({ data: { models: perfModels.value } }),
 );
 
+/** sub2api：该分组是否有模型健康数据（无则视为上游不允许监控） */
+function groupHasModels(name: string): boolean {
+  return (models.value?.[name] || []).length > 0;
+}
+
 function groupSummary(name: string) {
   const average = (values: Array<number | undefined>): number | null => {
     const valid: number[] = values.flatMap((value) =>
@@ -320,11 +325,12 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-2 py-2">
                   <GroupSummaryBar
-                    v-if="pricing || models"
+                    v-if="pricing || groupHasModels(row.name)"
                     :summary="groupSummary(row.name)"
                     :collapsed="false"
                   />
                   <span v-else-if="detailLoading" class="text-[11px] text-ink-soft">正在读取模型清单…</span>
+                  <span v-else-if="models" class="text-[11px] font-semibold text-warning-fg">上游不允许监控</span>
                   <span v-else class="text-[11px] text-ink-soft">{{ detailError || "暂无模型汇总" }}</span>
                 </td>
                 <td class="px-2 py-2 text-[11px] leading-relaxed text-ink-muted">

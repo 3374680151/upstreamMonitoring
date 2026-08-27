@@ -109,6 +109,16 @@ export const adminSitesApi = {
       method: "POST",
       body: "{}",
     }),
+  /** 触发当前主站的全量倍率刷新批次（并发重新匹配全部渠道，全平台可用） */
+  refreshAllChannelRatios: (adminSiteId: number) =>
+    request<{
+      success: boolean;
+      message?: string;
+      data?: { already_running: boolean; progress?: AdminKeyRefreshProgress };
+    }>(`/api/admin/sites/${adminSiteId}/channels/ratios/refresh`, {
+      method: "POST",
+      body: "{}",
+    }),
   /** 为所有 NewAPI 主站触发全量渠道 key 刷新批次 */
   refreshAllSitesChannelKeys: () =>
     request<{
@@ -125,6 +135,24 @@ export const adminSitesApi = {
         skipped_sub2api: number;
       };
     }>("/api/admin/sites/keys/refresh-all", {
+      method: "POST",
+      body: "{}",
+    }),
+  /** 为所有主站（NewAPI + sub2api）触发全量倍率刷新批次 */
+  refreshAllSitesChannelRatios: () =>
+    request<{
+      success: boolean;
+      message?: string;
+      data?: {
+        triggered: Array<{
+          admin_site_id: number;
+          name?: string;
+          success: boolean;
+          message?: string;
+          progress?: AdminKeyRefreshProgress;
+        }>;
+      };
+    }>("/api/admin/sites/ratios/refresh-all", {
       method: "POST",
       body: "{}",
     }),

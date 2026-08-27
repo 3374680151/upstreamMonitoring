@@ -391,9 +391,10 @@ export type ChannelGroupsResponse = {
   message?: string;
 };
 
-/** 全量渠道 key 刷新批次进度（后端进程内存态，/api/admin/sites 轮询返回） */
+/** 全量渠道 key / 倍率刷新批次进度（后端进程内存态，/api/admin/sites 轮询返回） */
 export type AdminKeyRefreshProgress = {
   status: "running" | "paused" | "done" | "failed" | string;
+  mode: "key" | "ratio" | string;
   total: number;
   done: number;
   failed: number;
@@ -429,6 +430,8 @@ export type AdminSite = {
   key_sync_failure_count?: number;
   /** 全量 key 刷新批次进度；无批次时后端不返回该字段 */
   key_refresh?: AdminKeyRefreshProgress;
+  /** 全量倍率刷新批次进度；无批次时后端不返回该字段 */
+  ratio_refresh?: AdminKeyRefreshProgress;
   created_at?: string;
   updated_at?: string;
 };

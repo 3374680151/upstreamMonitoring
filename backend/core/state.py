@@ -97,6 +97,12 @@ MAIN_CHANNEL_KEY_CACHE: TTLCache = TTLCache(
     maxsize=1024, ttl=MAIN_CHANNEL_KEY_CACHE_TTL_SECONDS
 )
 
+# 全量 key 刷新批次期间的「快速门控」：命中的 request_gate_key 最小间隔从
+# MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS 降到快速值，批次内多线程并发读 key。
+# 元素格式与 newapi.py 的 request_gate_key 一致："{site_id}|{normalized_base}"。
+MAIN_CHANNEL_KEY_FAST_MIN_INTERVAL_SECONDS = 0.25
+MAIN_CHANNEL_KEY_FAST_GATES: set = set()
+
 # 主站「全量渠道 key 刷新批次」：一次性后台任务（手动触发 / 2FA 验证后触发）。
 # trigger 端点写入条目并派生单次 daemon 线程逐渠道刷新（受上面的串行 + 2s 最小
 # 间隔 + 429 冷却保护）；进度条目由 /api/admin/sites 序列化轮询读取。键为

@@ -100,11 +100,15 @@ def _delete_admin_site(admin_site_id: int) -> None:
 @router.get("/admin/sites")
 async def list_admin_sites():
     data = await run_in_threadpool(list_admin_sites_payload)
-    # 全量 key 刷新批次进度（进程内存读，轻量，不进线程池）
+    # 全量 key / 倍率刷新批次进度（进程内存读，轻量，不进线程池）
     for item in data:
-        progress = admin_site_key_refresh_progress(int(item["id"]))
-        if progress:
-            item["key_refresh"] = progress
+        site_id = int(item["id"])
+        key_progress = admin_site_key_refresh_progress(site_id, "key")
+        if key_progress:
+            item["key_refresh"] = key_progress
+        ratio_progress = admin_site_key_refresh_progress(site_id, "ratio")
+        if ratio_progress:
+            item["ratio_refresh"] = ratio_progress
     return JSONResponse({"data": data})
 
 
@@ -576,6 +580,72 @@ async def refresh_all_sites_channel_keys():
                 f"已为 {ok_count} 个 NewAPI 主站启动全量 key 刷新"
                 if ok_count
                 else "没有可刷新的 NewAPI 主站"
+            ),
+        }
+    )
+
+
+@router.post("/admin/sites/{admin_site_id}/channels/ratios/refresh")
+async def refresh_all_channel_ratios(admin_site_id: int):
+    """为单个主站启动全量倍率刷新批次（重新匹配全部渠道的上游分组倍率）。
+
+    NewAPI / sub2api 均可：复用已保存的渠道 key，不触发 2FA 保护的 key 接口。
+    """
+    site, error, status = get_admin_site_or_404(admin_site_id)
+    if error:
+        return JSONResponse(error, status_code=status)
+    result = await run_in_threadpool(
+        trigger_admin_site_full_key_refresh, site, "ratio"
+    )
+    if not result.get("success"):
+        return JSONResponse(
+            {"success": False, "message": result.get("message")}, status_code=400
+        )
+    return JSONResponse(
+        {
+            "success": True,
+            "data": {
+                "already_running": bool(result.get("already_running")),
+                "progress": result.get("progress"),
+            },
+            "message": (
+                "全量倍率刷新已在进行中"
+                if result.get("already_running")
+                else "已启动全量倍率刷新（并发重新匹配全部渠道）"
+            ),
+        }
+    )
+
+
+@router.post("/admin/sites/ratios/refresh-all")
+async def refresh_all_sites_channel_ratios():
+    """为所有主站（NewAPI + sub2api）各启动一个全量倍率刷新批次。"""
+    sites = await run_in_threadpool(
+        db_query_all, "SELECT * FROM admin_sites ORDER BY id ASC"
+    )
+    triggered: list[dict] = []
+    for site in sites:
+        result = await run_in_threadpool(
+            trigger_admin_site_full_key_refresh, site, "ratio"
+        )
+        triggered.append(
+            {
+                "admin_site_id": int(site["id"]),
+                "name": site.get("name"),
+                "success": bool(result.get("success")),
+                "message": result.get("message"),
+                "progress": result.get("progress"),
+            }
+        )
+    ok_count = sum(1 for item in triggered if item["success"])
+    return JSONResponse(
+        {
+            "success": ok_count > 0 or not triggered,
+            "data": {"triggered": triggered},
+            "message": (
+                f"已为 {ok_count} 个主站启动全量倍率刷新"
+                if ok_count
+                else "没有可刷新倍率的主站"
             ),
         }
     )

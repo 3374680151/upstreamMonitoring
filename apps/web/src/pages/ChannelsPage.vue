@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { Cloud, KeyRound, RefreshCw } from "lucide-vue-next";
+import { Cloud, KeyRound, Percent, RefreshCw } from "lucide-vue-next";
 import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
 import Badge from "@/components/Badge.vue";
 import ChannelPriorityDialog from "@/components/ChannelPriorityDialog.vue";
@@ -182,6 +182,8 @@ const currentAdminSite = computed(
 );
 const isSub2Api = computed(() => currentAdminSite.value?.platform === "sub2api");
 const currentKeyRefresh = computed(() => currentAdminSite.value?.key_refresh || null);
+const currentRatioRefresh = computed(() => currentAdminSite.value?.ratio_refresh || null);
+const ratioRefreshTriggering = ref(false);
 
 const keyRefreshStatusText = computed(() => {
   const progress = currentKeyRefresh.value;
@@ -195,6 +197,20 @@ const keyRefreshStatusText = computed(() => {
     return `key 刷新失败${progress.message ? `：${progress.message}` : ""}`;
   }
   return `key 刷新完成 ${progress.done}/${progress.total}${failedSuffix}`;
+});
+
+const ratioRefreshStatusText = computed(() => {
+  const progress = currentRatioRefresh.value;
+  if (!progress) return "";
+  const failedSuffix = progress.failed ? ` · 失败 ${progress.failed}` : "";
+  if (progress.status === "running") {
+    return `倍率刷新中 ${progress.done}/${progress.total}${failedSuffix}`;
+  }
+  if (progress.status === "paused") return "倍率刷新已暂停，需重新验证 2FA";
+  if (progress.status === "failed") {
+    return `倍率刷新失败${progress.message ? `：${progress.message}` : ""}`;
+  }
+  return `倍率刷新完成 ${progress.done}/${progress.total}${failedSuffix}`;
 });
 
 const allowedGroupNames = computed(() =>
@@ -336,9 +352,14 @@ async function loadAdminSites() {
     } else {
       siteId.value = list[0]?.id ?? null;
     }
-    // 全量 key 刷新批次已在后台跑（例如刚在添加弹窗里完成 2FA 验证）：接上进度轮询
+    // 全量 key / 倍率刷新批次已在后台跑（例如刚在添加弹窗里完成 2FA 验证）：接上进度轮询
     const current = list.find((site) => site.id === siteId.value);
-    if (current?.key_refresh?.status === "running") ensureKeyRefreshPolling();
+    if (
+      current?.key_refresh?.status === "running" ||
+      current?.ratio_refresh?.status === "running"
+    ) {
+      ensureKeyRefreshPolling();
+    }
   } catch (err) {
     adminSites.value = [];
     error.value = errorText(err, "主站列表加载失败");
@@ -369,17 +390,36 @@ async function pollKeyRefreshProgress() {
     const response = await api.adminSites();
     const list = response.data || [];
     adminSites.value = list;
-    const progress = list.find((site) => site.id === targetId)?.key_refresh;
-    if (!progress || progress.status === "paused" || progress.status === "failed") {
+    const site = list.find((item) => item.id === targetId);
+    const keyProgress = site?.key_refresh;
+    const ratioProgress = site?.ratio_refresh;
+    const activeProgress =
+      keyProgress?.status === "running"
+        ? keyProgress
+        : ratioProgress?.status === "running"
+          ? ratioProgress
+          : null;
+    if (!activeProgress) {
       stopKeyRefreshPolling();
+      if (keyProgress?.status === "done") {
+        toast.success(
+          `渠道 key 全量刷新完成：成功 ${keyProgress.done}/${keyProgress.total}` +
+            (keyProgress.failed ? `，失败 ${keyProgress.failed}` : ""),
+        );
+      }
+      if (ratioProgress?.status === "done") {
+        toast.success(
+          `倍率全量刷新完成：成功 ${ratioProgress.done}/${ratioProgress.total}` +
+            (ratioProgress.failed ? `，失败 ${ratioProgress.failed}` : ""),
+        );
+      }
+      if (keyProgress?.status === "done" || ratioProgress?.status === "done") {
+        await load(keyword.value);
+      }
       return;
     }
-    if (progress.status === "done") {
+    if (activeProgress.status === "done") {
       stopKeyRefreshPolling();
-      toast.success(
-        `渠道 key 全量刷新完成：成功 ${progress.done}/${progress.total}` +
-          (progress.failed ? `，失败 ${progress.failed}` : ""),
-      );
       await load(keyword.value);
     }
   } catch {
@@ -404,6 +444,26 @@ async function triggerFullKeyRefresh() {
     toast.error(message);
   } finally {
     keyRefreshTriggering.value = false;
+  }
+}
+
+async function triggerFullRatioRefresh() {
+  if (siteId.value == null) return;
+  ratioRefreshTriggering.value = true;
+  actionError.value = "";
+  try {
+    const response = await api.refreshAllChannelRatios(siteId.value);
+    if (!response.success) throw new Error(response.message || "触发全量倍率刷新失败");
+    await pollKeyRefreshProgress();
+    if (response.data?.progress?.status === "running" || currentRatioRefresh.value?.status === "running") {
+      ensureKeyRefreshPolling();
+    }
+    toast.info(response.message || "已启动全量倍率刷新");
+  } catch (err) {
+    const message = errorText(err, "触发全量倍率刷新失败");
+    toast.error(message);
+  } finally {
+    ratioRefreshTriggering.value = false;
   }
 }
 
@@ -957,13 +1017,24 @@ watch(
             v-if="!isSub2Api"
             variant="secondary"
             aria-label="刷新全部渠道 key"
-            title="立即刷新当前主站全部渠道 key 并重新匹配上游倍率"
+            title="立即并发刷新当前主站全部渠道 key 并重新匹配上游倍率"
             :disabled="siteId == null || keyRefreshTriggering"
             :loading="keyRefreshTriggering"
             @click="triggerFullKeyRefresh"
           >
             <KeyRound v-if="!keyRefreshTriggering" :size="13" />
             刷新全部 key
+          </Button>
+          <Button
+            variant="secondary"
+            aria-label="刷新全部倍率"
+            title="并发重新匹配当前主站全部渠道的上游分组倍率（复用已保存 key，无需 2FA）"
+            :disabled="siteId == null || ratioRefreshTriggering"
+            :loading="ratioRefreshTriggering"
+            @click="triggerFullRatioRefresh"
+          >
+            <Percent v-if="!ratioRefreshTriggering" :size="13" />
+            刷新倍率
           </Button>
           <span
             v-if="currentKeyRefresh"
@@ -978,6 +1049,20 @@ watch(
             :title="currentKeyRefresh.message || undefined"
           >
             {{ keyRefreshStatusText }}
+          </span>
+          <span
+            v-if="currentRatioRefresh"
+            :class="[
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+              currentRatioRefresh.status === 'running'
+                ? 'bg-sunken text-ink-muted'
+                : currentRatioRefresh.status === 'paused' || currentRatioRefresh.status === 'failed'
+                  ? 'bg-danger-bg text-danger-fg'
+                  : 'bg-success-bg text-success-fg',
+            ]"
+            :title="currentRatioRefresh.message || undefined"
+          >
+            {{ ratioRefreshStatusText }}
           </span>
           <Button
             variant="secondary"

@@ -40,6 +40,8 @@ from backend.core.state import (
     MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS,
     MAIN_CHANNEL_KEY_RATE_LIMIT_UNTIL,
     MAIN_CHANNEL_KEY_REQUEST_LOCK,
+    MAIN_CHANNEL_KEY_FAST_MIN_INTERVAL_SECONDS,
+    MAIN_CHANNEL_KEY_FAST_GATES,
     MODEL_CACHE_LOCK,
     MODEL_CACHE_REFRESHING,
     MODEL_CACHE_TTL_SECONDS,
@@ -925,41 +927,52 @@ def fetch_newapi_channel_key(
     base = normalize_base_url(site["base_url"])
     headers = site_newapi_channel_key_headers(site)
     request_gate_key = f"{int(site.get('id') or 0)}|{base}"
+    # 预约式限速：锁内只做「冷却检查 + 间隔预约」，HTTP 请求挪到锁外，
+    # 使全量刷新批次的多个工作线程能错峰并发读 key（快速模式下最小间隔
+    # 由 MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS 降到 FAST 值；429 冷却不变）。
     with MAIN_CHANNEL_KEY_REQUEST_LOCK:
         cooldown_until = MAIN_CHANNEL_KEY_RATE_LIMIT_UNTIL.get(request_gate_key, 0.0)
         if cooldown_until > time.monotonic():
             wait_seconds = max(1, int(cooldown_until - time.monotonic()))
             return False, "", f"主站 key 接口触发限流（HTTP 429），已暂停请求，请等待约 {wait_seconds} 秒后再刷新"
+        min_interval = (
+            MAIN_CHANNEL_KEY_FAST_MIN_INTERVAL_SECONDS
+            if request_gate_key in MAIN_CHANNEL_KEY_FAST_GATES
+            else MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS
+        )
         elapsed = time.monotonic() - MAIN_CHANNEL_KEY_LAST_REQUEST_AT.get(request_gate_key, 0.0)
-        wait_seconds = MAIN_CHANNEL_KEY_MIN_INTERVAL_SECONDS - elapsed
-        if wait_seconds > 0:
-            time.sleep(wait_seconds)
-        MAIN_CHANNEL_KEY_LAST_REQUEST_AT[request_gate_key] = time.monotonic()
+        wait_seconds = max(0.0, min_interval - elapsed)
+        # 预约下一次允许的请求时刻，别的线程据此排队
+        MAIN_CHANNEL_KEY_LAST_REQUEST_AT[request_gate_key] = (
+            time.monotonic() + wait_seconds
+        )
+    if wait_seconds > 0:
+        time.sleep(wait_seconds)
+    ok, payload, error = request_json(
+        f"{base}/api/channel/{int(channel_id)}/key",
+        headers=headers,
+        method="POST",
+    )
+    status, response_code, _response_message = _upstream_response_details(
+        payload, error
+    )
+    if (
+        not ok
+        and admin_site
+        and status == 401
+        and response_code == "AUTH_TOKEN_EXPIRED"
+    ):
+        refreshed, refresh_error = refresh_admin_site_browser_session(
+            site, force=True
+        )
+        if not refreshed:
+            return False, "", refresh_error or "主站网页登录态刷新失败"
+        headers = site_newapi_channel_key_headers(site)
         ok, payload, error = request_json(
             f"{base}/api/channel/{int(channel_id)}/key",
             headers=headers,
             method="POST",
         )
-        status, response_code, _response_message = _upstream_response_details(
-            payload, error
-        )
-        if (
-            not ok
-            and admin_site
-            and status == 401
-            and response_code == "AUTH_TOKEN_EXPIRED"
-        ):
-            refreshed, refresh_error = refresh_admin_site_browser_session(
-                site, force=True
-            )
-            if not refreshed:
-                return False, "", refresh_error or "主站网页登录态刷新失败"
-            headers = site_newapi_channel_key_headers(site)
-            ok, payload, error = request_json(
-                f"{base}/api/channel/{int(channel_id)}/key",
-                headers=headers,
-                method="POST",
-            )
     if not ok:
         raw_message = ""
         if isinstance(payload, dict):
@@ -1011,6 +1024,19 @@ def fetch_newapi_channel_key(
     if admin_site:
         persist_admin_channel_key(int(site["id"]), int(channel_id), key)
     return True, key, None
+
+
+def set_newapi_channel_key_fast_mode(site: Dict[str, Any], enabled: bool) -> None:
+    """全量 key 刷新批次开关：开启后该主站 key 接口最小间隔降为快速值。
+
+    批次结束（含异常）必须关闭，避免影响日常单渠道刷新的限速节奏。
+    """
+    gate_key = f"{int(site.get('id') or 0)}|{normalize_base_url(str(site.get('base_url') or ''))}"
+    with MAIN_CHANNEL_KEY_REQUEST_LOCK:
+        if enabled:
+            MAIN_CHANNEL_KEY_FAST_GATES.add(gate_key)
+        else:
+            MAIN_CHANNEL_KEY_FAST_GATES.discard(gate_key)
 
 def create_newapi_channel(
     site: Dict[str, Any], body: Dict[str, Any]

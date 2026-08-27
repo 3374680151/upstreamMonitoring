@@ -63,6 +63,7 @@ from backend.services.discovery_service import (
 from backend.integrations.newapi import (
     aggregate_newapi_channel_candidates,
     fetch_newapi_channel_key,
+    set_newapi_channel_key_fast_mode,
 )
 from backend.services.admin_site_service import (
     fetch_admin_site_channels,
@@ -518,20 +519,36 @@ def run_due_admin_key_syncs(now: Optional[datetime] = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 全量渠道 key 刷新批次（手动触发 / 2FA 验证后自动触发）
+# 全量渠道 key / 倍率刷新批次（手动触发 / 2FA 验证后自动触发）
 # ---------------------------------------------------------------------------
-# 一次性 daemon 线程逐渠道刷新：每读一个 key 即重新匹配上游倍率绑定；限速由
-# fetch_newapi_channel_key 内部的站点级串行 + 2s 最小间隔 + 429 冷却保证。
-# proof 失效时批次暂停（status="paused"），重新验证 2FA 后再次 trigger 即可
-# 从断点续刷（channel_ids + cursor 保留在内存批次里）。
+# 一次性 daemon 线程 + ThreadPool 并发刷新：
+# - mode="key"  ：每个渠道并发「读 key（快速门控 0.25s 错峰 + 429 冷却保护）
+#                 → 重新匹配上游分组倍率」；仅 NewAPI。
+# - mode="ratio"：只重新匹配每个渠道的上游分组倍率（复用已保存 key，不发
+#                 2FA 保护的 key 接口请求）；NewAPI / sub2api 均可。
+# proof 失效时批次暂停（status="paused"），重新验证 2FA 后再次 trigger 即可。
+# 进度由 /api/admin/sites 序列化轮询：key 批次 → key_refresh，倍率批次 →
+# ratio_refresh。
 
-# 单渠道最多连续重试次数（仅限流场景会原地重试）
+# 单个渠道遇到限流时在 worker 内原地重试的最大次数
 _ADMIN_KEY_REFRESH_MAX_RETRIES_PER_CHANNEL = 3
+# 批次内并发工作线程数
+_ADMIN_KEY_REFRESH_CONCURRENCY = 4
+
+# proof 失效 / 需要 2FA 的消息标记（key 读取与匹配共用）
+_ADMIN_PROOF_MARKERS = (
+    "安全验证",
+    "2FA",
+    "proof",
+    "Session",
+    "needs_key_verification",
+)
 
 
 def _admin_key_refresh_batch_progress(batch: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": str(batch.get("status") or ""),
+        "mode": str(batch.get("mode") or "key"),
         "total": int(batch.get("total") or 0),
         "done": int(batch.get("done") or 0),
         "failed": int(batch.get("failed") or 0),
@@ -541,24 +558,37 @@ def _admin_key_refresh_batch_progress(batch: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def admin_site_key_refresh_progress(admin_site_id: int) -> Optional[Dict[str, Any]]:
-    """读取某个主站的全量 key 刷新进度（纯内存读，无批次时返回 None）。"""
+def admin_site_key_refresh_progress(
+    admin_site_id: int, mode: str = "key"
+) -> Optional[Dict[str, Any]]:
+    """读取某个主站的刷新批次进度（纯内存读，无批次时返回 None）。"""
     with ADMIN_KEY_REFRESH_BATCH_LOCK:
         batch = ADMIN_KEY_REFRESH_BATCHES.get(int(admin_site_id))
-        return _admin_key_refresh_batch_progress(batch) if batch else None
+        if not batch or str(batch.get("mode") or "key") != mode:
+            return None
+        return _admin_key_refresh_batch_progress(batch)
 
 
-def trigger_admin_site_full_key_refresh(admin: Dict[str, Any]) -> Dict[str, Any]:
-    """为 NewAPI 主站启动（或恢复）一次全量渠道 key 刷新批次。
+def _admin_batch_is_proof_failure(message: str) -> bool:
+    return any(marker in message for marker in _ADMIN_PROOF_MARKERS)
 
-    立即返回进度；实际刷新在后台 daemon 线程里逐渠道执行。
-    暂停中的批次（2FA 过期）会从断点恢复。
+
+def trigger_admin_site_full_key_refresh(
+    admin: Dict[str, Any], mode: str = "key"
+) -> Dict[str, Any]:
+    """为主站启动（或恢复）一次全量刷新批次。
+
+    mode="key"   仅 NewAPI：并发刷新全部渠道 key + 倍率绑定。
+    mode="ratio" 全平台：并发重新匹配全部渠道的上游分组倍率。
+    立即返回进度；实际刷新在后台 daemon 线程里并发执行。
+    暂停中的批次（2FA 过期）会恢复续跑。
     """
     admin_site_id = int(admin.get("id") or 0)
     if not admin_site_id:
         return {"success": False, "message": "主站不存在"}
+    mode = "ratio" if mode == "ratio" else "key"
     platform = str(admin.get("platform") or "newapi").strip().lower()
-    if platform != "newapi":
+    if mode == "key" and platform != "newapi":
         return {"success": False, "message": "仅 NewAPI 主站支持全量刷新渠道 key"}
 
     with ADMIN_KEY_REFRESH_BATCH_LOCK:
@@ -582,7 +612,7 @@ def trigger_admin_site_full_key_refresh(admin: Dict[str, Any]) -> Dict[str, Any]
         if channel_id:
             channel_ids.append(channel_id)
     if not channel_ids:
-        return {"success": False, "message": "主站暂无可刷新 key 的渠道"}
+        return {"success": False, "message": "主站暂无可刷新的渠道"}
 
     now_iso = utc_now_iso()
     with ADMIN_KEY_REFRESH_BATCH_LOCK:
@@ -597,9 +627,10 @@ def trigger_admin_site_full_key_refresh(admin: Dict[str, Any]) -> Dict[str, Any]
         if (
             existing
             and existing.get("status") == "paused"
+            and str(existing.get("mode") or "key") == mode
             and list(existing.get("channel_ids") or []) == channel_ids
         ):
-            # 断点续刷：保留 cursor / done / failed 计数
+            # 断点续跑：保留 done / failed 计数（仅同 mode 才续跑）
             existing["status"] = "running"
             existing["message"] = None
             existing["updated_at"] = now_iso
@@ -607,13 +638,13 @@ def trigger_admin_site_full_key_refresh(admin: Dict[str, Any]) -> Dict[str, Any]
         else:
             batch = {
                 "admin_site_id": admin_site_id,
+                "mode": mode,
                 "status": "running",
                 "channel_ids": channel_ids,
-                "cursor": 0,
+                "remaining": list(channel_ids),
                 "total": len(channel_ids),
                 "done": 0,
                 "failed": 0,
-                "retries": 0,
                 "message": None,
                 "started_at": now_iso,
                 "updated_at": now_iso,
@@ -624,87 +655,141 @@ def trigger_admin_site_full_key_refresh(admin: Dict[str, Any]) -> Dict[str, Any]
         target=_run_admin_key_refresh_batch,
         args=(admin_site_id,),
         daemon=True,
-        name=f"admin-key-refresh-{admin_site_id}",
+        name=f"admin-{mode}-refresh-{admin_site_id}",
     ).start()
     return {"success": True, "progress": _admin_key_refresh_batch_progress(batch)}
 
 
+def _process_admin_refresh_channel(
+    site: Dict[str, Any], channel_id: int, mode: str
+) -> Tuple[str, Optional[str]]:
+    """批次 worker：处理单个渠道，返回 (结果, 消息)。
+
+    结果取值："ok" / "failed" / "proof"。
+    """
+    if mode == "key":
+        key_ok, _key, key_error = None, "", None
+        message = ""
+        for _attempt in range(_ADMIN_KEY_REFRESH_MAX_RETRIES_PER_CHANNEL):
+            key_ok, _key, key_error = fetch_newapi_channel_key(
+                site, channel_id, force_refresh=True
+            )
+            message = str(key_error or "")
+            if key_ok:
+                break
+            if _admin_batch_is_proof_failure(message):
+                return "proof", message
+            if "429" not in message and "限流" not in message:
+                break
+            # 限流：等冷却结束再原地重试（其他 worker 同样会被门控挡住）
+            time.sleep(MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS + 1.0)
+        if not key_ok:
+            return "failed", message or "读取渠道 key 失败"
+
+    # 重新匹配上游分组倍率（key 模式下 key 刚落缓存；ratio 模式复用已存 key）
+    try:
+        match_ok, match_payload, match_error = match_channel_upstream_binding(
+            site, channel_id, force_refresh=False
+        )
+    except Exception as exc:  # noqa: BLE001 - 单渠道异常不拖垮批次
+        traceback.print_exc()
+        return "failed", f"匹配上游倍率异常：{exc}"
+    if not match_ok:
+        message = str(match_error or "")
+        if not message and isinstance(match_payload, dict):
+            message = str(match_payload.get("match_message") or "")
+        if _admin_batch_is_proof_failure(message) or (
+            isinstance(match_payload, dict)
+            and match_payload.get("match_status") == "needs_key_verification"
+        ):
+            return "proof", message
+        return "failed", message or "匹配上游倍率失败"
+    return "ok", None
+
+
 def _run_admin_key_refresh_batch(admin_site_id: int) -> None:
-    while True:
+    from backend.core.state import (
+        NEWAPI_MATCH_GROUPS_CACHE,
+        NEWAPI_MATCH_GROUPS_LOCK,
+    )
+
+    with ADMIN_KEY_REFRESH_BATCH_LOCK:
+        batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
+        if not batch or batch.get("status") != "running":
+            return
+        mode = str(batch.get("mode") or "key")
+        channel_ids = list(batch.get("channel_ids") or [])
+
+    site = db_query_one("SELECT * FROM admin_sites WHERE id = ?", (admin_site_id,))
+    if not site:
         with ADMIN_KEY_REFRESH_BATCH_LOCK:
             batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
-            if not batch or batch.get("status") != "running":
-                return
-            cursor = int(batch.get("cursor") or 0)
-            channel_ids = list(batch.get("channel_ids") or [])
-            if cursor >= len(channel_ids):
+            if batch:
+                batch["status"] = "failed"
+                batch["message"] = "主站已删除"
+                batch["updated_at"] = utc_now_iso()
+        return
+    if STOP_EVENT.is_set():
+        return
+
+    # 批次开始：清空上游分组 30s TTL 缓存，保证本轮匹配拿到最新倍率；
+    # 之后同上游多渠道仍共享一次分组请求（缓存回填）。
+    with NEWAPI_MATCH_GROUPS_LOCK:
+        NEWAPI_MATCH_GROUPS_CACHE.clear()
+    fast_mode_enabled = mode == "key"
+    if fast_mode_enabled:
+        set_newapi_channel_key_fast_mode(site, True)
+    try:
+        with ThreadPoolExecutor(
+            max_workers=_ADMIN_KEY_REFRESH_CONCURRENCY,
+            thread_name_prefix=f"admin-{mode}-refresh-{admin_site_id}",
+        ) as pool:
+            future_map = {
+                pool.submit(_process_admin_refresh_channel, site, cid, mode): cid
+                for cid in channel_ids
+            }
+            for future in as_completed(future_map):
+                channel_id = future_map[future]
+                try:
+                    result, message = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    result, message = "failed", f"渠道 #{channel_id} 处理异常：{exc}"
+                with ADMIN_KEY_REFRESH_BATCH_LOCK:
+                    batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
+                    if not batch or batch.get("status") != "running":
+                        # 批次被外部暂停（proof）或重置：尽快排空线程池后退出
+                        for pending in future_map:
+                            pending.cancel()
+                        continue
+                    batch["updated_at"] = utc_now_iso()
+                    batch["remaining"] = [
+                        cid
+                        for cid in (batch.get("remaining") or [])
+                        if cid != channel_id
+                    ]
+                    if result == "ok":
+                        batch["done"] = int(batch.get("done") or 0) + 1
+                    elif result == "proof":
+                        batch["status"] = "paused"
+                        batch["message"] = (
+                            "需要重新验证 2FA：请在主站编辑弹窗完成安全验证后重新触发"
+                        )
+                        for pending in future_map:
+                            pending.cancel()
+                    else:
+                        batch["failed"] = int(batch.get("failed") or 0) + 1
+                        batch["message"] = (
+                            f"渠道 #{channel_id} 失败：{str(message or '')[:200]}"
+                        )
+    finally:
+        if fast_mode_enabled:
+            set_newapi_channel_key_fast_mode(site, False)
+        with ADMIN_KEY_REFRESH_BATCH_LOCK:
+            batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
+            if batch and batch.get("status") == "running":
                 batch["status"] = "done"
                 batch["message"] = None
                 batch["updated_at"] = utc_now_iso()
-                return
-            channel_id = channel_ids[cursor]
-            # 预扣该渠道：成功/失败都会推进；限流时回滚重试
-            batch["cursor"] = cursor + 1
-            batch["retries"] = int(batch.get("retries") or 0)
-        if STOP_EVENT.is_set():
-            return
-
-        site = db_query_one("SELECT * FROM admin_sites WHERE id = ?", (admin_site_id,))
-        if not site:
-            with ADMIN_KEY_REFRESH_BATCH_LOCK:
-                batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
-                if batch:
-                    batch["status"] = "failed"
-                    batch["message"] = "主站已删除"
-                    batch["updated_at"] = utc_now_iso()
-            return
-
-        key_ok, _key, key_error = fetch_newapi_channel_key(
-            site, channel_id, force_refresh=True
-        )
-        message = str(key_error or "")
-        proof_failure = any(
-            marker in message
-            for marker in ("安全验证", "2FA", "proof", "Session")
-        )
-        rate_limited = "429" in message or "限流" in message
-
-        if key_ok:
-            try:
-                match_channel_upstream_binding(site, channel_id, force_refresh=False)
-            except Exception:
-                # 匹配失败不阻塞 key 批次；绑定状态由 match 自己落库
-                traceback.print_exc()
-
-        with ADMIN_KEY_REFRESH_BATCH_LOCK:
-            batch = ADMIN_KEY_REFRESH_BATCHES.get(admin_site_id)
-            if not batch or batch.get("status") != "running":
-                return  # 批次被外部重置/停止
-            batch["updated_at"] = utc_now_iso()
-            if key_ok:
-                batch["done"] = int(batch.get("done") or 0) + 1
-                batch["retries"] = 0
-            elif rate_limited:
-                retries = int(batch.get("retries") or 0) + 1
-                batch["retries"] = retries
-                if retries > _ADMIN_KEY_REFRESH_MAX_RETRIES_PER_CHANNEL:
-                    batch["failed"] = int(batch.get("failed") or 0) + 1
-                    batch["message"] = f"渠道 #{channel_id} 持续限流，已跳过"
-                else:
-                    # 回滚 cursor，稍后重试同一渠道
-                    batch["cursor"] = cursor
-            elif proof_failure:
-                batch["status"] = "paused"
-                batch["message"] = (
-                    "渠道 key 读取需要重新验证 2FA：请打开主站编辑弹窗重新验证后继续"
-                )
-                return
-            else:
-                batch["failed"] = int(batch.get("failed") or 0) + 1
-                batch["message"] = f"渠道 #{channel_id} 刷新失败：{message[:200]}"
-        if rate_limited:
-            # 冷却期内再请求只会立刻失败，等冷却过去再重试
-            time.sleep(MAIN_CHANNEL_KEY_RATE_LIMIT_COOLDOWN_SECONDS + 1.0)
 
 
 def _sync_one_admin_site(

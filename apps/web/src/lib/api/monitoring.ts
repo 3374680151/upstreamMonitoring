@@ -62,19 +62,21 @@ export const monitoringApi = {
   /** 账户额度：NewAPI /api/user/self 或 sub2api /api/v1/auth/me */
   siteAccount: (siteId: number) =>
     request<SiteAccountResponse>(`/api/sites/${siteId}/account`),
-  siteModels: (siteId: number) =>
+  siteModels: (siteId: number, opts?: { refresh?: boolean }) =>
     request<{
       models_by_group?: Record<string, any[]>;
       fetched_at?: string;
       message?: string;
-    }>(`/api/sites/${siteId}/models`),
+    }>(`/api/sites/${siteId}/models${opts?.refresh ? "?refresh=true" : ""}`),
   /** NewAPI: model catalog (enable_groups / usable_group / ratios) */
-  sitePricing: (siteId: number) =>
-    request<PricingResponse>(`/api/sites/${siteId}/pricing`),
+  sitePricing: (siteId: number, opts?: { refresh?: boolean }) =>
+    request<PricingResponse>(
+      `/api/sites/${siteId}/pricing${opts?.refresh ? "?refresh=true" : ""}`,
+    ),
   /** NewAPI: site-wide model status summary (list badges; NOT group-scoped) */
-  sitePerfSummary: (siteId: number, hours = 24) =>
+  sitePerfSummary: (siteId: number, hours = 24, opts?: { refresh?: boolean }) =>
     request<PerfSummaryResponse>(
-      `/api/sites/${siteId}/perf-metrics/summary?hours=${hours}`,
+      `/api/sites/${siteId}/perf-metrics/summary?hours=${hours}${opts?.refresh ? "&refresh=true" : ""}`,
     ),
   /** NewAPI: per-group status + series for one model */
   sitePerfDetail: (

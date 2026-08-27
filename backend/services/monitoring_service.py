@@ -28,6 +28,12 @@ from backend.core.state import (
     MODEL_CACHE_REFRESHING,
     MODEL_CACHE_TTL_SECONDS,
     MODEL_DATA_CACHE,
+    NEWAPI_PERF_SUMMARY_CACHE,
+    NEWAPI_PERF_SUMMARY_FRESH_SECONDS,
+    NEWAPI_PERF_SUMMARY_REFRESHING,
+    NEWAPI_PRICING_CACHE,
+    NEWAPI_PRICING_FRESH_SECONDS,
+    NEWAPI_PRICING_REFRESHING,
     STOP_EVENT,
 )
 from backend.core.time import (
@@ -48,6 +54,7 @@ from backend.integrations.newapi import (
     fetch_newapi_account_for_site,
     fetch_newapi_groups,
     fetch_newapi_groups_for_site,
+    fetch_newapi_perf_summary_for_site,
     fetch_newapi_pricing_for_site,
     get_cached_newapi_uptime_for_site,
     normalize_newapi_account,
@@ -476,6 +483,9 @@ def build_site_models_payload(site: Dict[str, Any]) -> Tuple[int, Dict[str, Any]
         pricing_ok, pricing_payload, pricing_error = fetch_newapi_pricing_for_site(site)
         if not pricing_ok:
             return 502, {"success": False, "message": pricing_error or "读取 NewAPI 模型失败"}
+        # 顺带回填 pricing 缓存：站点检测 / models 缓存刷新都走这里，
+        # 相当于按检测周期定期更新，悬浮浮层读缓存即可秒开。
+        cache_newapi_pricing_payload(int(site["id"]), pricing_payload)
         uptime_payload, uptime_error = get_cached_newapi_uptime_for_site(site)
         payload = {
             "success": True,
@@ -585,9 +595,106 @@ def schedule_model_cache_refresh(site_id: int) -> None:
     threading.Thread(target=model_cache_refresh_worker, args=(site_id,), daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# NewAPI pricing / perf-summary 缓存（渠道悬浮浮层秒开；弹窗 refresh=1 穿透）
+# ---------------------------------------------------------------------------
+
+def cache_newapi_pricing_payload(site_id: int, payload: Dict[str, Any]) -> None:
+    with MODEL_CACHE_LOCK:
+        NEWAPI_PRICING_CACHE[site_id] = {
+            "payload": json.loads(json.dumps(payload, ensure_ascii=False)),
+            "updated_monotonic": time.monotonic(),
+        }
+
+
+def get_newapi_pricing_cache(site_id: int) -> Tuple[Optional[Dict[str, Any]], float]:
+    with MODEL_CACHE_LOCK:
+        entry = NEWAPI_PRICING_CACHE.get(site_id)
+        if not entry or not isinstance(entry.get("payload"), dict):
+            return None, float("inf")
+        age = time.monotonic() - float(entry.get("updated_monotonic") or 0)
+        return json.loads(json.dumps(entry["payload"], ensure_ascii=False)), age
+
+
+def newapi_pricing_cache_refresh_worker(site_id: int) -> None:
+    try:
+        site = db_query_one("SELECT * FROM sites WHERE id = ?", (site_id,))
+        if not site:
+            return
+        ok, payload, _error = fetch_newapi_pricing_for_site(site)
+        if ok and isinstance(payload, dict):
+            cache_newapi_pricing_payload(site_id, payload)
+    finally:
+        with MODEL_CACHE_LOCK:
+            NEWAPI_PRICING_REFRESHING.discard(site_id)
+
+
+def schedule_newapi_pricing_refresh(site_id: int) -> None:
+    with MODEL_CACHE_LOCK:
+        if site_id in NEWAPI_PRICING_REFRESHING:
+            return
+        NEWAPI_PRICING_REFRESHING.add(site_id)
+    threading.Thread(
+        target=newapi_pricing_cache_refresh_worker, args=(site_id,), daemon=True
+    ).start()
+
+
+def _summary_cache_key(site_id: int, hours: int) -> str:
+    return f"{site_id}:{hours:g}"
+
+
+def cache_newapi_perf_summary_payload(
+    site_id: int, hours: int, payload: Dict[str, Any]
+) -> None:
+    with MODEL_CACHE_LOCK:
+        NEWAPI_PERF_SUMMARY_CACHE[_summary_cache_key(site_id, hours)] = {
+            "payload": json.loads(json.dumps(payload, ensure_ascii=False)),
+            "updated_monotonic": time.monotonic(),
+        }
+
+
+def get_newapi_perf_summary_cache(
+    site_id: int, hours: int
+) -> Tuple[Optional[Dict[str, Any]], float]:
+    with MODEL_CACHE_LOCK:
+        entry = NEWAPI_PERF_SUMMARY_CACHE.get(_summary_cache_key(site_id, hours))
+        if not entry or not isinstance(entry.get("payload"), dict):
+            return None, float("inf")
+        age = time.monotonic() - float(entry.get("updated_monotonic") or 0)
+        return json.loads(json.dumps(entry["payload"], ensure_ascii=False)), age
+
+
+def newapi_perf_summary_cache_refresh_worker(site_id: int, hours: int) -> None:
+    try:
+        site = db_query_one("SELECT * FROM sites WHERE id = ?", (site_id,))
+        if not site:
+            return
+        ok, payload, _error = fetch_newapi_perf_summary_for_site(site, hours=hours)
+        if ok and isinstance(payload, dict):
+            cache_newapi_perf_summary_payload(site_id, hours, payload)
+    finally:
+        with MODEL_CACHE_LOCK:
+            NEWAPI_PERF_SUMMARY_REFRESHING.discard(_summary_cache_key(site_id, hours))
+
+
+def schedule_newapi_perf_summary_refresh(site_id: int, hours: int) -> None:
+    key = _summary_cache_key(site_id, hours)
+    with MODEL_CACHE_LOCK:
+        if key in NEWAPI_PERF_SUMMARY_REFRESHING:
+            return
+        NEWAPI_PERF_SUMMARY_REFRESHING.add(key)
+    threading.Thread(
+        target=newapi_perf_summary_cache_refresh_worker, args=(site_id, hours), daemon=True
+    ).start()
+
+
 def warm_model_cache() -> None:
-    for site in db_query_all("SELECT id FROM sites WHERE enabled = 1 ORDER BY id"):
+    for site in db_query_all("SELECT id, platform FROM sites WHERE enabled = 1 ORDER BY id"):
+        # models 刷新会顺带回填 pricing 缓存（build_site_models_payload 内）。
         schedule_model_cache_refresh(int(site["id"]))
+        if (site.get("platform") or "newapi") == "newapi":
+            # 悬浮浮层固定用 hours=1 的 summary；弹窗打开时实时穿透，无需预热。
+            schedule_newapi_perf_summary_refresh(int(site["id"]), 1)
 
 
 # ---------------------------------------------------------------------------

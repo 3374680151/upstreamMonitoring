@@ -48,15 +48,33 @@ STOP_EVENT = threading.Event()
 # MODEL_DATA_CACHE 缓存分组/模型清单；NEWAPI_UPTIME_CACHE 缓存各主站可用率。
 # 两者共用 MODEL_CACHE_LOCK，NEWAPI_UPTIME_* 虽属 NewAPI 域但为避免死锁与
 # 多锁竞争，仍由 MODEL_CACHE_LOCK 统一守卫。
+# 注意：TTLCache 的 ttl 只是内存上界（过期前条目仍在，可读旧值做 SWR）；
+# 业务新鲜度由条目内的 updated_monotonic 人工判定，两者不能设成同一个值，
+# 否则条目先被 TTLCache 逐出，永远走不到「返回旧值 + 后台刷新」分支。
 MODEL_CACHE_TTL_SECONDS = 90
+MODEL_CACHE_BOUND_SECONDS = 1800
 UPTIME_CACHE_TTL_SECONDS = 300
 # 容器用 cachetools.TTLCache：有界内存 + 过期自动兜底；
 # 条目内的 updated_monotonic 仍保留，业务侧的 age 计算与 SWR 逻辑不变。
-MODEL_DATA_CACHE: TTLCache = TTLCache(maxsize=512, ttl=MODEL_CACHE_TTL_SECONDS)
+MODEL_DATA_CACHE: TTLCache = TTLCache(maxsize=512, ttl=MODEL_CACHE_BOUND_SECONDS)
 MODEL_CACHE_REFRESHING: set[int] = set()
 NEWAPI_UPTIME_CACHE: TTLCache = TTLCache(maxsize=512, ttl=UPTIME_CACHE_TTL_SECONDS)
 NEWAPI_UPTIME_REFRESHING: set[str] = set()
 MODEL_CACHE_LOCK = threading.RLock()
+
+
+# ---------------------------------------------------------------------------
+# NewAPI pricing / perf-metrics summary 缓存（渠道悬浮浮层用）
+# ---------------------------------------------------------------------------
+# 渠道页悬浮浮层要求秒开：读请求一律先回缓存（哪怕已过旧），条目超过
+# 新鲜度窗口时调度后台线程刷新（SWR）；倍率弹窗「点击查看」带 refresh=1
+# 实时穿透并回填缓存。summary 按站点 + hours 分键（悬浮用 1h，弹窗可变）。
+NEWAPI_PRICING_FRESH_SECONDS = 120
+NEWAPI_PRICING_CACHE: TTLCache = TTLCache(maxsize=256, ttl=MODEL_CACHE_BOUND_SECONDS)
+NEWAPI_PRICING_REFRESHING: set[int] = set()
+NEWAPI_PERF_SUMMARY_FRESH_SECONDS = 300
+NEWAPI_PERF_SUMMARY_CACHE: TTLCache = TTLCache(maxsize=256, ttl=3600)
+NEWAPI_PERF_SUMMARY_REFRESHING: set[str] = set()
 
 
 # ---------------------------------------------------------------------------

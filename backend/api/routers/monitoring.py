@@ -10,7 +10,11 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
 from backend.core.normalize import clamp_perf_hours, normalize_base_url
-from backend.core.state import MODEL_CACHE_TTL_SECONDS
+from backend.core.state import (
+    MODEL_CACHE_TTL_SECONDS,
+    NEWAPI_PERF_SUMMARY_FRESH_SECONDS,
+    NEWAPI_PRICING_FRESH_SECONDS,
+)
 from backend.db.connection import db_query_one
 from backend.integrations.http import newapi_auth_failure_message
 from backend.integrations.newapi import (
@@ -35,11 +39,17 @@ from backend.services.discovery_service import (
 from backend.services.monitoring_service import (
     MonitoringService,
     RECONCILE_MODE_DISABLE,
+    cache_newapi_perf_summary_payload,
+    cache_newapi_pricing_payload,
     detect_site,
+    get_newapi_perf_summary_cache,
+    get_newapi_pricing_cache,
     get_site_model_cache,
     invalidate_site_model_cache,
     refresh_site_model_cache,
     schedule_model_cache_refresh,
+    schedule_newapi_perf_summary_refresh,
+    schedule_newapi_pricing_refresh,
 )
 from backend.services.sync_service import auto_sync_admin_site_channels_to_sites
 
@@ -124,10 +134,20 @@ def discovery_links(site_id: int):
 
 
 @router.get("/sites/{site_id}/models")
-def models(site_id: int):
+def models(site_id: int, refresh: bool = False):
     site, error, status = get_site_or_404(site_id)
     if error:
         return JSONResponse(error, status_code=status)
+    if refresh:
+        # 倍率弹窗「点击查看」实时穿透：同步刷新并回填缓存。
+        try:
+            status_code, payload = refresh_site_model_cache(site_id)
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse(
+                {"success": False, "message": f"刷新模型缓存失败：{exc}"},
+                status_code=500,
+            )
+        return JSONResponse(payload, status_code=status_code)
     try:
         cached_payload, cache_age = get_site_model_cache(site_id)
     except Exception as exc:  # noqa: BLE001
@@ -154,7 +174,7 @@ def models(site_id: int):
 
 
 @router.get("/sites/{site_id}/pricing")
-def pricing(site_id: int):
+def pricing(site_id: int, refresh: bool = False):
     site, error, status = get_site_or_404(site_id)
     if error:
         return JSONResponse(error, status_code=status)
@@ -163,6 +183,36 @@ def pricing(site_id: int):
             {"success": False, "message": "pricing 仅支持 NewAPI 站点"},
             status_code=400,
         )
+
+    def _finalize(payload: Any) -> JSONResponse:
+        # 统一补站点上下文字段（缓存与实时两条路径共用同一形状）。
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["site_id"] = site_id
+            payload["base_url"] = site["base_url"]
+            auth_mode = str(site.get("auth_mode") or "token").strip().lower()
+            if auth_mode == "browser":
+                payload["auth_used"] = bool(
+                    site.get("browser_access_token") and site.get("browser_session_id")
+                )
+            else:
+                payload["auth_used"] = bool(
+                    site.get("access_token") and site.get("access_user_id")
+                )
+        return JSONResponse(payload)
+
+    # 悬浮浮层路径：有缓存直接回（秒开），条目过旧时调度后台刷新（SWR）。
+    if not refresh:
+        cached, cache_age = get_newapi_pricing_cache(site_id)
+        if cached is not None:
+            cached = dict(cached)
+            cached["cache_hit"] = True
+            cached["cache_age_seconds"] = round(cache_age, 1)
+            if cache_age >= NEWAPI_PRICING_FRESH_SECONDS:
+                schedule_newapi_pricing_refresh(site_id)
+                cached["refreshing"] = True
+            return _finalize(cached)
+    # 点击查看（refresh=1）或缓存冷启动：实时拉取并回填缓存。
     try:
         ok, payload, error_message = fetch_newapi_pricing_for_site(site)
     except Exception as exc:  # noqa: BLE001
@@ -176,23 +226,12 @@ def pricing(site_id: int):
             status_code=502,
         )
     if isinstance(payload, dict):
-        payload = dict(payload)
-        payload["site_id"] = site_id
-        payload["base_url"] = site["base_url"]
-        auth_mode = str(site.get("auth_mode") or "token").strip().lower()
-        if auth_mode == "browser":
-            payload["auth_used"] = bool(
-                site.get("browser_access_token") and site.get("browser_session_id")
-            )
-        else:
-            payload["auth_used"] = bool(
-                site.get("access_token") and site.get("access_user_id")
-            )
-    return payload
+        cache_newapi_pricing_payload(site_id, payload)
+    return _finalize(payload)
 
 
 @router.get("/sites/{site_id}/perf-metrics/summary")
-def perf_summary(site_id: int, hours: str = "24"):
+def perf_summary(site_id: int, hours: str = "24", refresh: bool = False):
     site, error, status = get_site_or_404(site_id)
     if error:
         return JSONResponse(error, status_code=status)
@@ -202,6 +241,30 @@ def perf_summary(site_id: int, hours: str = "24"):
             status_code=400,
         )
     clamped_hours = clamp_perf_hours(hours, 24)
+
+    def _finalize(payload: Any) -> JSONResponse:
+        if isinstance(payload, dict):
+            payload = dict(payload)
+            payload["site_id"] = site_id
+            payload["hours"] = clamped_hours
+            payload["note"] = (
+                "summary 为全站模型级汇总，不随 group 筛选变化；"
+                "分组仅用于 pricing 过滤模型名单（与 NewAPI 前端列表一致）"
+            )
+        return JSONResponse(payload)
+
+    # 悬浮浮层路径：缓存直回 + 过旧后台刷新（SWR）；summary 按站点 + hours 分键。
+    if not refresh:
+        cached, cache_age = get_newapi_perf_summary_cache(site_id, clamped_hours)
+        if cached is not None:
+            cached = dict(cached)
+            cached["cache_hit"] = True
+            cached["cache_age_seconds"] = round(cache_age, 1)
+            if cache_age >= NEWAPI_PERF_SUMMARY_FRESH_SECONDS:
+                schedule_newapi_perf_summary_refresh(site_id, clamped_hours)
+                cached["refreshing"] = True
+            return _finalize(cached)
+    # 点击查看（refresh=1）或缓存冷启动：实时拉取并回填缓存。
     try:
         ok, payload, error_message = fetch_newapi_perf_summary_for_site(
             site, hours=clamped_hours
@@ -217,14 +280,8 @@ def perf_summary(site_id: int, hours: str = "24"):
             status_code=502,
         )
     if isinstance(payload, dict):
-        payload = dict(payload)
-        payload["site_id"] = site_id
-        payload["hours"] = clamped_hours
-        payload["note"] = (
-            "summary 为全站模型级汇总，不随 group 筛选变化；"
-            "分组仅用于 pricing 过滤模型名单（与 NewAPI 前端列表一致）"
-        )
-    return payload
+        cache_newapi_perf_summary_payload(site_id, clamped_hours, payload)
+    return _finalize(payload)
 
 
 @router.get("/sites/{site_id}/perf-metrics")

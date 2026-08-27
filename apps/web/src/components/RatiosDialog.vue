@@ -144,9 +144,10 @@ watch(
     perfLoading.value = props.site.platform === "newapi";
 
     if (props.site.platform === "newapi") {
+      // 点击查看 = 实时穿透（refresh=1），与悬浮浮层的缓存路径区分。
       Promise.allSettled([
-        api.sitePricing(props.site.id),
-        api.sitePerfSummary(props.site.id, perfHours.value),
+        api.sitePricing(props.site.id, { refresh: true }),
+        api.sitePerfSummary(props.site.id, perfHours.value, { refresh: true }),
       ])
         .then(([pricingResult, summaryResult]) => {
           if (cancelled) return;
@@ -175,7 +176,7 @@ watch(
     }
 
     api
-      .siteModels(props.site.id)
+      .siteModels(props.site.id, { refresh: true })
       .then((resp) => {
         if (cancelled) return;
         models.value = resp.models_by_group || {};

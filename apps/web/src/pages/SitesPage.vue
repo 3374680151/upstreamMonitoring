@@ -40,8 +40,9 @@ const keyword = ref("");
 const status = ref("");
 const platform = ref("all");
 const syncingAll = ref(false);
-const syncingBrowser = ref(false);
-const browserSyncProgress = ref("");
+// 正在同步登录态的平台（null = 空闲），两个按钮各自显示自己的 loading
+const syncingBrowserPlatform = ref<"sub2api" | "newapi" | null>(null);
+const browserSyncProgress = ref<{ platform: string; text: string } | null>(null);
 const syncResult = ref("");
 
 const filtered = computed(() => {
@@ -158,7 +159,7 @@ async function syncAllFromMain(): Promise<void> {
 }
 
 async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promise<void> {
-  if (syncingBrowser.value) return;
+  if (syncingBrowserPlatform.value) return;
   const targets = sites.value.filter(
     (site) => truthy(site.enabled) && site.platform === targetPlatform,
   );
@@ -167,7 +168,7 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
     toast.info(`暂无启用的 ${platformLabel} 渠道`);
     return;
   }
-  syncingBrowser.value = true;
+  syncingBrowserPlatform.value = targetPlatform;
   const done: string[] = [];
   const failed: string[] = [];
   let index = 0;
@@ -185,7 +186,7 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
     }
     for (const site of targets) {
       index += 1;
-      browserSyncProgress.value = ` ${index}/${targets.length}`;
+      browserSyncProgress.value = { platform: targetPlatform, text: ` ${index}/${targets.length}` };
       const label = `「${site.name}」`;
       try {
         // 非 browser 模式的渠道先切到浏览器登录态（空凭证字段后端保留原值）
@@ -218,8 +219,8 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
     );
     syncResult.value = lines.join("\n");
   } finally {
-    syncingBrowser.value = false;
-    browserSyncProgress.value = "";
+    syncingBrowserPlatform.value = null;
+    browserSyncProgress.value = null;
     await refresh();
   }
   if (failed.length) {
@@ -241,20 +242,24 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
           <Button
             v-if="hasSub2ApiSite"
             variant="secondary"
-            :loading="syncingBrowser"
+            :loading="syncingBrowserPlatform === 'sub2api'"
             title="一键同步所有启用 sub2api 渠道的浏览器登录态；非浏览器登录模式的渠道会自动切换后再同步"
             @click="syncBrowserSessions('sub2api')"
           >
-            同步 sub2api 登录态{{ browserSyncProgress }}
+            同步 sub2api 登录态{{
+              browserSyncProgress?.platform === "sub2api" ? browserSyncProgress.text : ""
+            }}
           </Button>
           <Button
             v-if="hasNewApiSite"
             variant="secondary"
-            :loading="syncingBrowser"
+            :loading="syncingBrowserPlatform === 'newapi'"
             title="一键同步所有启用 NewAPI 渠道的浏览器登录态；令牌/密码模式的渠道会自动切换为浏览器登录态后再同步"
             @click="syncBrowserSessions('newapi')"
           >
-            同步 NewAPI 登录态{{ browserSyncProgress }}
+            同步 NewAPI 登录态{{
+              browserSyncProgress?.platform === "newapi" ? browserSyncProgress.text : ""
+            }}
           </Button>
           <Button
             variant="brand"

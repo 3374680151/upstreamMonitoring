@@ -16,6 +16,16 @@ const DIAGNOSTIC_STAGE_LABELS = Object.freeze({
 
 export function classifyExtensionSyncFailure(error, diagnosticStage = "") {
   const message = errorText(error);
+  // Chrome 错误页（站点打不开时后台标签页停在 chrome-error://chromewebdata）
+  // 会被 executeScript 报成「无法访问内容」，并非权限问题，须先于权限规则判定
+  if (/chrome-error/.test(message)) {
+    return {
+      status: "failed",
+      code: "SITE_UNREACHABLE",
+      message:
+        "站点无法访问：浏览器打开该站点失败（网络错误或站点宕机），请先在浏览器中手动打开确认",
+    };
+  }
   if (/cookie|new_api_refresh/.test(message)) {
     return {
       status: "permission_required",

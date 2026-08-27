@@ -417,6 +417,22 @@ async function handleStart(rawRequest) {
       diagnosticStage = "backend_completion";
       return await submitCompletion(request, payload);
     }
+    // 后台标签页加载失败会停在 Chrome 错误页（chrome-error://），
+    // 对错误页执行脚本只会报「无法访问内容」，会被误判成权限缺失。
+    // 提前识别，如实报告「站点无法访问」。
+    try {
+      const targetTab = await chrome.tabs.get(targetTabId);
+      const targetUrl = String(targetTab?.url || targetTab?.pendingUrl || "");
+      if (targetUrl.startsWith("chrome-error://")) {
+        return tokenFreePageResult({
+          status: "failed",
+          code: "SITE_UNREACHABLE",
+          message: "站点无法访问：浏览器打开该站点失败（网络错误或站点宕机），请先在浏览器中手动打开确认",
+        });
+      }
+    } catch {
+      // 标签页查询失败不阻断主流程，交给后续 executeScript 报错
+    }
     let session = null;
     if (request.platform === "newapi") {
       const newApiResult = await readNewApiTargetSession(

@@ -16,7 +16,7 @@ export function extensionRequiredMessage(): string {
   if (hostname !== "localhost" && hostname !== "127.0.0.1") {
     return `浏览器同步扩展无法在当前地址（${origin}）工作：请改用 http://localhost:5173 或 http://localhost:8000 访问控制台`;
   }
-  return `浏览器同步扩展未连接或版本过旧：请在 chrome://extensions 重新加载 0.1.5 扩展，然后强制刷新本页（Cmd+Shift+R）；当前页面 ${origin}`;
+  return `浏览器同步扩展未连接或版本过旧：请在 chrome://extensions 重新加载 0.1.6 扩展，然后强制刷新本页（Cmd+Shift+R）；当前页面 ${origin}`;
 }
 const SESSION_SYNC_TERMINAL_STATUSES = new Set<SessionSyncStatus>([
   "ready",

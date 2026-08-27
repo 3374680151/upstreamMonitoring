@@ -64,10 +64,6 @@ services:
       ENABLE_API_DOCS: ${ENABLE_API_DOCS:-0}
     ports:
       - "${PORT:-8000}:8000"
-    volumes:
-      # 仅迁移用：把宿主机 ./data 挂进来，供容器内跑 scripts/migrate_sqlite_to_mysql.py 读取旧 SQLite。
-      # 运行期数据已全部在 MySQL；纯 MySQL 部署可注释掉此挂载，避免明文旧库进入容器。
-      - ./data:/app/data
     healthcheck:
       # 用公开的 /api/auth/status（设了密码时 /api/overview 会返回 401）
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/auth/status', timeout=5).status==200 else 1)"]

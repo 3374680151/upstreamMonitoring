@@ -25,8 +25,6 @@ cp .env.example .env                      # 填入 DB_PASSWORD 等（.env 已被
 # 在 MySQL 中建库：CREATE DATABASE upstream CHARACTER SET utf8mb4;
 ```
 
-> 从旧的 SQLite `data/app.db` 迁移历史数据：`python3 scripts/migrate_sqlite_to_mysql.py --truncate`
-
 ### 方式一 · 本地开发（前后端分离热更新）
 
 ```bash
@@ -64,13 +62,7 @@ docker compose up -d --build    # http://<服务器IP>:8000
 
 MySQL 数据持久化在命名卷 `mysql-data`，升级容器时请保留。Compose 已内置健康检查与 `depends_on` 等待数据库就绪。
 
-从旧 SQLite 迁移历史数据（容器内执行，读取挂载进来的 `./data/app.db`）：
-
-```bash
-docker compose run --rm upstream python scripts/migrate_sqlite_to_mysql.py --truncate
-```
-
-> **端口冲突**：Compose 把 MySQL 映射到宿主机 `127.0.0.1:3306`。若本机已有别的 MySQL 占用 3306，在 `.env` 设 `DB_PORT=3307`（映射为 `127.0.0.1:3307->3306`，app 走内网 `mysql:3306` 不受影响），或删除 compose 中 mysql 服务的 `ports` 段（仅宿主机直接跑迁移脚本时才需要它）。
+> **端口冲突**：Compose 把 MySQL 映射到宿主机 `127.0.0.1:3306`。若本机已有别的 MySQL 占用 3306，在 `.env` 设 `DB_PORT=3307`（映射为 `127.0.0.1:3307->3306`，app 走内网 `mysql:3306` 不受影响），或删除 compose 中 mysql 服务的 `ports` 段。
 >
 > **数据库用户**：Docker 下 `DB_USER` 请保持 `root`（compose 内置 mysql 仅创建 root）；需要专用非 root 用户见 `docker-compose.yml` 注释。
 

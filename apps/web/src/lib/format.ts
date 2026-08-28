@@ -59,6 +59,32 @@ export function siteStatusLabel(site: Site): string {
   return truthy(site.enabled) ? statusLabel(site.status) : "停用";
 }
 
+export type SessionFailureBadge = {
+  label: string;
+  tone: "warning" | "danger";
+  title: string;
+};
+
+/** 最近一次检测失败的原因徽标：waf / network 与登录态无关，单独提示避免误解成「登录态失效」 */
+export function sessionFailureBadge(site: Site): SessionFailureBadge | null {
+  if (site.session_failure_kind === "waf") {
+    return {
+      label: "防护拦截",
+      tone: "warning",
+      title:
+        "上游防护（WAF/Cloudflare）拦截了本机发出的请求，与登录态无关；换网络/VPN 出口后下一轮检测会自动恢复",
+    };
+  }
+  if (site.session_failure_kind === "network") {
+    return {
+      label: "网络异常",
+      tone: "warning",
+      title: "本机连不上上游（超时/连接被重置等），与登录态无关",
+    };
+  }
+  return null;
+}
+
 export function changeTone(
   change: Change,
 ): "success" | "warning" | "danger" | "neutral" {

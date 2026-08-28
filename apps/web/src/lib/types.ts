@@ -71,6 +71,8 @@ export type Site = {
   session_sync_status?: SessionSyncStatus;
   session_sync_error?: string | null;
   session_synced_at?: string | null;
+  /** 最近一次检测失败原因：auth_expired / waf / network；null = 上次检测正常 */
+  session_failure_kind?: string | null;
   has_browser_session?: boolean;
   /** 兜底系统访问令牌（服务端生成，仅回传脱敏布尔） */
   has_system_access_token?: boolean;

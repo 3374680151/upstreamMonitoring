@@ -71,11 +71,14 @@ from backend.integrations.http import (
     _upstream_response_message,
     UpstreamHttpStatusError,
     admin_request_json,
+    detect_waf_challenge_payload,
     newapi_auth_failure_message,
     request_json,
     request_json_with_headers,
     send_upstream_request,
 )
+
+NEWAPI_WAF_BLOCKED_MESSAGE = "上游防护拦截（WAF），与登录态无关，请稍后重试"
 
 
 def aggregate_newapi_channel_candidates(
@@ -1695,13 +1698,16 @@ def newapi_browser_request(
         ok, raw, error = request_json(url, headers=headers, payload=payload, method=method)
         if ok:
             return True, raw, None
+        # WAF 边缘拦截与登录态无关：不触发强刷，也不降级到密码/兜底令牌
+        if detect_waf_challenge_payload(raw, error):
+            return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
         status = _newapi_status_from_payload(raw)
         if force_refresh_on_401 and status in (401, 403):
             refreshed, refresh_error = refresh_newapi_site_browser_session(
                 site, force=True
             )
             if not refreshed:
-                return False, raw, "登录态已失效，请重新验证登录"
+                return False, raw, refresh_error or "登录态已失效，请重新验证登录"
             ready, ready_error = ensure_newapi_site_browser_session(site)
             if not ready:
                 return False, raw, "请重新网页登录/同步后再试"
@@ -1711,6 +1717,8 @@ def newapi_browser_request(
             )
             if ok:
                 return True, raw, None
+            if detect_waf_challenge_payload(raw, error):
+                return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
             status = _newapi_status_from_payload(raw)
             if status in (401, 403):
                 return False, raw, "登录态已失效，请重新验证登录"
@@ -1728,6 +1736,8 @@ def newapi_browser_request(
     ok, raw, error = request_json(url, headers=headers, payload=payload, method=method)
     if ok:
         return True, raw, None
+    if detect_waf_challenge_payload(raw, error):
+        return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
     status = _newapi_status_from_payload(raw)
     if force_refresh_on_401 and status in (401, 403):
         return False, raw, "上游令牌已失效，请刷新或重新录入"

@@ -11,6 +11,7 @@ import { Button, ConfirmDialog } from "@/components/ui";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAuth } from "@/composables/useAuth";
 import { useConsoleData } from "@/composables/useConsoleData";
+import { useAutoSessionResync } from "@/composables/useAutoSessionResync";
 import { useReconcileMode } from "@/composables/useReconcileMode";
 import { provideAppActions } from "@/composables/useAppActions";
 import { api } from "@/lib/api";
@@ -29,6 +30,9 @@ const dataEnabled = computed(
 // ---- 共享数据 ----
 const { sites, loading, error, setSelectedId, refresh, reload } =
   useConsoleData(dataEnabled);
+
+// ---- 登录态后台自愈：扩展在线时自动重同步已失效的浏览器登录渠道 ----
+useAutoSessionResync(dataEnabled, sites, refresh);
 
 // ---- 对账模式 ----
 const { pendingDeleteMode, setPendingDeleteMode, persistReconcileMode } =

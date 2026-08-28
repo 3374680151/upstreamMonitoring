@@ -613,7 +613,10 @@ def complete_session_sync_request(
         persist_newapi_site_browser_session,
         validate_newapi_site_browser_session,
     )
-    from backend.integrations.sub2api import apply_sub2api_browser_session  # noqa: E402
+    from backend.integrations.sub2api import (  # noqa: E402
+        SUB2API_WAF_BLOCKED_MESSAGE,
+        apply_sub2api_browser_session,
+    )
 
     if not str(secret or ""):
         return 401, {
@@ -809,6 +812,22 @@ def complete_session_sync_request(
         }
     if not applied:
         message = apply_error or "登录态已过期，请重新登录"
+        if message == SUB2API_WAF_BLOCKED_MESSAGE and site_id is not None:
+            # WAF 边缘拦截不代表提交的登录态无效：终态落 failed（可重试）
+            # 而不是 expired，并给站点标记 waf 原因，登录态本身不动。
+            db_execute(
+                "UPDATE sites SET session_failure_kind = 'waf', updated_at = ? WHERE id = ?",
+                (utc_now_iso(), int(site_id)),
+            )
+            finish_session_sync_request(
+                str(request_id), "failed", "UPSTREAM_WAF_BLOCKED", message
+            )
+            return 503, {
+                "success": False,
+                "status": "failed",
+                "code": "UPSTREAM_WAF_BLOCKED",
+                "message": message,
+            }
         finish_session_sync_request(
             str(request_id), "expired", "SESSION_INVALID", message
         )
@@ -915,7 +934,8 @@ def mark_site_browser_session_expired(
     ]
     sql = """
         UPDATE sites AS s
-        SET session_sync_status = 'expired', session_sync_error = ?, updated_at = ?
+        SET session_sync_status = 'expired', session_sync_error = ?,
+            session_failure_kind = 'auth_expired', updated_at = ?
         WHERE s.id = ?
     """
     request_id = str(request_id or "").strip()

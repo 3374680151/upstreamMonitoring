@@ -146,6 +146,7 @@ def site_summary(
         "session_sync_status": site.get("session_sync_status") or "not_requested",
         "session_sync_error": site.get("session_sync_error"),
         "session_synced_at": site.get("session_synced_at"),
+        "session_failure_kind": site.get("session_failure_kind"),
         "status": site["status"],
         "last_error": site["last_error"],
         "last_check_at": site["last_check_at"],

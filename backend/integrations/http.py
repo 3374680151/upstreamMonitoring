@@ -254,6 +254,136 @@ def send_upstream_request(
 
 
 # ---------------------------------------------------------------------------
+# WAF / 盾拦截识别（Cloudflare 类边缘挑战，与登录态无关）
+# ---------------------------------------------------------------------------
+
+_WAF_BODY_MARKERS = (
+    "<!doctype html",
+    "<html",
+    "just a moment",
+    "challenge-platform",
+    "jschl",
+    "cf_chl",
+    "attention required",
+    "checking your browser",
+    "enable javascript and cookies",
+    "cloudflare ray id",
+)
+_WAF_STATUSES = {401, 403, 429, 503, 521, 530}
+
+
+def _waf_header_view(headers: UpstreamHeaders) -> Dict[str, str]:
+    """失败 payload 里保留的少量响应头，仅供 WAF 识别（不含敏感信息）。"""
+    return {
+        "server": headers.get("server"),
+        "cf-mitigated": headers.get("cf-mitigated"),
+        "content-type": headers.get("content-type"),
+    }
+
+
+def _decode_body(body: bytes) -> str:
+    return body.decode("utf-8", errors="replace") if body else ""
+
+
+def _is_waf_challenge_body(status: int, header_view: Dict[str, str], body: str) -> bool:
+    """按状态码 + 响应头 + 响应体特征判断是否被 WAF 拦在边缘。
+
+    我们的 API 请求一律期待 JSON 响应；带 HTML 挑战页特征的响应意味着
+    请求根本没到达上游应用，与存储的凭据是否有效完全无关。
+    """
+    cf_mitigated = str(header_view.get("cf-mitigated") or "").lower()
+    if "challenge" in cf_mitigated or "block" in cf_mitigated:
+        return True
+    lowered = (body or "").lower()
+    if not lowered or not any(marker in lowered for marker in _WAF_BODY_MARKERS):
+        return False
+    if status in _WAF_STATUSES:
+        return True
+    return "cloudflare" in str(header_view.get("server") or "").lower()
+
+
+_WAF_NESTED_PAYLOAD_KEYS = (
+    "groups",
+    "rates",
+    "channels",
+    "monitors",
+    "refresh",
+    "account",
+    "login",
+    "response",
+    "data",
+)
+
+
+def detect_waf_challenge_payload(
+    payload: Any, error: Optional[str] = None
+) -> bool:
+    """从 ``request_json*`` 的失败 payload 识别 WAF 边缘拦截。
+
+    与 :func:`_upstream_response_details` 一致，支持业务层常用的嵌套
+    包装（如 ``{"groups": {...}}``），递归一层层找传输层失败结构。
+    """
+    if not isinstance(payload, dict):
+        return False
+    header_view = payload.get("response_headers")
+    if not isinstance(header_view, dict):
+        header_view = {}
+    status = 0
+    try:
+        status = int(payload.get("status") or 0)
+    except (TypeError, ValueError):
+        status = 0
+    if not status:
+        match = re.search(r"\bHTTP\s+([1-5][0-9]{2})\b", str(error or ""), re.I)
+        if match:
+            status = int(match.group(1))
+    if _is_waf_challenge_body(
+        status, header_view, str(payload.get("raw") or "")
+    ):
+        return True
+    return any(
+        isinstance(payload.get(key), dict)
+        and detect_waf_challenge_payload(payload[key], error)
+        for key in _WAF_NESTED_PAYLOAD_KEYS
+    )
+
+
+def _waf_retry(
+    url: str,
+    method: str,
+    request_headers: Dict[str, str],
+    data: Optional[bytes],
+    timeout: float,
+) -> Optional[UpstreamResponse]:
+    """被 WAF 拦截时用 curl_cffi（libcurl TLS 指纹）再试一次。"""
+    try:
+        return _fetch_with_curl(url, method, request_headers, data, timeout)
+    except Exception:  # noqa: BLE001 - 兼容重试失败时按原错误返回
+        return None
+
+
+def _request_failure_payload(
+    status: int, header_view: Dict[str, str], raw: str
+) -> Dict[str, Any]:
+    return {"status": status, "raw": raw, "response_headers": header_view}
+
+
+def _json_from_response(resp: UpstreamResponse) -> Tuple[bool, Any, Optional[str]]:
+    body = resp.text()
+    try:
+        parsed = json.loads(body) if body else {}
+    except (TypeError, ValueError):
+        return (
+            False,
+            _request_failure_payload(
+                resp.status, _waf_header_view(resp.headers), body[:4000]
+            ),
+            "响应不是有效 JSON",
+        )
+    return True, parsed, None
+
+
+# ---------------------------------------------------------------------------
 # 对外契约层（签名与返回结构与迁移前完全一致）
 # ---------------------------------------------------------------------------
 
@@ -275,17 +405,46 @@ def request_json(
         resp = send_upstream_request(
             url, method=method, headers=request_headers, data=data
         )
-        body = resp.text()
-        parsed = json.loads(body) if body else {}
-        return True, parsed, None
     except UpstreamHttpStatusError as exc:
-        try:
-            raw = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            raw = ""
-        return False, {"status": exc.code, "raw": raw}, f"HTTP {exc.code}"
+        raw = _decode_body(exc.read())
+        header_view = _waf_header_view(exc.headers)
+        if _is_waf_challenge_body(exc.code, header_view, raw):
+            retried = _waf_retry(
+                url, method, request_headers, data, HTTP_TIMEOUT_SECONDS
+            )
+            if retried is not None:
+                if retried.status < 400:
+                    return _json_from_response(retried)
+                return (
+                    False,
+                    _request_failure_payload(
+                        retried.status,
+                        _waf_header_view(retried.headers),
+                        _decode_body(retried.content)[:4000],
+                    ),
+                    f"HTTP {retried.status}",
+                )
+        return False, _request_failure_payload(exc.code, header_view, raw), f"HTTP {exc.code}"
     except Exception as exc:  # noqa: BLE001 - 保持既有宽松契约
         return False, {"error": str(exc)}, str(exc)
+    try:
+        parsed = json.loads(resp.text()) if resp.content else {}
+    except (TypeError, ValueError):
+        header_view = _waf_header_view(resp.headers)
+        if _is_waf_challenge_body(resp.status, header_view, resp.text()):
+            retried = _waf_retry(
+                url, method, request_headers, data, HTTP_TIMEOUT_SECONDS
+            )
+            if retried is not None and retried.status < 400:
+                return _json_from_response(retried)
+        return (
+            False,
+            _request_failure_payload(
+                resp.status, header_view, resp.text()[:4000]
+            ),
+            "响应不是有效 JSON",
+        )
+    return True, parsed, None
 
 
 def admin_request_json(
@@ -312,11 +471,14 @@ def admin_request_json(
         body = resp.text()
         return True, json.loads(body) if body else {}, None
     except UpstreamHttpStatusError as exc:
-        try:
-            raw = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            raw = ""
-        return False, {"status": exc.code, "raw": raw}, f"HTTP {exc.code}"
+        raw = _decode_body(exc.read())
+        return (
+            False,
+            _request_failure_payload(
+                exc.code, _waf_header_view(exc.headers), raw
+            ),
+            f"HTTP {exc.code}",
+        )
     except Exception as exc:  # noqa: BLE001 - 保持既有宽松契约
         return False, {"error": str(exc)}, str(exc)
 
@@ -346,13 +508,12 @@ def request_json_with_headers(
         }
         return True, parsed, None, response_headers
     except UpstreamHttpStatusError as exc:
-        try:
-            raw = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            raw = ""
+        raw = _decode_body(exc.read())
         return (
             False,
-            {"status": exc.code, "raw": raw},
+            _request_failure_payload(
+                exc.code, _waf_header_view(exc.headers), raw
+            ),
             f"HTTP {exc.code}",
             {"set-cookie": exc.headers.get_all("Set-Cookie")},
         )
@@ -414,6 +575,8 @@ def _upstream_response_details(
 
 
 def _admin_browser_refresh_error(payload: Any, error: Optional[str]) -> str:
+    if detect_waf_challenge_payload(payload, error):
+        return "上游防护拦截（WAF），与登录态无关，请稍后重试"
     _status, code, message = _upstream_response_details(payload, error)
     if code == "AUTH_ORIGIN_FORBIDDEN":
         return "主站拒绝刷新登录态：Origin 不受信任，请检查主站 URL 和可信 Origin 配置"

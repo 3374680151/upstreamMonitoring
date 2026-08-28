@@ -27,6 +27,7 @@ from backend.integrations.http import (
     _upstream_response_details,
     _upstream_response_message,
     admin_request_json,
+    detect_waf_challenge_payload,
     request_json,
 )
 from backend.core.state import (
@@ -437,6 +438,9 @@ def is_sub2api_auth_error(payload: Any, error: Optional[str] = None) -> bool:
                 return True
         status, code, message = _upstream_response_details(payload, error)
         if status in {401, 403}:
+            # WAF/盾的边缘 403/401（HTML 挑战页）不代表凭据失效，不算认证错误
+            if detect_waf_challenge_payload(payload, error):
+                return False
             return True
         normalized_code = re.sub(r"[^A-Z0-9]+", "_", code.upper()).strip("_")
         if normalized_code in SUB2API_AUTH_ERROR_CODES:
@@ -494,6 +498,10 @@ def classify_sub2api_auth_failure(
         match = re.search(r"\bhttp\s+([1-5][0-9]{2})\b", text, re.I)
         if match:
             status = int(match.group(1))
+    # WAF/盾的边缘拦截优先于人机验证判定：挑战页 HTML 里常带 captcha/turnstile
+    # 字样，但它说明请求没到达上游应用，与凭据无关，不能推进任何降级链。
+    if detect_waf_challenge_payload(payload, error):
+        return "waf"
     interactive_markers = (
         "turnstile",
         "captcha",
@@ -1468,6 +1476,9 @@ def _sub2api_browser_session_required() -> Tuple[bool, Dict[str, Any], str]:
     }, "请先在浏览器登录并同步"
 
 
+SUB2API_WAF_BLOCKED_MESSAGE = "上游防护拦截（WAF），与登录态无关，请稍后重试"
+
+
 _SUB2API_AUTH_CONTEXT_KEYS = frozenset({
     "refreshed_auth",
     "_auth_context",
@@ -1590,13 +1601,18 @@ def _fetch_sub2api_with_auth_fallback(
             normalized = _attach_sub2api_auth_context(
                 payload, auth, token, include_auth_context
             )
-            return ok, normalized, error, classify_sub2api_auth_failure(payload, error)
+            category = classify_sub2api_auth_failure(payload, error)
+            if not ok and category == "waf":
+                error = SUB2API_WAF_BLOCKED_MESSAGE
+            return ok, normalized, error, category
 
         if mode == "password":
             login_ok, login_token, login_payload, login_error = sub2api_login(
                 current_base, current_username, current_password
             )
             if not login_ok:
+                if classify_sub2api_auth_failure(login_payload, login_error) == "waf":
+                    return False, {"login": login_payload}, SUB2API_WAF_BLOCKED_MESSAGE
                 return False, {"login": login_payload}, login_error or "登录失败"
             ok, payload, error, _category = fetch_with_token(login_token)
             return ok, payload, error
@@ -1655,6 +1671,12 @@ def _fetch_sub2api_with_auth_fallback(
                 refresh_category = classify_sub2api_auth_failure(
                     refreshed, refresh_error
                 )
+                if refresh_category == "waf":
+                    return (
+                        False,
+                        {"refresh": refreshed},
+                        SUB2API_WAF_BLOCKED_MESSAGE,
+                    )
                 if mode == "token" or refresh_category != "auth":
                     return (
                         False,
@@ -1673,6 +1695,8 @@ def _fetch_sub2api_with_auth_fallback(
         )
         if not login_ok:
             login_category = classify_sub2api_auth_failure(login_payload, login_error)
+            if login_category == "waf":
+                return False, {"login": login_payload}, SUB2API_WAF_BLOCKED_MESSAGE
             if login_category == "interactive":
                 return _sub2api_browser_session_required()
             return False, {"login": login_payload}, login_error or "登录失败"
@@ -1797,9 +1821,13 @@ def validate_sub2api_browser_session(
         base_url, token
     )
     if not account_ok:
+        if detect_waf_challenge_payload(account, account_error):
+            return False, {}, SUB2API_WAF_BLOCKED_MESSAGE
         return False, {}, account_error or "登录态已过期，请重新登录"
     groups_ok, groups, groups_error = fetch_sub2api_groups_by_token(base_url, token)
     if not groups_ok:
+        if detect_waf_challenge_payload(groups, groups_error):
+            return False, {}, SUB2API_WAF_BLOCKED_MESSAGE
         return False, {}, groups_error or "当前登录态无法读取分组"
     return True, {"account": account, "groups": groups}, None
 
@@ -1830,6 +1858,10 @@ def apply_sub2api_browser_session(
         )
         if not ok:
             message = error or "登录态已过期，请重新登录"
+            if message == SUB2API_WAF_BLOCKED_MESSAGE:
+                # WAF 边缘拦截不代表凭据失效：不改登录态、不置 expired，
+                # 同步请求按失败返回，等下一轮自动重试。
+                return False, message
             if request_id_value:
                 # A replacement request may have been created while upstream
                 # validation was in flight.  Do not turn its pending state into

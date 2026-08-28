@@ -100,6 +100,49 @@ RECONCILE_MODES = {RECONCILE_MODE_DISABLE, RECONCILE_MODE_DELETE}
 SETTING_RECONCILE_MODE = "main_site_reconcile_mode"
 
 from backend.services.session_sync_service import mark_site_browser_session_expired
+from backend.integrations.http import (
+    _upstream_response_details,
+    detect_waf_challenge_payload,
+)
+
+
+# ---------------------------------------------------------------------------
+# 失败原因分类（session_failure_kind 列）：waf / auth_expired / network
+# ---------------------------------------------------------------------------
+
+_NETWORK_ERROR_MARKERS = (
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "certificate verify",
+    "failed to resolve",
+    "ssl:",
+    "tls",
+    "network",
+    "econnreset",
+    "getaddrinfo",
+)
+
+
+def site_failure_kind(payload: Any, error_message: Optional[str]) -> Optional[str]:
+    """把一次检测失败归因为与登录态正交的可解释类别，供 UI 徽标展示。"""
+    if detect_waf_challenge_payload(payload, error_message):
+        return "waf"
+    if isinstance(payload, dict) and payload.get("browser_sync_required"):
+        return "auth_expired"
+    if is_sub2api_auth_error(payload, error_message):
+        return "auth_expired"
+    if isinstance(payload, dict):
+        status, _code, _message = _upstream_response_details(payload, error_message)
+        if status in {401, 403}:
+            return "auth_expired"
+    text = str(error_message or "").lower()
+    if any(marker in text for marker in _NETWORK_ERROR_MARKERS):
+        return "network"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -332,10 +375,19 @@ def detect_site(site_id: int) -> Dict[str, Any]:
         db_execute(
             """
             UPDATE sites
-            SET status = ?, last_error = ?, last_check_at = ?, next_check_at = ?, consecutive_failures = ?, updated_at = ?
+            SET status = ?, last_error = ?, last_check_at = ?, next_check_at = ?, consecutive_failures = ?, session_failure_kind = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, error_message, checked_at, next_check_at, consecutive_failures, checked_at, site_id),
+            (
+                status,
+                error_message,
+                checked_at,
+                next_check_at,
+                consecutive_failures,
+                site_failure_kind(payload, error_message),
+                checked_at,
+                site_id,
+            ),
         )
         result: Dict[str, Any] = {
             "success": False,
@@ -438,6 +490,7 @@ def detect_site(site_id: int) -> Dict[str, Any]:
             last_check_at = ?,
             next_check_at = ?,
             consecutive_failures = 0,
+            session_failure_kind = NULL,
             current_groups_json = ?,
             current_login_groups_json = COALESCE(?, current_login_groups_json),
             login_last_error = ?,

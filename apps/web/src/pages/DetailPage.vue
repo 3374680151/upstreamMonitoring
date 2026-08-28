@@ -25,6 +25,7 @@ import {
   fmtTime,
   platformLabel,
   ratioLabel,
+  sessionFailureBadge,
   siteStatusLabel,
   siteStatusTone,
   statusLabel,
@@ -329,6 +330,12 @@ const hasSubscriptions = computed(
           <Badge :tone="siteStatusTone(site)" dot>
             {{ siteStatusLabel(site) }}
           </Badge>
+          <Badge
+            v-if="sessionFailureBadge(site)"
+            :tone="sessionFailureBadge(site)!.tone"
+            :title="sessionFailureBadge(site)!.title"
+            >{{ sessionFailureBadge(site)!.label }}</Badge
+          >
           <Badge tone="neutral">{{ platformLabel(site) }}</Badge>
         </div>
         <p class="mt-1 font-mono text-[11.5px] text-ink-soft">

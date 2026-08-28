@@ -14,6 +14,7 @@ import { isSessionSyncRetryable } from "@/lib/browserSessionBridge";
 import {
   fmtTimeParts,
   platformLabel,
+  sessionFailureBadge,
   siteStatusLabel,
   siteStatusTone,
   truthy,
@@ -282,6 +283,12 @@ const sections = computed(() => {
               </td>
               <td class="py-3 pr-3 align-middle">
                 <div v-if="truthy(site.enabled)" class="flex flex-wrap gap-1">
+                  <Badge
+                    v-if="sessionFailureBadge(site)"
+                    :tone="sessionFailureBadge(site)!.tone"
+                    :title="sessionFailureBadge(site)!.title"
+                    >{{ sessionFailureBadge(site)!.label }}</Badge
+                  >
                   <Badge v-if="hiddenCount(site) > 0" tone="warning">
                     {{ hiddenCount(site) }} 隐藏
                   </Badge>

@@ -303,3 +303,21 @@ async function syncSiteSession(
 export function isSessionSyncRetryable(status?: SessionSyncStatus): boolean {
   return SESSION_SYNC_RETRYABLE_STATUSES.has(status || "not_requested");
 }
+
+/**
+ * 自动重同步（后台自愈用）：先静默探测扩展，不在线就直接放弃，
+ * 不创建同步请求、不在后端留下失败终态；在线时复用完整同步链路。
+ * 任何异常都吞掉返回 null，让调用方决定是否刷新列表。
+ */
+export async function autoResyncSiteBrowserSession(
+  siteId: number,
+): Promise<SiteSessionSyncState | null> {
+  if (!(await probeSessionBridge())) {
+    return null;
+  }
+  try {
+    return await syncSiteBrowserSession(siteId);
+  } catch {
+    return null;
+  }
+}

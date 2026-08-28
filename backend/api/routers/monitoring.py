@@ -31,7 +31,6 @@ from backend.integrations.sub2api import probe_sub2api_groups
 from backend.repositories.admin_sites import get_admin_site_or_404
 from backend.repositories.sites import create_site, delete_site, get_site_or_404, update_site
 from backend.services.admin_site_service import fetch_admin_site_channels
-from backend.services.channel_classification_service import ChannelClassificationService
 from backend.services.discovery_service import (
     import_discovered_sites,
     list_site_discovery_links,
@@ -57,7 +56,6 @@ from backend.services.sync_service import auto_sync_admin_site_channels_to_sites
 
 router = APIRouter()
 service = MonitoringService()
-classification_service = ChannelClassificationService()
 
 
 @router.get("/overview")
@@ -330,12 +328,7 @@ def perf_metrics(site_id: int, model: str = "", group: str = "", hours: str = "2
 
 @router.post("/sites/sync")
 async def sync_sites(request: Request):
-    """同步主站：先跑同步，再自动做渠道分类。
-
-    分类逻辑：根据上游 API 返回的数据格式探测平台类型（NewAPI / sub2api），
-    然后按渠道 group 字段名匹配上游监控站点已有的分组倍率。
-    不需要用户令牌，已精确匹配的渠道不会被覆盖。
-    """
+    """手动触发主站渠道同步（双向对账）。"""
     body_bytes = await request.body()
     try:
         body = json.loads(body_bytes) if body_bytes else {}
@@ -360,7 +353,7 @@ async def sync_sites(request: Request):
                 status_code=400,
             )
 
-    # 1. 跑同步（复用现有逻辑，不改动 legacy_runtime.py）
+    # 1. 跑同步
     results = await run_in_threadpool(
         auto_sync_admin_site_channels_to_sites, admin_site_id,
     )
@@ -422,19 +415,6 @@ async def sync_sites(request: Request):
         and entry.get("status") in {"fetch_failed", "sync_failed", "error"}
     ]
 
-    # 3. 渠道分类：分类结果已内联到同步过程中，直接从 results 中汇总
-    classification_results: list[dict[str, Any]] = []
-    for entry in results:
-        if not isinstance(entry, dict):
-            continue
-        clf = entry.get("classification")
-        if isinstance(clf, dict):
-            classification_results.append(clf)
-    total_classified = sum(
-        int(item.get("matched") or 0)
-        for item in classification_results
-        if isinstance(item, dict)
-    )
     excluded = sum(
         int(entry.get("excluded_channels") or 0)
         for entry in results
@@ -460,8 +440,6 @@ async def sync_sites(request: Request):
             "reenabled": int(reconcile.get("reenabled") or 0),
             "deleted": int(reconcile.get("deleted") or 0),
             "failed": len(failed),
-            "classified": total_classified,
-            "classification": classification_results,
         },
     )
 

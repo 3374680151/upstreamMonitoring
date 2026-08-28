@@ -39,7 +39,6 @@ from backend.integrations.http import (
 from backend.integrations.newapi import (
     _newapi_channel_list_items,
     _newapi_password_login_bundle,
-    ensure_newapi_site_browser_session,
     fetch_all_newapi_channels,
     fetch_newapi_admin_groups,
     fetch_newapi_channel_detail,

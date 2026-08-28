@@ -34,7 +34,6 @@ from backend.core.time import utc_now_iso, app_now, stable_hash, next_check_iso
 from backend.db.connection import (
     db_connection,
     db_execute,
-    db_execute_rowcount,
     db_query_one,
     db_query_all,
     _q,
@@ -74,7 +73,7 @@ from backend.services.monitoring_service import (
     get_main_site_reconcile_mode,
     get_main_site_sync_all_channels,
 )
-from backend.services.channel_classification_service import ChannelClassificationService
+from backend.services.platform_detect_service import PlatformDetectService
 
 
 def record_admin_site_sync_error(admin_site_id: int, message: str) -> None:
@@ -282,7 +281,7 @@ def _sync_admin_site_snapshot_in_connection(
         if not sync_all:
             # 只导入识别为 NewAPI/sub2api 的渠道；未识别平台仅跳过导入，
             # 不参与对账排除，已有链接与站点保持原样。
-            classifier = ChannelClassificationService()
+            classifier = PlatformDetectService()
             platform_by_url = classifier.platforms_for_base_urls(
                 [str(item.get("base_url") or "") for item in candidates]
             )
@@ -865,26 +864,12 @@ def _sync_one_admin_site(
         if groups_error:
             raise RuntimeError(groups_error)
 
-        classification_service = ChannelClassificationService()
         with db_connection() as connection:
             try:
                 result = _sync_admin_site_snapshot_in_connection(
                     connection, admin, channels, groups, mode, sync_all
                 )
                 connection.commit()
-                # 同步过程中直接做分类，复用已获取的 channels，避免二次 HTTP 请求
-                classification_result = None
-                try:
-                    classification_result = classification_service.classify_channels(
-                        admin_site_id, channels
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    print(
-                        f"[渠道分类] admin_site_id={admin_site_id} 失败：{exc}",
-                        flush=True,
-                    )
-                if classification_result:
-                    result["classification"] = classification_result
                 print(
                     "[主站同步] "
                     f"admin_site_id={admin_site_id} "
@@ -893,8 +878,7 @@ def _sync_one_admin_site(
                     f"imported={result.get('imported', 0)} "
                     f"conflicts={result.get('conflict_count', 0)} "
                     f"disabled={result.get('disabled', 0)} "
-                    f"deleted={result.get('deleted', 0)}"
-                    + (f" classified={classification_result.get('matched', 0)}" if classification_result else ""),
+                    f"deleted={result.get('deleted', 0)}",
                     flush=True,
                 )
                 return result
@@ -1019,38 +1003,3 @@ def auto_sync_admin_site_channels_to_sites(
     """Synchronize one selected admin site, or all admin sites for API callers."""
     return _run_admin_site_sync(admin_site_id)
 
-
-def persist_channel_binding_refreshed_auth(
-    admin_site_id: int,
-    channel_id: int,
-    refreshed_auth: Any,
-    *,
-    expected_access_token: Optional[str] = None,
-    expected_refresh_token: Optional[str] = None,
-) -> None:
-    """Keep a channel-level sub2api binding usable after access-token refresh."""
-    if not isinstance(refreshed_auth, dict):
-        return
-    access_token = str(refreshed_auth.get("access_token") or "").strip()
-    refresh_token = str(refreshed_auth.get("refresh_token") or "").strip()
-    if not access_token and not refresh_token:
-        return
-    assignments = [
-        "access_token = COALESCE(NULLIF(?, ''), access_token)",
-        "refresh_token = COALESCE(NULLIF(?, ''), refresh_token)",
-        "updated_at = ?",
-    ]
-    params: List[Any] = [access_token, refresh_token, utc_now_iso()]
-    where = ["admin_site_id = ?", "channel_id = ?"]
-    where_params: List[Any] = [int(admin_site_id), int(channel_id)]
-    if expected_access_token is not None:
-        where.append("COALESCE(access_token, '') = ?")
-        where_params.append(str(expected_access_token or "").strip())
-    if expected_refresh_token is not None:
-        where.append("COALESCE(refresh_token, '') = ?")
-        where_params.append(str(expected_refresh_token or "").strip())
-    params.extend(where_params)
-    db_execute_rowcount(
-        f"UPDATE channel_upstream_bindings SET {', '.join(assignments)} WHERE {' AND '.join(where)}",
-        tuple(params),
-    )

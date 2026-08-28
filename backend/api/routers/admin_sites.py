@@ -678,9 +678,7 @@ async def channel_match(
         binding_row = get_channel_upstream_binding(admin_site_id, channel_id)
         binding_payload = channel_upstream_binding_payload(binding_row)
         binding_payload["configured"] = True
-        binding_payload["inherited_from_monitor"] = not bool(
-            binding_row and binding_row.get("upstream_base_url")
-        )
+        binding_payload["inherited_from_monitor"] = True
         return JSONResponse(
             {
                 "success": False,

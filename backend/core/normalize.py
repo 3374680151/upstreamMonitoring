@@ -9,6 +9,7 @@ imported without pulling the full legacy runtime.
 
 from __future__ import annotations
 
+import ipaddress
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from typing import Any, Dict, List, Optional, Tuple
@@ -189,6 +190,32 @@ def registered_domain(base_url: str) -> str:
     if len(labels) >= 3 and ".".join(labels[-2:]) in _SECOND_LEVEL_SUFFIXES:
         return ".".join(labels[-3:])
     return ".".join(labels[-2:])
+
+
+def site_merge_key(base_url: str) -> str:
+    """站点合并键：同一注册域名的不同子域名视为同一网站。
+
+    api.example.com 与 vip.example.com 返回相同的 example.com，渠道发现
+    /导入/查重据此只保留一个监控站点。IP、IPv6 与 localhost 等单标签主机
+    无法可靠归组，退回完整 URL（即不合并）。
+    """
+    text = normalize_base_url(str(base_url or ""))
+    if not text:
+        return ""
+    try:
+        hostname = urlparse(text).hostname
+    except (TypeError, ValueError):
+        return ""
+    hostname = str(hostname or "").strip().lower().rstrip(".")
+    if not hostname or "." not in hostname or hostname.startswith("["):
+        return text
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        return text
+    return registered_domain(text)
 
 
 def site_origin(base_url: str) -> str:

@@ -21,6 +21,7 @@ from backend.core.normalize import (
     _positive_channel_id,
     _safe_discovery_display_url,
     normalize_base_url,
+    site_merge_key,
 )
 from backend.core.state import (
     MAX_DISCOVERY_CHANNEL_IDS_PER_ITEM,
@@ -48,11 +49,24 @@ def _discovery_existing_site(base_url: str) -> Optional[Dict[str, Any]]:
         return row
     # Older rows may predate normalize_base_url and retain a trailing slash.
     # Keep the fallback query separate so normal indexed lookups stay cheap.
-    return db_query_one(
+    row = db_query_one(
         "SELECT id, base_url, platform FROM sites "
         "WHERE TRIM(TRAILING '/' FROM base_url) = ? LIMIT 1",
         (base_url,),
     )
+    if row:
+        return row
+    # 同一注册域名的既有站点视为同一网站（与主站同步导入口径一致）。
+    merge_domain = site_merge_key(base_url)
+    if not merge_domain:
+        return None
+    rows = db_query_all(
+        "SELECT id, base_url, platform FROM sites ORDER BY id ASC"
+    )
+    for candidate in rows or []:
+        if site_merge_key(str(candidate.get("base_url") or "")) == merge_domain:
+            return candidate
+    return None
 
 
 def _discovery_public_item(
@@ -243,6 +257,7 @@ def _import_discovered_site_item(
     """
     base_url = item["base_url"]
     name = item["name"]
+    merge_domain = site_merge_key(base_url)
     with connection.cursor(DictCursor) as cursor:
         cursor.execute(
             _q(
@@ -253,6 +268,19 @@ def _import_discovered_site_item(
             (base_url, base_url, base_url),
         )
         existing = cursor.fetchone()
+        if not existing and merge_domain:
+            # 同一注册域名的不同子域名视为同一网站：复用既有站点而不是
+            # 再建一个，避免渠道监控列表里同一家上游重复出现。
+            cursor.execute(
+                _q("SELECT * FROM sites ORDER BY id ASC FOR UPDATE")
+            )
+            for candidate_row in cursor.fetchall() or []:
+                if (
+                    site_merge_key(str(candidate_row.get("base_url") or ""))
+                    == merge_domain
+                ):
+                    existing = candidate_row
+                    break
         if existing:
             platform = str(existing.get("platform") or "newapi").strip().lower()
             if platform != "newapi" and not allow_existing_platform:
@@ -301,6 +329,19 @@ def _import_discovered_site_item(
                     (base_url, base_url),
                 )
                 refreshed = cursor.fetchone()
+                if not refreshed and merge_domain:
+                    cursor.execute(
+                        _q("SELECT id, base_url, platform FROM sites ORDER BY id ASC")
+                    )
+                    for candidate_row in cursor.fetchall() or []:
+                        if (
+                            site_merge_key(
+                                str(candidate_row.get("base_url") or "")
+                            )
+                            == merge_domain
+                        ):
+                            refreshed = candidate_row
+                            break
                 refreshed_platform = str(
                     (refreshed or {}).get("platform") or "newapi"
                 ).strip().lower()
@@ -328,6 +369,8 @@ def _import_discovered_site_item(
 
         source_names = item.get("channel_names")
         source_names = source_names if isinstance(source_names, list) else []
+        source_urls = item.get("channel_base_urls")
+        source_urls = source_urls if isinstance(source_urls, list) else []
         now = utc_now_iso()
         for index, channel_id in enumerate(item["channel_ids"]):
             channel_name = (
@@ -335,6 +378,13 @@ def _import_discovered_site_item(
                 if index < len(source_names)
                 else ""
             ) or name
+            # 渠道可能挂在同注册域名的其他子域名上；link 保留渠道自己的
+            # 真实 URL，对账才能区分"渠道换了入口"与"渠道已消失"。
+            upstream_url = (
+                str(source_urls[index] or "").strip()
+                if index < len(source_urls)
+                else ""
+            ) or base_url
             cursor.execute(
                 _q(
                     """
@@ -352,7 +402,7 @@ def _import_discovered_site_item(
                     int(site_id),
                     int(admin_site_id),
                     int(channel_id),
-                    base_url,
+                    upstream_url[:512],
                     channel_name[:255],
                     now,
                     now,
@@ -401,11 +451,19 @@ def _live_channel_urls_from_candidates(
     for candidate in candidates or []:
         if not isinstance(candidate, dict):
             continue
-        base_url = normalize_base_url(str(candidate.get("base_url") or ""))
-        for raw_channel_id in candidate.get("channel_ids") or []:
+        candidate_url = normalize_base_url(str(candidate.get("base_url") or ""))
+        channel_urls = candidate.get("channel_base_urls")
+        channel_urls = channel_urls if isinstance(channel_urls, list) else []
+        for index, raw_channel_id in enumerate(candidate.get("channel_ids") or []):
             channel_id = _positive_channel_id(raw_channel_id)
-            if channel_id is not None:
-                live_urls[channel_id] = base_url
+            if channel_id is None:
+                continue
+            per_channel_url = (
+                normalize_base_url(str(channel_urls[index] or ""))
+                if index < len(channel_urls)
+                else ""
+            )
+            live_urls[channel_id] = per_channel_url or candidate_url
     return live_urls
 
 

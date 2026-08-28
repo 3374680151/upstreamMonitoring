@@ -74,6 +74,8 @@ export type Site = {
   /** 最近一次检测失败原因：auth_expired / waf / network；null = 上次检测正常 */
   session_failure_kind?: string | null;
   has_browser_session?: boolean;
+  /** 站点是否具备可用的用户认证能力（与后端匹配判定同一口径） */
+  auth_ready?: boolean;
   /** 兜底系统访问令牌（服务端生成，仅回传脱敏布尔） */
   has_system_access_token?: boolean;
   system_token_fallback_enabled?: boolean | number;
@@ -358,17 +360,10 @@ export type ChannelMatchedGroup = {
 
 export type ChannelUpstreamBinding = {
   configured?: boolean;
-  /** 未单独配置主站渠道时，是否复用了同 Base URL 的渠道监控登录态 */
+  /** 渠道匹配一律复用「渠道监控」同 Base URL 上游站点的登录态 */
   inherited_from_monitor?: boolean;
   upstream_base_url?: string;
   upstream_platform?: Platform | string;
-  auth_mode?: AuthMode | string;
-  has_login_username?: boolean;
-  has_login_password?: boolean;
-  has_access_token?: boolean;
-  has_refresh_token?: boolean;
-  access_user_id?: string;
-  has_channel_key?: boolean;
   match_status?: "unmatched" | "matched" | "matched_partial" | string;
   match_message?: string;
   matched_groups?: ChannelMatchedGroup[];

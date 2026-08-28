@@ -19,6 +19,7 @@ from backend.core.normalize import (
     platform_label,
     ratio_direction,
     ratio_number,
+    site_merge_key,
     split_channel_groups,
 )
 from backend.core.time import app_now, parse_iso_dt, utc_now_iso
@@ -83,6 +84,36 @@ def get_site_or_404(site_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Di
     return site, None, 200
 
 
+def site_auth_ready(site: Dict[str, Any]) -> bool:
+    """站点是否具备可用的上游用户认证能力。
+
+    渠道匹配（channel_match_service）与站点列表展示共用同一判定，
+    保证前端「站点未登录」徽章与后端匹配口径一致：
+    NewAPI = 浏览器同步会话 / 系统兜底令牌 / 用户令牌+用户 ID 任一；
+    sub2api = 会话 / 令牌 / 密码凭证任一。
+    """
+    platform = str(site.get("platform") or "newapi").strip().lower()
+    if platform == "newapi":
+        if (
+            str(site.get("access_token") or "").strip()
+            and str(site.get("access_user_id") or "").strip()
+        ):
+            return True
+        return bool(
+            str(site.get("browser_cookie") or "").strip()
+            or str(site.get("system_access_token") or "").strip()
+        )
+    return bool(
+        str(site.get("access_token") or "").strip()
+        or str(site.get("refresh_token") or "").strip()
+        or (
+            str(site.get("login_username") or "").strip()
+            and str(site.get("login_password") or "")
+        )
+        or str(site.get("session_sync_status") or "") == "ready"
+    )
+
+
 def site_summary(
     site: Dict[str, Any],
     connection: Optional[Any] = None,
@@ -139,6 +170,7 @@ def site_summary(
                 or site.get("browser_cookie")
             )
         ),
+        "auth_ready": site_auth_ready(site),
         "token_expires_at": site.get("token_expires_at") or "",
         "access_user_id": site.get("access_user_id") or "",
         "login_last_error": site.get("login_last_error"),
@@ -200,6 +232,13 @@ def find_monitor_site_for_channel(base_url: str) -> Optional[Dict[str, Any]]:
     for row in rows:
         if normalize_base_url(str(row.get("base_url") or "")) == normalized:
             return row
+    # 同一注册域名的不同子域名视为同一网站：精确 URL 未命中时按注册域
+    # 回退（取最老的站点作为该域名的代表入口），与导入/对账口径一致。
+    merge_domain = site_merge_key(normalized)
+    if merge_domain:
+        for row in sorted(rows, key=lambda item: int(item.get("id") or 0)):
+            if site_merge_key(str(row.get("base_url") or "")) == merge_domain:
+                return row
     return None
 
 

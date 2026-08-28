@@ -75,11 +75,8 @@ function bindingStatusLabel(binding?: ChannelUpstreamBinding): string {
   if (status === "refresh_error" || status === "error") return "刷新失败";
   if (status === "needs_key_verification") return "需要安全验证";
   if (status === "missing_key") return "缺少渠道 key";
-  if (status === "key_not_found") return "上游分组已失效";
-  if (status === "no_group") return "未配置分组";
-  if (status === "inferred") return "分组名匹配";
-  if (status === "inferred_partial") return "分组名部分匹配";
-  if (status === "inferred_none") return "分组名未命中";
+  if (status === "key_not_found") return "key 已不在上游";
+  if (status === "no_group") return "key 未绑定分组";
   if (status === "unmatched") return binding?.configured ? "待匹配" : "未配置";
   return "未匹配";
 }
@@ -93,12 +90,27 @@ function isStaleMatchStatus(status?: string): boolean {
   );
 }
 
+/** 认证被拒（登录态失效/未登录）类错误：主徽章直接显示「站点未登录」 */
+const AUTH_EXPIRED_MESSAGE_PATTERN =
+  /(未登录|登录态已失效|登录态失效|登录已过期|令牌已过期|令牌无效|认证失败|HTTP\s*401|unauthorized|token\s+has\s+(expired|been\s+revoked))/i;
+const WAF_MESSAGE_PATTERN = /(WAF|防护拦截)/i;
+
+function isAuthExpiredBinding(binding?: ChannelUpstreamBinding): boolean {
+  const status = binding?.match_status;
+  if (status !== "error" && status !== "refresh_error") return false;
+  const message = String(binding?.match_message || "");
+  return !WAF_MESSAGE_PATTERN.test(message) && AUTH_EXPIRED_MESSAGE_PATTERN.test(message);
+}
+
 function staleMatchPrefix(binding?: ChannelUpstreamBinding): string {
   if (binding?.match_status === "needs_key_verification") {
     return "需要安全验证，显示上次成功倍率";
   }
   if (binding?.match_status === "missing_key") {
     return "缺少渠道 key，显示上次成功倍率";
+  }
+  if (isAuthExpiredBinding(binding)) {
+    return "站点未登录，显示上次成功倍率";
   }
   if (binding?.match_status === "key_not_found") {
     return "上游分组已失效，显示上次成功倍率";
@@ -121,22 +133,6 @@ function bindingFailure(binding?: ChannelUpstreamBinding): { summary: string; ra
     return { summary: "未取得渠道真实 key", raw };
   }
   return explainUpstreamError(raw);
-}
-
-function bindingTooltip(binding?: ChannelUpstreamBinding): string | undefined {
-  if (isStaleMatchStatus(binding?.match_status)) return undefined;
-  return binding?.match_message || "未匹配";
-}
-
-function bindingTone(status?: string): BadgeTone {
-  if (status === "matched") return "success";
-  if (status === "matched_partial") return "warning";
-  if (status === "inferred") return "info";
-  if (status === "inferred_partial") return "warning";
-  if (status === "inferred_none") return "neutral";
-  if (status === "needs_key_verification") return "warning";
-  if (status && status !== "unmatched") return "danger";
-  return "neutral";
 }
 
 // ---- composables ----
@@ -326,23 +322,68 @@ const newApiRows = computed(() => {
   return visibleChannels.value.map((channel) => {
     const binding = upstreamBindings.value[String(channel.id)];
     const matchedGroups = binding?.matched_groups || [];
-    const staleMatch = isStaleMatchStatus(binding?.match_status);
-    const partialMatch = binding?.match_status === "matched_partial";
-    const bindingError = bindingFailure(binding);
     const note = rowNote.value[channel.id];
     const displayedGroups = channelGroupNames(channel, allowedGroupNames.value);
     const isMatching = matching.value.has(channel.id);
     const isRefreshingKey = refreshingKeyIds.value.has(channel.id);
     const isSelected = selectedChannelId.value === channel.id;
+    const upstreamSite = upstreamSiteFor(channel, binding);
+    // 展示规则：出问题时先看上游站点登录态——站点没登录一律归为「站点未登录」，
+    // 站点有登录但 key 有问题才显示「上游 key 未匹配」等具体原因。
+    const siteLoggedOut = !!upstreamSite && upstreamSite.auth_ready === false;
+    // 站点登录态失效（auth_ready=false 或匹配时被 401 拒绝）但上次成功匹配过
+    // 倍率：照常展示该份数据，用中性色 + 悬浮提示特殊标注为旧数据。
+    const siteUnauthenticated = siteLoggedOut || isAuthExpiredBinding(binding);
+    const hasRatio = matchedGroups.some(
+      (item) => item.ratio !== undefined && item.ratio !== null && item.ratio !== "",
+    );
+    // 一句话展示：只保留有行动意义的状态；其余情形不显示任何徽章，
+    // 详细原因收进徽章 hover title，匹配成功才有悬浮分组目录。
+    let badgeText = "";
+    let badgeTone: BadgeTone = "warning";
+    let badgeTitle = "";
+    let staleRatio = false;
+    const status = binding?.match_status;
+    if (siteUnauthenticated) {
+      if (hasRatio) {
+        staleRatio = true;
+      } else {
+        badgeText = "站点未登录";
+        badgeTitle = siteLoggedOut
+          ? upstreamSite?.session_sync_error ||
+            "上游站点未登录，请先在站点监控完成浏览器同步"
+          : binding?.match_message || "";
+      }
+    } else if (status === "matched_partial") {
+      badgeText = "上游分组不存在";
+      badgeTitle = binding?.match_message || "";
+    } else if (status === "key_not_found" || status === "no_group") {
+      badgeText = "上游 key 未匹配";
+      badgeTitle = binding?.match_message || "";
+    } else if (status === "needs_key_verification") {
+      badgeText = "需要安全验证";
+      badgeTitle = binding?.match_message || "";
+    } else if (status === "missing_key") {
+      badgeText = "缺少渠道 key";
+      badgeTitle = binding?.match_message || "";
+    }
+    const showRatioBadges = !badgeText && hasRatio;
+    if (!badgeText && !showRatioBadges) {
+      // 兜底：读取失败/推断未命中/从未匹配等其余情形统一一句话，列内永不为空
+      badgeText = "上游未匹配";
+      badgeTitle = binding?.match_message || "";
+    }
     return {
       channel,
       meta: statusMeta(channel.status),
       binding,
       matchedGroups,
-      upstreamSite: upstreamSiteFor(channel, binding),
-      staleMatch,
-      partialMatch,
-      bindingError,
+      upstreamSite,
+      badgeText,
+      badgeTone,
+      badgeTitle,
+      showRatioBadges,
+      staleRatio,
       note,
       displayedGroups,
       isMatching,
@@ -1419,10 +1460,11 @@ watch(
                   </td>
                   <td class="max-w-0 py-3 pr-3">
                     <UpstreamGroupsPopover
+                      v-if="row.showRatioBadges && !row.staleRatio"
                       :site="row.upstreamSite"
                       :matched-groups="row.matchedGroups"
                     >
-                      <div v-if="row.matchedGroups.length" class="flex max-w-full flex-wrap gap-1 overflow-hidden">
+                      <div class="flex max-w-full flex-wrap gap-1 overflow-hidden">
                         <Badge
                           v-for="item in row.matchedGroups"
                           :key="item.name"
@@ -1433,30 +1475,30 @@ watch(
                           {{ ratioXText(item) }}
                         </Badge>
                       </div>
-                      <Badge
-                        v-else
-                        :tone="bindingTone(row.binding?.match_status)"
-                        class="max-w-full truncate"
-                        :title="bindingTooltip(row.binding)"
-                      >
-                        {{ bindingStatusLabel(row.binding) }}
-                      </Badge>
                     </UpstreamGroupsPopover>
                     <div
-                      v-if="row.staleMatch"
-                      class="mt-1 truncate text-[10px] text-warning-fg"
-                      :title="row.bindingError.raw"
+                      v-else-if="row.showRatioBadges && row.staleRatio"
+                      class="flex max-w-full flex-wrap gap-1 overflow-hidden"
                     >
-                      <template v-if="row.matchedGroups.length">{{ staleMatchPrefix(row.binding) }} · </template>
-                      错误原因：{{ row.bindingError.summary }}
+                      <Badge
+                        v-for="item in row.matchedGroups"
+                        :key="item.name"
+                        tone="neutral"
+                        class="max-w-full truncate border border-dashed"
+                        :title="`站点未登录，显示上次成功倍率 · ${item.name}`"
+                      >
+                        {{ ratioXText(item) }}
+                      </Badge>
                     </div>
-                    <div
-                      v-else-if="row.partialMatch"
-                      class="mt-1 truncate text-[10px] text-warning-fg"
-                      :title="row.binding?.match_message || '部分分组数据不完整'"
+                    <Badge
+                      v-else-if="row.badgeText"
+                      :tone="row.badgeTone"
+                      dot
+                      class="max-w-full truncate"
+                      :title="row.badgeTitle"
                     >
-                      部分匹配：{{ row.binding?.match_message || "部分分组数据不完整" }}
-                    </div>
+                      {{ row.badgeText }}
+                    </Badge>
                   </td>
                   <td class="py-3 pr-3 tabular-nums text-ink">
                     {{ Number(row.channel.weight ?? 0) }}

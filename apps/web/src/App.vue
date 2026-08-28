@@ -7,6 +7,7 @@ import ToastViewport from "@/components/ToastViewport.vue";
 import LoginPage from "@/components/LoginPage.vue";
 import SiteFormDialog from "@/components/SiteFormDialog.vue";
 import RatiosDialog from "@/components/RatiosDialog.vue";
+import SessionLoginAssistDialog from "@/components/SessionLoginAssistDialog.vue";
 import { Button, ConfirmDialog } from "@/components/ui";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAuth } from "@/composables/useAuth";
@@ -14,6 +15,7 @@ import { useConsoleData } from "@/composables/useConsoleData";
 import { useAutoSessionResync } from "@/composables/useAutoSessionResync";
 import { useReconcileMode } from "@/composables/useReconcileMode";
 import { provideAppActions } from "@/composables/useAppActions";
+import { syncWithLoginAssist } from "@/composables/useLoginAssistSync";
 import { api } from "@/lib/api";
 import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
 import type { Site } from "@/lib/types";
@@ -112,7 +114,8 @@ async function handleCheck(site: Site): Promise<void> {
 
 async function handleSessionSync(site: Site): Promise<void> {
   try {
-    const result = await syncSiteBrowserSession(site.id);
+    // 无登录态时自动打开站点页引导登录，登录后自动探测接管
+    const result = await syncWithLoginAssist(site);
     await refresh();
     if (result.status === "ready") {
       toast.success(`渠道「${site.name}」登录态已同步`);
@@ -245,6 +248,7 @@ provideAppActions({
       :site="ratiosSite"
       @close="ratiosSite = null"
     />
+    <SessionLoginAssistDialog />
     <ConfirmDialog
       :open="!!deleteTarget"
       title="删除渠道"

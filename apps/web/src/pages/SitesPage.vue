@@ -8,8 +8,8 @@ import { api } from "@/lib/api";
 import {
   extensionRequiredMessage,
   probeSessionBridge,
-  syncSiteBrowserSession,
 } from "@/lib/browserSessionBridge";
+import { syncWithLoginAssist } from "@/composables/useLoginAssistSync";
 import type { Platform, SiteFormPayload } from "@/lib/types";
 import { truthy } from "@/lib/format";
 import { useToast } from "@/composables/useToast";
@@ -195,7 +195,8 @@ async function syncBrowserSessions(targetPlatform: "sub2api" | "newapi"): Promis
         if (site.auth_mode !== "browser") {
           await api.updateSite(site.id, toBrowserSwitchPayload(site));
         }
-        const result = await syncSiteBrowserSession(site.id);
+        // 无登录态时自动弹出站点页引导登录，登录后自动接管
+        const result = await syncWithLoginAssist(site);
         if (result.status === "ready") {
           done.push(label);
           lines.push(`✓ ${label} 登录态已同步`);

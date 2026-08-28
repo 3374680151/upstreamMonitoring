@@ -157,9 +157,22 @@ test("service worker opens a background tab only when needed and always cleans i
   );
   assert.match(source, /chrome\.tabs\.create\(\{[\s\S]*?active:\s*false/);
   assert.match(source, /chrome\.tabs\.remove\(createdTabId\)/);
-  assert.doesNotMatch(source, /active:\s*true/);
   assert.match(source, /newApiCompletionPayload\(request\.targetOrigin, null\)/);
   assert.match(source, /sub2ApiCompletionPayload\(request\.targetOrigin, null\)/);
+});
+
+test("only the explicit login-assist handler may open a foreground tab", async () => {
+  const testDir = new URL(".", import.meta.url);
+  const source = await readFile(
+    fileURLToPath(new URL("../service-worker.js", testDir)),
+    "utf8",
+  );
+  // 前台标签页只允许出现在用户主动触发的登录引导里，静默同步绝不抢焦点
+  assert.equal((source.match(/active:\s*true/g) || []).length, 1);
+  assert.match(
+    source,
+    /async function handleOpenTab[\s\S]*?active:\s*true[\s\S]*?\n\}/,
+  );
 });
 
 test("unknown extension failures expose only a safe diagnostic stage", () => {

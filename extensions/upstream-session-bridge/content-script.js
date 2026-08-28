@@ -64,6 +64,18 @@ window.addEventListener("message", (event) => {
     );
     return;
   }
+  if (event.data.type === "UPSTREAM_SESSION_BRIDGE_OPEN_TAB") {
+    forwardRuntimeMessage(
+      {
+        version: VERSION,
+        type: "UPSTREAM_SESSION_BRIDGE_OPEN_TAB",
+        request: { target_origin: event.data.request?.target_origin || "" },
+      },
+      correlationId,
+      "UPSTREAM_SESSION_BRIDGE_TAB_ACK",
+    );
+    return;
+  }
   if (event.data.type !== "UPSTREAM_SESSION_BRIDGE_START") return;
   forwardRuntimeMessage(
     {

@@ -476,6 +476,22 @@ async function handleStart(rawRequest) {
   }
 }
 
+async function handleOpenTab(rawRequest) {
+  // 登录引导专用：用户在控制台主动要求「去登录」时前台打开站点首页，
+  // 与后台静默同步的 active:false 语义严格区分。
+  const targetOrigin = normalizeOrigin(rawRequest?.target_origin);
+  if (!targetOrigin) {
+    return tokenFreePageResult({
+      ok: false,
+      status: "failed",
+      code: "INVALID_REQUEST",
+      message: "打开站点页请求无效",
+    });
+  }
+  await chrome.tabs.create({ url: `${targetOrigin}/`, active: true });
+  return tokenFreePageResult({ ok: true, status: "ready" });
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.version !== BRIDGE_VERSION) {
     return false;
@@ -488,6 +504,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }),
     );
     return false;
+  }
+  if (message?.type === "UPSTREAM_SESSION_BRIDGE_OPEN_TAB") {
+    handleOpenTab(message.request).then(sendResponse);
+    return true;
   }
   if (message?.type !== PAGE_REQUEST_TYPE) return false;
   handleStart(message.request).then(sendResponse);

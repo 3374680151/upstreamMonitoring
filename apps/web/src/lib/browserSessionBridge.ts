@@ -16,7 +16,7 @@ export function extensionRequiredMessage(): string {
   if (hostname !== "localhost" && hostname !== "127.0.0.1") {
     return `浏览器同步扩展无法在当前地址（${origin}）工作：请改用 http://localhost:5173 或 http://localhost:8000 访问控制台`;
   }
-  return `浏览器同步扩展未连接或版本过旧：请在 chrome://extensions 重新加载 0.1.7 扩展，然后强制刷新本页（Cmd+Shift+R）；当前页面 ${origin}`;
+  return `浏览器同步扩展未连接或版本过旧：请在 chrome://extensions 重新加载 0.1.8 扩展，然后强制刷新本页（Cmd+Shift+R）；当前页面 ${origin}`;
 }
 const SESSION_SYNC_TERMINAL_STATUSES = new Set<SessionSyncStatus>([
   "ready",
@@ -156,6 +156,35 @@ export async function startSessionBridgeRequest(
     code: String(result.code || ""),
     message: String(result.message || ""),
   };
+}
+
+export async function openSiteLoginTab(targetOrigin: string): Promise<boolean> {
+  // 登录引导：让扩展前台打开站点首页（不经过弹窗拦截）。
+  // 旧版本扩展没有该消息类型，超时未确认则由调用方回退 window.open。
+  if (!targetOrigin) return false;
+  const correlation = correlationId();
+  try {
+    const result = await waitForBridgeMessage(
+      correlation,
+      "UPSTREAM_SESSION_BRIDGE_TAB_ACK",
+      1500,
+      () => {
+        window.postMessage(
+          {
+            source: PAGE_SOURCE,
+            version: BRIDGE_VERSION,
+            type: "UPSTREAM_SESSION_BRIDGE_OPEN_TAB",
+            correlation_id: correlation,
+            request: { target_origin: targetOrigin },
+          },
+          window.location.origin,
+        );
+      },
+    );
+    return result.ok === true;
+  } catch {
+    return false;
+  }
 }
 
 function fallbackState(

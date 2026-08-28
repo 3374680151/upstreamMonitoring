@@ -30,7 +30,7 @@ const bodyText = computed(() => {
     case "opening":
       return "正在为你打开站点页面，请在其中完成登录。";
     case "waiting":
-      return "请在打开的站点页面完成登录。登录成功后会自动同步并保留登录态，无需回到本页操作。";
+      return "已在浏览器打开站点页，请在其中完成登录。登录后回到本页点「我已登录完成」立即获取；不点击也会每几秒自动探测。";
     case "probing":
       return "正在读取站点登录态，稍候…";
     case "success":
@@ -87,7 +87,7 @@ const bodyText = computed(() => {
         :loading="busy"
         @click="retryLoginAssistNow"
       >
-        已登录，立即重试
+        我已登录完成
       </Button>
     </div>
   </Modal>

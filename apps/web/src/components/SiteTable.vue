@@ -10,7 +10,6 @@ import {
   Trash2,
 } from "lucide-vue-next";
 import type { SessionSyncStatus, Site } from "@/lib/types";
-import { isSessionSyncRetryable } from "@/lib/browserSessionBridge";
 import {
   fmtTimeParts,
   platformLabel,
@@ -299,7 +298,7 @@ const sections = computed(() => {
                 </Badge>
               </td>
               <td v-if="compact" class="py-3 pr-3 align-middle">
-                <div v-if="truthy(site.enabled)" class="flex flex-wrap gap-1">
+                <div class="flex flex-wrap gap-1">
                   <Badge
                     v-if="sessionFailureBadge(site)"
                     :tone="sessionFailureBadge(site)!.tone"
@@ -335,11 +334,9 @@ const sections = computed(() => {
                   <Badge v-else-if="truthy(site.login_enabled)" tone="info"
                     >认证增强</Badge
                   >
-                </div>
-                <span v-else class="text-[11.5px] text-ink-faint">—</span>
-              </td>
+                </div>              </td>
               <td v-else class="py-3 pr-3 align-middle">
-                <div v-if="truthy(site.enabled)" class="flex flex-wrap gap-1">
+                <div class="flex flex-wrap gap-1">
                   <Badge
                     v-if="sessionFailureBadge(site)"
                     :tone="sessionFailureBadge(site)!.tone"
@@ -379,9 +376,7 @@ const sections = computed(() => {
                   <Badge v-else-if="truthy(site.login_enabled)" tone="info"
                     >认证增强</Badge
                   >
-                </div>
-                <span v-else class="text-[11.5px] text-ink-faint">—</span>
-              </td>
+                </div>              </td>
               <td
                 v-if="!compact"
                 class="py-3 pr-3 align-middle tabular text-ink-strong"
@@ -411,9 +406,10 @@ const sections = computed(() => {
                 <div class="flex flex-nowrap items-center justify-end gap-1">
                   <Button
                     v-if="
-                      truthy(site.enabled) &&
                       site.auth_mode === 'browser' &&
-                      isSessionSyncRetryable(site.session_sync_status)
+                      !['ready', 'pending', 'validating'].includes(
+                        site.session_sync_status || 'not_requested',
+                      )
                     "
                     variant="secondary"
                     size="sm"
@@ -428,7 +424,6 @@ const sections = computed(() => {
                   </Button>
                   <Button
                     v-else-if="
-                      truthy(site.enabled) &&
                       site.platform === 'sub2api' &&
                       site.auth_mode !== 'browser'
                     "

@@ -176,17 +176,18 @@
 
 ## 命名与注释
 
-> 原则：本节描述的是代码里**已经成立的惯例**，新代码照做；不要单方面改风格——批量翻译既有注释、重命名私有函数、无谓翻新旧类型写法都算。
+> 原则：本节是**目标约定**，新代码必须遵守。存量代码按旧风格保留、等用户统一刷新仓库，**不要自行批量重命名 / 翻译**；同一模块内不要混用新旧两种风格。
 
 ### 后端（Python / FastAPI）
 
 - 新模块顶部加 `from __future__ import annotations`（存量少数模块如 `db/migrations.py`、`workers/cache.py` 没有，不必回填）。
 - 模块 docstring 用**英文**三引号：一行摘要 + 必要时补一段模块边界说明（参考 `core/normalize.py` 的写法）。
-- 命名：函数 / 变量 `snake_case`；模块私有助手加 `_` 前缀（`_q` / `_sync_safe_value`）；常量 `UPPER_SNAKE_CASE`，进程级的只放 `core/state.py`。
+- 命名：函数 / 变量 / 方法参数用 **camelCase**（`fetchAdminSiteChannels` / `siteId`），前后端统一驼峰；私有助手仍加 `_` 前缀（`_syncSafeValue`）；常量保持 `UPPER_SNAKE_CASE`（`DB_LOCK`），进程级的只放 `core/state.py`。
 - 文件按域命名：`services/<domain>_service.py`、`repositories/<table>.py`、`integrations/<protocol>.py`。
-- 行为类方法动词开头：`create_ / delete_ / list_ / get_ / fetch_ / update_ / ensure_ / refresh_ / test_ / verify_ / build_`；返回派生数据的纯助手也接受名词短语（`admin_site_capabilities` / `channel_upstream_binding_payload`），两类都是现状。
-- router 函数用端点语义名（`auth_status` / `overview` / `create_channel`），不带 `api_` 前缀；与导入的 service / repository 函数重名时加 `_route` 后缀避让（`create_site_route` / `delete_site_route`）。
+- 行为类方法动词开头：`createXxx / deleteXxx / listXxx / getXxx / fetchXxx / updateXxx / ensureXxx / refreshXxx / testXxx / verifyXxx / buildXxx`；返回派生数据的纯助手也接受名词短语（`adminSiteCapabilities` / `channelUpstreamBindingPayload`）。
+- router 函数用端点语义名（`authStatus` / `overview` / `createChannel`），不带 `api` 前缀；与导入的 service / repository 函数重名时加 `Route` 后缀避让（`createSiteRoute` / `deleteSiteRoute`）。
 - Pydantic 模型 PascalCase + 后缀：`<资源><动作>Request`（`SiteCreateRequest` / `DiscoveryImportRequest`）；透传模型继承 `common.CompatibilityModel`（`extra="allow"`）；统一信封用 `common.SuccessResponse`。
+- **契约字段不随驼峰改**：Pydantic 字段名、JSON 返回字段、DB 列名保持 `snake_case`（`base_url` / `interval_minutes`）——它们是前后端契约（`lib/types.ts` 一一对应）与库表结构，重命名会破坏兼容。
 - 类型标注：公共函数标全参数与返回值；新代码用内建泛型 + PEP 604 联合（`dict[str, Any]` / `str | None`），旧代码里的 `Optional[...]` 不必翻新。
 
 ### 前端（TS / Vue）

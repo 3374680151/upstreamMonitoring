@@ -58,15 +58,16 @@
     ```bash
     git checkout master
     git pull --ff-only          # 若远程不可达或无远程跟踪，可跳过，以本地 master 为准
-    git checkout -b feat/<简短英文功能名>   # 修复类可用 fix/<名称>
+    git checkout -b <业务名>     # 例：sub2api-session-self-heal、channel-auto-demotion
     ```
+    分支名 = **纯业务名**，全小写 + 连字符；**不加 `feat/` / `fix/` / `chore/` 等类型前缀**——类型信息放在提交信息里（`feat:` / `fix:` / `docs:` / `chore:`），不放分支名。
 2. **开发与提交都在功能分支上**，提交信息延续仓库惯例：`feat(scope): 中文描述` / `fix(scope): ...` / `docs: ...` / `chore: ...`。
 3. **合并必须等用户验证**：功能完成后先交给用户验证（本地跑起来走一遍主流程）。用户明确确认「验证通过」之前，**不得**合入 master，也**不得**推送远程。
 4. **用户验证通过后 → 合入本地 master**：
     ```bash
     git checkout master
-    git merge --no-ff feat/<简短英文功能名>
-    git branch -d feat/<简短英文功能名>
+    git merge --no-ff <业务名>
+    git branch -d <业务名>
     ```
 5. **合入后再推送远程**：`git push origin master`。功能分支本身默认不推远程（用户要求时才推）。
 6. 一次只开一个功能分支；上个功能未验证合入前，不要叠开新分支。若验证不通过，回到功能分支修复后再次交给用户验证。
@@ -179,10 +180,12 @@
 
 ### 后端（Python / FastAPI）
 
-- 模块顶部 `from __future__ import annotations`；模块 docstring 用**英文**三引号：一行摘要 + 必要时补一段模块边界说明（参考 `core/normalize.py` 的写法）。
+- 新模块顶部加 `from __future__ import annotations`（存量少数模块如 `db/migrations.py`、`workers/cache.py` 没有，不必回填）。
+- 模块 docstring 用**英文**三引号：一行摘要 + 必要时补一段模块边界说明（参考 `core/normalize.py` 的写法）。
 - 命名：函数 / 变量 `snake_case`；模块私有助手加 `_` 前缀（`_q` / `_sync_safe_value`）；常量 `UPPER_SNAKE_CASE`，进程级的只放 `core/state.py`。
 - 文件按域命名：`services/<domain>_service.py`、`repositories/<table>.py`、`integrations/<protocol>.py`。
-- 方法名动词开头表达行为：`fetch_* / update_* / ensure_* / refresh_* / test_* / verify_*`；router 函数直接用端点语义名（`auth_status` / `login`），不带 `api_` 前缀。
+- 行为类方法动词开头：`create_ / delete_ / list_ / get_ / fetch_ / update_ / ensure_ / refresh_ / test_ / verify_ / build_`；返回派生数据的纯助手也接受名词短语（`admin_site_capabilities` / `channel_upstream_binding_payload`），两类都是现状。
+- router 函数用端点语义名（`auth_status` / `overview` / `create_channel`），不带 `api_` 前缀；与导入的 service / repository 函数重名时加 `_route` 后缀避让（`create_site_route` / `delete_site_route`）。
 - Pydantic 模型 PascalCase + 后缀：`<资源><动作>Request`（`SiteCreateRequest` / `DiscoveryImportRequest`）；透传模型继承 `common.CompatibilityModel`（`extra="allow"`）；统一信封用 `common.SuccessResponse`。
 - 类型标注：公共函数标全参数与返回值；新代码用内建泛型 + PEP 604 联合（`dict[str, Any]` / `str | None`），旧代码里的 `Optional[...]` 不必翻新。
 

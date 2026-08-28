@@ -231,6 +231,20 @@
 
 ---
 
+## 模块组织与解耦（一文件一功能）
+
+> 目标：一个文件装一个功能，依赖单向、调用关系清晰；加功能不膨胀旧文件，删功能能整块移除，重构与新增不牵一发动全身。
+
+1. **新功能默认新文件**：功能逻辑写进自己的文件（service / integration / composable / 组件），不往既有文件里续加功能块。自检标准：**这个功能删掉时，能不能按「整文件或少数几个函数」干净移除**——做不到就说明功能边界切错了。
+2. **500 行红线**：后端单 `.py`、前端单 `.vue` / `.ts` 超过约 500 行就不再往里加新功能——新逻辑进新文件，或先拆走相邻子域。存量超大文件（`integrations/newapi.py` 2301 行、`sub2api.py` 2101 行、`sync_service.py` / `session_sync_service.py` 约 1000 行、前端 `pages/ChannelsPage.vue` 1637 行）是反面教材：**只做小修，不扩大**；重构触及时按子域拆薄。
+3. **依赖方向单向**：`routers → services → repositories / integrations → core / db`。services 之间允许互相调用，但只走对方**顶层导出的公共函数**（`notify_changes` / `detect_site` 这个级别）；禁止 import 对方的 `_` 私有助手、禁止读写对方模块级可变状态（共享状态只经 `core/state.py`）、禁止循环依赖。
+4. **公共部分集中、按需下沉**：纯函数（URL 规范化 / 掩码 / 格式化）→ `core/normalize.py`；锁 / 缓存 / 进程级单例 → `core/state.py`；时间 → `core/time.py`；DB 助手 → `db/connection.py`；前端纯函数 → `lib/format.ts`；token 与 401 → `lib/api/client.ts`。**出现第二个使用方才下沉**，不做预先抽象。
+5. **只依赖接口，不依赖实现**：调用方只 import 公共函数；被调模块换内部实现不应牵动任何调用方。拆文件时对外函数签名保持不变，调用方零改动。
+6. **拆分按子域，一次到位**：巨型文件按功能子域拆（如 `newapi.py` → `newapi_channels` / `newapi_groups` / `newapi_pricing`；`sync_service.py` → 对账 / key 刷新 / 发现导入），文件名带子域后缀。**同一次提交里改完全部调用方**，不留 re-export 过渡层（`legacy_runtime` 全量 re-export 的教训）；拆完跑一遍主流程再提交验证。
+7. **前端对应**：页面只做编排（见「前端规范」），页面 / 组件超 500 行拆子组件或子 composable；业务组件之间不互相 import，复用抽 composable（已有规则）。
+
+---
+
 ## 仓库结构（真实结构）
 
 ```

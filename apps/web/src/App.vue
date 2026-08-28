@@ -57,6 +57,7 @@ async function handleSyncMainSites(adminSiteId?: number): Promise<boolean> {
     if (result.disabled) parts.push(`停用 ${result.disabled}`);
     if (result.deleted) parts.push(`删除 ${result.deleted}`);
     if (result.conflicts) parts.push(`平台冲突 ${result.conflicts}`);
+    if (result.excluded) parts.push(`跳过 ${result.excluded} 个未识别渠道`);
     if (result.channels_changed) parts.push("渠道数据已更新");
     if (result.groups_changed) parts.push("分组数据已更新");
     if (result.keys_refreshed) parts.push(`已刷新 ${result.keys_refreshed} 个渠道 key`);

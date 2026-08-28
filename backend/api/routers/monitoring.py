@@ -42,6 +42,7 @@ from backend.services.monitoring_service import (
     cache_newapi_perf_summary_payload,
     cache_newapi_pricing_payload,
     detect_site,
+    get_main_site_sync_all_channels,
     get_newapi_perf_summary_cache,
     get_newapi_pricing_cache,
     get_site_model_cache,
@@ -434,12 +435,18 @@ async def sync_sites(request: Request):
         for item in classification_results
         if isinstance(item, dict)
     )
+    excluded = sum(
+        int(entry.get("excluded_channels") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
 
     return JSONResponse(
         {
             "success": True,
             "data": results,
             "mode": reconcile.get("mode") or RECONCILE_MODE_DISABLE,
+            "sync_all": get_main_site_sync_all_channels(),
             "channels_changed": channels_changed,
             "groups_changed": groups_changed,
             "keys_refreshed": keys_refreshed,
@@ -448,6 +455,7 @@ async def sync_sites(request: Request):
             "key_errors": key_errors[:3],
             "imported": imported,
             "conflicts": conflicts,
+            "excluded": excluded,
             "disabled": int(reconcile.get("disabled") or 0),
             "reenabled": int(reconcile.get("reenabled") or 0),
             "deleted": int(reconcile.get("deleted") or 0),

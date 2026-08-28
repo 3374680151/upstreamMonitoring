@@ -72,6 +72,7 @@ from backend.services.admin_site_service import (
 from backend.services.monitoring_service import (
     RECONCILE_MODE_DELETE,
     get_main_site_reconcile_mode,
+    get_main_site_sync_all_channels,
 )
 from backend.services.channel_classification_service import ChannelClassificationService
 
@@ -233,6 +234,7 @@ def _sync_admin_site_snapshot_in_connection(
     channels: List[Dict[str, Any]],
     groups: Dict[str, Any],
     mode: str,
+    sync_all: bool = True,
 ) -> Dict[str, Any]:
     """Write one complete admin-site snapshot and reconcile its local links."""
     admin_site_id = int(admin.get("id") or 0)
@@ -272,9 +274,42 @@ def _sync_admin_site_snapshot_in_connection(
     removed_links = 0
     affected_site_ids: set = set()
     preferred_site_by_channel: Dict[int, int] = {}
+    excluded_candidates = 0
+    excluded_channels = 0
     if platform == "newapi":
         candidates = aggregate_newapi_channel_candidates(channels)
-        for candidate in candidates:
+        import_candidates = candidates
+        if not sync_all:
+            # 只导入识别为 NewAPI/sub2api 的渠道；未识别平台仅跳过导入，
+            # 不参与对账排除，已有链接与站点保持原样。
+            classifier = ChannelClassificationService()
+            platform_by_url = classifier.platforms_for_base_urls(
+                [str(item.get("base_url") or "") for item in candidates]
+            )
+            import_candidates = [
+                item
+                for item in candidates
+                if platform_by_url.get(
+                    str(item.get("base_url") or ""), "unknown"
+                )
+                in ("newapi", "sub2api")
+            ]
+            excluded_candidates = len(candidates) - len(import_candidates)
+            imported_channel_count = sum(
+                len(item.get("channel_ids") or []) for item in import_candidates
+            )
+            excluded_channels = (
+                sum(len(item.get("channel_ids") or []) for item in candidates)
+                - imported_channel_count
+            )
+            if excluded_candidates:
+                print(
+                    f"[主站同步] admin_site_id={admin_site_id} "
+                    f"识别过滤：导入 {len(import_candidates)} 个上游站点，"
+                    f"跳过 {excluded_candidates} 个站点 / {excluded_channels} 个渠道",
+                    flush=True,
+                )
+        for candidate in import_candidates:
             result = _import_discovered_site_item(
                 connection,
                 admin_site_id,
@@ -369,7 +404,10 @@ def _sync_admin_site_snapshot_in_connection(
         "admin_site_id": admin_site_id,
         "platform": platform,
         "status": "synced",
+        "sync_all": bool(sync_all),
         "imported": imported,
+        "excluded_candidates": excluded_candidates,
+        "excluded_channels": excluded_channels,
         "channels_count": len(channels),
         "groups_count": len(groups),
         "channels_changed": not previous
@@ -795,6 +833,7 @@ def _run_admin_key_refresh_batch(admin_site_id: int) -> None:
 def _sync_one_admin_site(
     admin: Dict[str, Any],
     mode: str,
+    sync_all: bool = True,
 ) -> Dict[str, Any]:
     admin_site_id = int(admin.get("id") or 0)
     try:
@@ -830,7 +869,7 @@ def _sync_one_admin_site(
         with db_connection() as connection:
             try:
                 result = _sync_admin_site_snapshot_in_connection(
-                    connection, admin, channels, groups, mode
+                    connection, admin, channels, groups, mode, sync_all
                 )
                 connection.commit()
                 # 同步过程中直接做分类，复用已获取的 channels，避免二次 HTTP 请求
@@ -910,17 +949,20 @@ def _run_admin_site_sync(
             }
         ]
     mode = get_main_site_reconcile_mode()
+    sync_all = get_main_site_sync_all_channels()
     results: List[Dict[str, Any]] = []
     # 多主站并发同步，默认线程池大小为主站数量（上限8），避免串行等每个主站的HTTP
     valid_admins = [a for a in admin_sites if isinstance(a, dict)]
     max_workers = max(1, min(8, len(valid_admins)))
     if max_workers <= 1:
         for admin in valid_admins:
-            results.append(_sync_one_admin_site(admin, mode))
+            results.append(_sync_one_admin_site(admin, mode, sync_all))
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_map = {
-                pool.submit(_sync_one_admin_site, admin, mode): int(admin.get("id") or 0)
+                pool.submit(_sync_one_admin_site, admin, mode, sync_all): int(
+                    admin.get("id") or 0
+                )
                 for admin in valid_admins
             }
             for future in as_completed(future_map):

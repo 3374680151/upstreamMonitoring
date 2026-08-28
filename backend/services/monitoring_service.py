@@ -98,6 +98,8 @@ RECONCILE_MODE_DISABLE = "disable"
 RECONCILE_MODE_DELETE = "delete"
 RECONCILE_MODES = {RECONCILE_MODE_DISABLE, RECONCILE_MODE_DELETE}
 SETTING_RECONCILE_MODE = "main_site_reconcile_mode"
+# 主站同步范围开关：开（默认）导入全部渠道；关只导入识别为 NewAPI/sub2api 的渠道
+SETTING_SYNC_ALL_CHANNELS = "main_site_sync_all"
 
 from backend.services.session_sync_service import mark_site_browser_session_expired
 from backend.integrations.http import (
@@ -180,6 +182,20 @@ def get_main_site_reconcile_mode() -> str:
         .lower()
     )
     return mode if mode in RECONCILE_MODES else RECONCILE_MODE_DISABLE
+
+
+def get_main_site_sync_all_channels() -> bool:
+    """Whether admin-site sync imports every channel or only recognized platforms.
+
+    ``True`` (default) keeps the legacy behavior of importing all channels;
+    ``False`` skips channels whose base_url is not recognized as NewAPI/sub2api.
+    Already-imported sites are never touched by the filtered mode.
+    """
+    return get_app_setting(SETTING_SYNC_ALL_CHANNELS, "1").strip() not in {
+        "0",
+        "false",
+        "off",
+    }
 
 
 # ---------------------------------------------------------------------------

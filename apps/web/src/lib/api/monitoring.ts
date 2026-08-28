@@ -32,8 +32,11 @@ export const monitoringApi = {
     request<{
       success: boolean;
       data?: unknown[];
+      mode?: string;
+      sync_all?: boolean;
       imported?: number;
       conflicts?: number;
+      excluded?: number;
       channels_changed?: boolean;
       groups_changed?: boolean;
       keys_refreshed?: number;

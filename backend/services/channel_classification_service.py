@@ -139,18 +139,9 @@ class ChannelClassificationService:
             # 1) 本批次缓存
             # 2) 监控站点 DB 记录的 platform（绝大多数渠道命中这条）
             # 3) 真正的 HTTP 探测（带类级 TTLCache）
-            cached = batch_platform_cache.get(base_url)
-            if cached:
-                platform = cached
-            else:
-                site_platform = str(monitor_site.get("platform") or "").strip().lower()
-                if site_platform in ("newapi", "sub2api"):
-                    platform = site_platform
-                else:
-                    platform = self.detect_platform(base_url)
-                    if platform in ("newapi", "sub2api"):
-                        self._update_site_platform(int(monitor_site["id"]), platform)
-                batch_platform_cache[base_url] = platform
+            platform = self._resolve_platform(
+                base_url, batch_platform_cache, monitor_site=monitor_site
+            )
             platform_counts[platform] = platform_counts.get(platform, 0) + 1
 
             # 取监控站点的分组倍率数据
@@ -196,6 +187,46 @@ class ChannelClassificationService:
     # ------------------------------------------------------------------
     # 辅助方法
     # ------------------------------------------------------------------
+
+    def _resolve_platform(
+        self,
+        base_url: str,
+        batch_cache: Dict[str, str],
+        monitor_site: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """判定一个 base_url 的平台类型，结果写入批内缓存。
+
+        优先级：批内缓存 → 监控站点 DB 的 platform → HTTP 探测
+        （探测命中 newapi/sub2api 时回写站点记录，下次同步零探测）。
+        调用方已查出监控站点时直接传入，避免重复查询。
+        """
+        cached = batch_cache.get(base_url)
+        if cached:
+            return cached
+        if monitor_site is None:
+            monitor_site = find_monitor_site_for_channel(base_url)
+        site_platform = str((monitor_site or {}).get("platform") or "").strip().lower()
+        if site_platform in ("newapi", "sub2api"):
+            platform = site_platform
+        else:
+            platform = self.detect_platform(base_url)
+            if platform in ("newapi", "sub2api") and monitor_site:
+                self._update_site_platform(int(monitor_site["id"]), platform)
+        batch_cache[base_url] = platform
+        return platform
+
+    def platforms_for_base_urls(
+        self, base_urls: List[str]
+    ) -> Dict[str, str]:
+        """批量判定 base_url 平台，供同步过滤复用同一套识别逻辑与缓存。"""
+        batch_cache: Dict[str, str] = {}
+        result: Dict[str, str] = {}
+        for base_url in base_urls or []:
+            normalized = str(base_url or "").strip()
+            if not normalized or normalized in result:
+                continue
+            result[normalized] = self._resolve_platform(normalized, batch_cache)
+        return result
 
     def _update_site_platform(self, site_id: int, platform: str) -> None:
         """修正监控站点的平台类型。"""

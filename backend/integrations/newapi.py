@@ -2080,10 +2080,11 @@ def fetch_newapi_system_access_token(
 def refresh_site_system_access_token(
     site_id: int, force: bool = False
 ) -> Tuple[bool, Optional[str]]:
-    """拉取并持久化 NewAPI 站点的兜底系统访问令牌（opt-in）。
+    """拉取并持久化 NewAPI 站点的兜底系统访问令牌（需开关开启）。
 
-    force=False 时若已存有令牌则直接跳过（「首次自动」语义，避免反复重置
-    上游令牌）；force=True 用于手动「重新生成」。返回 ``(ok, error)``。
+    force=True（浏览器同步成功后的自动路径、手动「重新生成」）每次都向上游
+    重新生成并覆盖保存——上游会同步作废旧令牌；force=False（密码登录成功后
+    的自动路径）仅在尚未存有令牌时拉取一次。返回 ``(ok, error)``。
     """
     if int(site_id or 0) <= 0:
         return False, "渠道记录无效"

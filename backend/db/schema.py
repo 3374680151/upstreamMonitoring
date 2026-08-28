@@ -373,6 +373,10 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
 
 SUB2API_BROWSER_FIRST_MIGRATION = "2026-08-02-sub2api-browser-first"
 
+NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION = (
+    "2026-08-28-newapi-system-token-fallback-default"
+)
+
 
 def migrate_sub2api_sites_to_browser_first(cursor: Any) -> None:
     cursor.execute(
@@ -411,6 +415,29 @@ def run_sub2api_browser_first_migration_once(cursor: Any) -> bool:
     return True
 
 
+def run_newapi_system_token_fallback_migration_once(cursor: Any) -> bool:
+    """NewAPI 站点默认自动维护兜底系统访问令牌（存量站点一次性打开开关）。
+
+    用户决策（2026-08）：NewAPI 站点每次浏览器同步成功后都自动重新生成并
+    保存兜底系统令牌，浏览器会话失效时直接用它继续读数据。迁移只执行一次，
+    之后用户仍可在渠道编辑里手动关闭。
+    """
+    cursor.execute(
+        "SELECT name FROM app_schema_migrations WHERE name = %s",
+        (NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION,),
+    )
+    if cursor.fetchone():
+        return False
+    cursor.execute(
+        "UPDATE sites SET system_token_fallback_enabled = 1 WHERE platform = 'newapi'"
+    )
+    cursor.execute(
+        "INSERT INTO app_schema_migrations (name, applied_at) VALUES (%s, %s)",
+        (NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION, utc_now_iso()),
+    )
+    return True
+
+
 def init_db() -> None:
     with DB_LOCK:
         conn = connect_db()
@@ -437,6 +464,7 @@ def init_db() -> None:
                         cur.execute(f"ALTER TABLE admin_sites ADD COLUMN {column_name} {column_type}")
 
                 run_sub2api_browser_first_migration_once(cur)
+                run_newapi_system_token_fallback_migration_once(cur)
 
                 # 说明：这里曾有一段把 newapi + browser 行强制归一化为 token
                 # 的启动期 UPDATE，那是 NewAPI 浏览器登录态同步落地前的过渡

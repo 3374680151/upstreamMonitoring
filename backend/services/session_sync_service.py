@@ -842,12 +842,13 @@ def complete_session_sync_request(
         from backend.services.monitoring_service import detect_site
 
         detection = detect_site(int(site_id))
-        # 兜底令牌：开关开启且尚未存储时，趁会话有效向上游拉一次；
-        # 失败只跳过本次补取，不影响已达成的 ready 终态。
+        # 兜底系统令牌：NewAPI 站点每次同步成功都趁会话有效重新生成并保存
+        #（上游会作废旧令牌），保证浏览器会话失效时兜底 key 始终新鲜；
+        # 失败只跳过本次刷新，不影响已达成的 ready 终态。
         try:
             from backend.integrations.newapi import refresh_site_system_access_token
 
-            refresh_site_system_access_token(int(site_id), force=False)
+            refresh_site_system_access_token(int(site_id), force=True)
         except Exception:  # noqa: BLE001
             pass
     else:

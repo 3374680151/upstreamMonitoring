@@ -30,7 +30,8 @@ const empty: SiteFormPayload = {
   token_expires_at: "",
   access_user_id: "",
   enabled: true,
-  system_token_fallback_enabled: false,
+  // NewAPI 默认开启：每次浏览器同步成功后自动刷新兜底系统访问令牌
+  system_token_fallback_enabled: true,
 };
 
 const props = defineProps<{ open: boolean; site: Site | null }>();
@@ -160,7 +161,7 @@ const systemTokenFallbackHelp = computed(() => {
   const state = props.site?.has_system_access_token
     ? "当前已存兜底令牌"
     : "尚未生成兜底令牌";
-  return `开启后，登录态同步（或密码登录）成功且尚未生成时会自动向上游生成系统访问令牌并保存；浏览器会话失效时用它继续读余额与分组。当前：${state}。上游每次生成都会作废旧的系统访问令牌，如需轮换请在渠道详情页手动重新生成。`;
+  return `开启后，每次登录态同步成功都会自动向上游重新生成系统访问令牌并保存（上游会作废旧令牌）；浏览器会话失效时直接用它继续读余额与分组。关闭后不再自动生成，仅可在详情页手动生成。当前：${state}。`;
 });
 const sameSavedPlatform = computed(() =>
   Boolean(props.site && props.site.platform === form.value.platform),

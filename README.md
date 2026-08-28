@@ -2,14 +2,14 @@
 
 轻量级的 **上游 AI 中转站分组倍率监控面板**：盯 NewAPI / sub2api 站点的分组、倍率、描述等变化，定时采集 → diff → 记录 → 邮件 / 企业微信推送。
 
-> 自 [upstream-ratio-watch](https://github.com/Regert888/upstream-ratio-watch) 迁移并以 PriceAI 风格重构前端。
+> 自 [upstream-ratio-watch](https://github.com/Regert888/upstream-ratio-watch) 迁移并以「暖纸 + 浓墨」风格重构前端。
 
 ## 技术栈
 
 | 层 | 实现 | 说明 |
 |----|------|------|
 | 后端 | `backend/` + 根目录 `app.py` | FastAPI/Uvicorn + **MySQL**（PyMySQL，直连不使用 ORM） |
-| 前端 | `apps/web/` | React 19 + Vite 7 + Tailwind 4（PriceAI 风格） |
+| 前端 | `apps/web/` | Vue 3 + Vite 7 + Tailwind 4（暖纸 + 浓墨风格） |
 | 数据 | **MySQL** 数据库 | 站点 / 快照 / 变化 / 推送日志（连接信息走 `.env`） |
 | 部署 | `python3 app.py` 或 Docker Compose | 后端直接托管前端 `dist` |
 
@@ -110,7 +110,7 @@ MySQL 数据持久化在命名卷 `mysql-data`，升级容器时请保留。Comp
   - 主站数据不进入定时快照、倍率 diff 或邮件/企业微信通知
 - 邮件（SMTP）+ 企业微信 Webhook 推送（含测试发送）
 - 控制台登录鉴权（可选，见 `CONSOLE_PASSWORD`）
-- PriceAI 风格控制台：浅色默认 + 暗色主题
+- 「暖纸 + 浓墨」风格控制台：浅色默认 + 暗色主题
 
 ## 目录结构
 
@@ -124,15 +124,14 @@ upstream/
 │   ├── integrations/         # NewAPI / sub2api 集成门面
 │   ├── db/                   # PyMySQL 连接和迁移入口
 │   └── core/                 # 配置、鉴权、错误处理
-├── data/                     # 本地备份 / 迁移残留（gitignore，仅留 .gitkeep；运行期数据在 MySQL）
-├── apps/web/                 # React 控制台
-│   ├── src/                  # 页面 / 组件 / lib / tokens
+├── apps/web/                 # Vue 3 控制台
+│   ├── src/                  # 页面 / 组件 / composables / lib / tokens
 │   ├── vite.config.ts        # 别名 @ → src，/api 代理到 8000
 │   └── package.json
+├── extensions/               # 浏览器会话同步扩展（upstream-session-bridge）
 ├── docs/product.md           # 产品说明
-├── design/priceai-style.md   # PriceAI 风格调研
-├── .agents/skills/priceai-ui # 前端 UI 规范 skill
-├── AGENTS.md                 # Agent 全局规则
+├── design/priceai-style.md   # 风格调研（历史归档）
+├── AGENTS.md                 # Agent 全局规则（含前后端规范，唯一权威）
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
@@ -140,7 +139,7 @@ upstream/
 
 ## 前端约定
 
-UI 遵循 skill **`priceai-ui`**（`.agents/skills/priceai-ui/SKILL.md`）：品牌绿 `#45bf78`、白卡片、状态胶囊 + KPI + 高密度表；主题变量在 `apps/web/src/styles/tokens.css`，暗色通过 `html[data-theme=dark]` 切换。
+UI 为「暖纸 + 浓墨」风格：页底 `#f4f1ea`、品牌 veridian 绿 `#2c8a5a`、白卡片、状态胶囊 + KPI + 高密度表；设计 token 权威在 `apps/web/src/styles/tokens.css`，暗色通过 `html[data-theme=dark]` 切换。完整前端规范见根目录 `AGENTS.md`。
 
 ## 技术交流
 

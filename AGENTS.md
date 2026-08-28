@@ -196,6 +196,14 @@
 - 不用 `enum`：枚举一律字面量联合（`type Platform = "newapi" | "sub2api"`）；对象形状 `type` / `interface` 都有先例，跟随所在文件；透传类型以 `[key: string]: unknown` 收尾。
 - api 域文件与后端 router 同名对应（`lib/api/auth.ts` ↔ `api/routers/auth.py`）。
 
+### 变量语义（前后端通用）
+
+- **见名知义**：完整英文单词，不用自造缩写（`user` 不写 `usr`、`site` 不写 `st`）；唯一例外是极短循环里的 `i / j / k`。变量用名词，函数用动词（见上文动词前缀）。
+- **布尔值回答是非题**：`isXxx / hasXxx / canXxx / shouldXxx`（`isValid` / `hasSession`）；用肯定式，不写 `isNotValid` 这类否定式；禁止类型匈牙利前缀（`bValid`）。
+- **集合用复数、单个用单数**：`sites` / `siteIds` 对 `site`；取数方法沿用动词前缀——单个 `getXxx`、集合 `listXxx`、统计 `countXxx`。
+- **数值带单位**：`intervalMinutes` / `timeoutMs` / `sizeBytes`（存量 `interval_minutes` 就是这个惯例）。
+- 以上只管代码内部标识符；**API 契约字段 / DB 列名**仍按上文保持 `snake_case` 不动（`is_exclusive` 这类布尔契约字段不改写成 `isXxx` 驼峰）。
+
 ### 注释内容（前后端通用）
 
 - 只写**为什么 / 约束 / 契约对应**，不复述代码做了什么。正例：`routers/auth.py` 里解释 `compare_digest` 对非 ASCII 密码会抛 `TypeError` 的那条注释。

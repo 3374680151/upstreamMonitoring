@@ -173,6 +173,34 @@
 
 ---
 
+## 命名与注释
+
+> 原则：本节描述的是代码里**已经成立的惯例**，新代码照做；不要单方面改风格——批量翻译既有注释、重命名私有函数、无谓翻新旧类型写法都算。
+
+### 后端（Python / FastAPI）
+
+- 模块顶部 `from __future__ import annotations`；模块 docstring 用**英文**三引号：一行摘要 + 必要时补一段模块边界说明（参考 `core/normalize.py` 的写法）。
+- 命名：函数 / 变量 `snake_case`；模块私有助手加 `_` 前缀（`_q` / `_sync_safe_value`）；常量 `UPPER_SNAKE_CASE`，进程级的只放 `core/state.py`。
+- 文件按域命名：`services/<domain>_service.py`、`repositories/<table>.py`、`integrations/<protocol>.py`。
+- 方法名动词开头表达行为：`fetch_* / update_* / ensure_* / refresh_* / test_* / verify_*`；router 函数直接用端点语义名（`auth_status` / `login`），不带 `api_` 前缀。
+- Pydantic 模型 PascalCase + 后缀：`<资源><动作>Request`（`SiteCreateRequest` / `DiscoveryImportRequest`）；透传模型继承 `common.CompatibilityModel`（`extra="allow"`）；统一信封用 `common.SuccessResponse`。
+- 类型标注：公共函数标全参数与返回值；新代码用内建泛型 + PEP 604 联合（`dict[str, Any]` / `str | None`），旧代码里的 `Optional[...]` 不必翻新。
+
+### 前端（TS / Vue）
+
+- 命名：组件 `PascalCase.vue`（公共件从 `components/ui/index.ts` 出口）；composable `useXxx.ts`；变量 / 函数 `camelCase`；常量 `UPPER_SNAKE_CASE`（`TOKEN_KEY`）。
+- 不用 `enum`：枚举一律字面量联合（`type Platform = "newapi" | "sub2api"`）；对象形状 `type` / `interface` 都有先例，跟随所在文件；透传类型以 `[key: string]: unknown` 收尾。
+- api 域文件与后端 router 同名对应（`lib/api/auth.ts` ↔ `api/routers/auth.py`）。
+
+### 注释内容（前后端通用）
+
+- 只写**为什么 / 约束 / 契约对应**，不复述代码做了什么。正例：`routers/auth.py` 里解释 `compare_digest` 对非 ASCII 密码会抛 `TypeError` 的那条注释。
+- 注释语言跟所在端走：**后端英文、前端中文**；同一模块内保持一致，不要单方面翻译既有注释。
+- 跨端契约互相点名：前端模块头注释标对应的后端文件（`/** 控制台鉴权 — 对应后端 routers/auth.py */`），后端涉及跨端契约时也点名前端文件。
+- 不留死代码与 `// removed` 类注释（见上文前端「维护约定」）。
+
+---
+
 ## 仓库结构（真实结构）
 
 ```

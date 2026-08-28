@@ -10,7 +10,7 @@ import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
 import Sub2ApiChannelTable from "@/components/Sub2ApiChannelTable.vue";
 import UpstreamGroupsPopover from "@/components/UpstreamGroupsPopover.vue";
-import { Button, EmptyState, Input, Select, Spinner } from "@/components/ui";
+import { Button, EmptyState, Select, Spinner } from "@/components/ui";
 import { claimAutomaticRefresh } from "@/lib/automaticRefresh";
 import { api } from "@/lib/api";
 import { ratioXText } from "@/lib/format";
@@ -20,6 +20,7 @@ import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
 import { useConsoleData } from "@/composables/useConsoleData";
 import { useReconcileMode, type ReconcileMode } from "@/composables/useReconcileMode";
+import { useSyncAllChannels } from "@/composables/useSyncAllChannels";
 import type {
   AdminSite,
   Channel,
@@ -141,6 +142,7 @@ function bindingTone(status?: string): BadgeTone {
 // ---- composables ----
 const enabled = ref(true);
 const { reconcileMode, handleReconcileModeChange } = useReconcileMode(enabled);
+const { syncAllChannels, handleSyncAllChange } = useSyncAllChannels(enabled);
 const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
 // 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
@@ -161,8 +163,10 @@ const upstreamBindings = shallowRef<Record<string, ChannelUpstreamBinding>>({});
 const loading = ref(false);
 const error = ref("");
 const staleDataWarning = ref("");
-const keyword = ref("");
 const groupFilter = ref<string | null>(null);
+// 全站批量刷新（所有主站，后台批次）
+const refreshingAllSitesKeys = ref(false);
+const refreshingAllSitesRatios = ref(false);
 const selectedChannelId = ref<number | null>(null);
 const matching = shallowRef<Set<number>>(new Set());
 const refreshingKeyIds = shallowRef<Set<number>>(new Set());
@@ -424,13 +428,13 @@ async function pollKeyRefreshProgress() {
         );
       }
       if (keyProgress?.status === "done" || ratioProgress?.status === "done") {
-        await load(keyword.value);
+        await load("");
       }
       return;
     }
     if (activeProgress.status === "done") {
       stopKeyRefreshPolling();
-      await load(keyword.value);
+      await load("");
     }
   } catch {
     // 进度轮询失败不打断页面
@@ -482,6 +486,76 @@ async function triggerFullRatioRefresh() {
     toast.error(message);
   } finally {
     ratioRefreshTriggering.value = false;
+  }
+}
+
+/** 全站批量：为所有 NewAPI 主站触发全量渠道 key 刷新（后台批次，进度徽标跟随当前主站） */
+async function triggerAllSitesKeyRefresh() {
+  if (refreshingAllSitesKeys.value) return;
+  refreshingAllSitesKeys.value = true;
+  actionError.value = "";
+  try {
+    const result = await api.refreshAllSitesChannelKeys();
+    if (result.success === false) {
+      throw new Error(result.message || "触发全量 key 刷新失败");
+    }
+    const triggered = result.data?.triggered || [];
+    const okRows = triggered.filter((row) => row.success);
+    const failRows = triggered.filter((row) => !row.success);
+    if (okRows.length) {
+      toast.success(`已为 ${okRows.length} 个 NewAPI 主站启动全量渠道 key 刷新`);
+      ensureKeyRefreshPolling();
+    } else {
+      toast.info("没有可刷新的 NewAPI 主站");
+    }
+    if (failRows.length) {
+      actionError.value =
+        `部分主站全量 key 刷新启动失败：` +
+        failRows
+          .map((row) => `${row.name || `#${row.admin_site_id}`}：${row.message || "启动失败"}`)
+          .join("；");
+    }
+  } catch (err) {
+    const message = errorText(err, "触发全量 key 刷新失败");
+    actionError.value = `全量 key 刷新启动失败：${message}`;
+    toast.error(`全量 key 刷新启动失败：${message}`);
+  } finally {
+    refreshingAllSitesKeys.value = false;
+  }
+}
+
+/** 全站批量：为所有主站触发全量倍率刷新（后台批次，进度徽标跟随当前主站） */
+async function triggerAllSitesRatioRefresh() {
+  if (refreshingAllSitesRatios.value) return;
+  refreshingAllSitesRatios.value = true;
+  actionError.value = "";
+  try {
+    const result = await api.refreshAllSitesChannelRatios();
+    if (result.success === false) {
+      throw new Error(result.message || "触发全量倍率刷新失败");
+    }
+    const triggered = result.data?.triggered || [];
+    const okRows = triggered.filter((row) => row.success);
+    const failRows = triggered.filter((row) => !row.success);
+    if (okRows.length) {
+      toast.success(`已为 ${okRows.length} 个主站启动全量倍率刷新`);
+      ensureKeyRefreshPolling();
+    } else {
+      toast.info("没有可刷新倍率的主站");
+    }
+    if (failRows.length) {
+      actionError.value =
+        `部分主站全量倍率刷新启动失败：` +
+        failRows
+          .map((row) => `${row.name || `#${row.admin_site_id}`}：${row.message || "启动失败"}`)
+          .join("；");
+    }
+  } catch (err) {
+    const message = errorText(err, "触发全量倍率刷新失败");
+    actionError.value = `全量倍率刷新启动失败：${message}`;
+    toast.error(`全量倍率刷新启动失败：${message}`);
+  } finally {
+    refreshingAllSitesRatios.value = false;
   }
 }
 
@@ -660,7 +734,7 @@ async function syncCurrentMainSite() {
     selectedChannelId.value = null;
     sub2ApiChannel.value = null;
     rowNote.value = {};
-    await load(keyword.value);
+    await load("");
   } finally {
     syncing.value = false;
   }
@@ -676,7 +750,7 @@ async function syncAllMainSites() {
     sub2ApiChannel.value = null;
     rowNote.value = {};
     await loadAdminSites();
-    await load(keyword.value);
+    await load("");
   } finally {
     syncingAll.value = false;
   }
@@ -828,7 +902,7 @@ async function submitForm(channel: Channel, priority: number) {
     if (!response.success) {
       throw new Error(response.message || "优先级保存失败");
     }
-    await load(keyword.value);
+    await load("");
     toast.success(`渠道「${channel.name || `#${channel.id}`}」优先级已更新`);
   } catch (err) {
     const message = errorText(err, "优先级保存失败");
@@ -847,7 +921,7 @@ function setChannelUpdating(channelId: number, updating: boolean) {
 
 async function refreshSub2ApiChannel(channel: Channel) {
   setChannelUpdating(channel.id, true);
-  const refreshed = await load(keyword.value);
+  const refreshed = await load("");
   setChannelUpdating(channel.id, false);
   if (refreshed) {
     toast.success(`渠道「${channel.name || `#${channel.id}`}」配置已刷新`);
@@ -868,7 +942,7 @@ async function toggleSub2ApiChannel(channel: Channel) {
       status: nextStatus,
     });
     if (!response.success) throw new Error(response.message || "状态更新失败");
-    await load(keyword.value);
+    await load("");
     toast.success(`渠道「${label}」已${nextStatus === "active" ? "启用" : "停用"}`);
   } catch (err) {
     const message = errorText(err, "状态更新失败");
@@ -888,7 +962,7 @@ async function submitSub2ApiChannel(patch: Partial<Channel>): Promise<void> {
   try {
     const response = await api.updateChannel(siteId.value, channel.id, patch);
     if (!response.success) throw new Error(response.message || "渠道配置保存失败");
-    await load(keyword.value);
+    await load("");
     toast.success(`渠道「${label}」配置已保存`);
   } catch (err) {
     const message = errorText(err, "渠道配置保存失败");
@@ -905,20 +979,12 @@ async function onPrioritySubmit(priority: number): Promise<void> {
   return submitForm(priorityChannel.value, priority);
 }
 
-async function onAdminVerified() {
-  await load("");
-}
-
-function onSiteIdChange(v: string) {
+async function onSiteIdChange(v: string) {
   siteId.value = Number(v);
 }
 
 function onReconcileModeChange(v: string) {
   handleReconcileModeChange(v as ReconcileMode);
-}
-
-function search() {
-  void load(keyword.value);
 }
 
 function toggleSelectChannel(channel: Channel) {
@@ -1057,6 +1123,28 @@ watch(
               <option value="delete">删除</option>
             </Select>
           </label>
+          <span class="flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
+            <span>全部同步</span>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="syncAllChannels"
+              aria-label="同步全部渠道开关"
+              title="开启：主站同步导入全部渠道；关闭：仅同步识别为 NewAPI / sub2api 的渠道，已导入站点不受影响"
+              :class="[
+                'relative inline-flex h-4 w-8 shrink-0 items-center rounded-full transition-colors duration-[var(--motion-base)]',
+                syncAllChannels ? 'bg-accent' : 'bg-sunken-active',
+              ]"
+              @click="handleSyncAllChange(!syncAllChannels)"
+            >
+              <span
+                :class="[
+                  'inline-block h-3 w-3 transform rounded-full bg-paper shadow-[var(--shadow-pop)] transition-transform duration-[var(--motion-base)]',
+                  syncAllChannels ? 'translate-x-[18px]' : 'translate-x-0.5',
+                ]"
+              />
+            </button>
+          </span>
           <Button
             variant="secondary"
             aria-label="同步全部主站"
@@ -1132,6 +1220,29 @@ watch(
           </span>
           <Button
             variant="secondary"
+            aria-label="刷新全部主站 key"
+            title="为所有 NewAPI 主站立即并发刷新全部渠道 key 并重新匹配倍率（后台执行，进度徽标跟随当前主站）"
+            :disabled="refreshingAllSitesKeys"
+            :loading="refreshingAllSitesKeys"
+            @click="triggerAllSitesKeyRefresh"
+          >
+            <KeyRound v-if="!refreshingAllSitesKeys" :size="13" />
+            刷新全部主站 key
+          </Button>
+          <Button
+            variant="secondary"
+            aria-label="刷新全部主站倍率"
+            title="为所有主站并发重新匹配全部渠道的上游分组倍率（后台执行，进度徽标跟随当前主站）"
+            :disabled="refreshingAllSitesRatios"
+            :loading="refreshingAllSitesRatios"
+            @click="triggerAllSitesRatioRefresh"
+          >
+            <Percent v-if="!refreshingAllSitesRatios" :size="13" />
+            刷新全部主站倍率
+          </Button>
+          <span class="mx-1 h-5 w-px bg-line-strong" aria-hidden="true" />
+          <Button
+            variant="secondary"
             :disabled="!currentAdminSite"
             @click="editCurrentAdmin"
           >
@@ -1142,17 +1253,6 @@ watch(
             @click="addAdmin"
           >
             添加主站
-          </Button>
-          <span class="mx-1 h-5 w-px bg-line-strong" aria-hidden="true" />
-          <Input
-            class="w-full sm:w-auto sm:min-w-[170px]"
-            :placeholder="isSub2Api ? '搜索渠道名/模型' : '搜索渠道名/密钥/模型'"
-            :model-value="keyword"
-            @update:model-value="(v: string) => (keyword = v)"
-            @keydown.enter="search"
-          />
-          <Button variant="secondary" @click="search">
-            搜索
           </Button>
         </div>
       </template>
@@ -1511,7 +1611,6 @@ watch(
       :site="editingAdmin"
       @close="adminFormOpen = false"
       :on-saved="loadAdminSites"
-      :on-verified="onAdminVerified"
     />
 
     <AdminTwoFaDialog

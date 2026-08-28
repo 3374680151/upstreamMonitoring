@@ -26,10 +26,13 @@ interface Props {
   sites: Site[];
   selectedId?: number | null;
   groupByPlatform?: boolean;
+  /** 总览精简模式：只保留 状态 / 登陆态 / 上次检测 / 倍率，无操作列 */
+  compact?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
   selectedId: null,
   groupByPlatform: false,
+  compact: false,
 });
 
 const emit = defineEmits<{
@@ -136,6 +139,18 @@ function hiddenCount(site: Site): number {
   return Math.max(0, authCount - publicCount);
 }
 
+// 精简模式「倍率」列：从最新快照分组里提炼倍率区间，如 ×0.05 ~ ×2
+function ratioRange(site: Site): string {
+  const ratios = Object.values(site.current_groups || {})
+    .map((group) => Number(group.ratio))
+    .filter((value) => Number.isFinite(value));
+  if (!ratios.length) return "—";
+  const fmt = (value: number) => `×${Number(value.toFixed(4))}`;
+  const min = Math.min(...ratios);
+  const max = Math.max(...ratios);
+  return min === max ? fmt(min) : `${fmt(min)} ~ ${fmt(max)}`;
+}
+
 function timeParts(value?: string | null): [string, string] {
   return fmtTimeParts(value);
 }
@@ -198,16 +213,18 @@ const sections = computed(() => {
         >
           <th class="whitespace-nowrap pb-2.5 pr-3">渠道</th>
           <th class="whitespace-nowrap pb-2.5 pr-3">状态</th>
-          <th class="whitespace-nowrap pb-2.5 pr-3">认证 / 隐藏</th>
-          <th class="whitespace-nowrap pb-2.5 pr-3">分组</th>
+          <th v-if="compact" class="whitespace-nowrap pb-2.5 pr-3">登陆态</th>
+          <th v-else class="whitespace-nowrap pb-2.5 pr-3">认证 / 隐藏</th>
+          <th v-if="!compact" class="whitespace-nowrap pb-2.5 pr-3">分组</th>
           <th class="whitespace-nowrap pb-2.5 pr-3">上次检测</th>
-          <th class="whitespace-nowrap pb-2.5">操作</th>
+          <th v-if="compact" class="whitespace-nowrap pb-2.5">倍率</th>
+          <th v-else class="whitespace-nowrap pb-2.5">操作</th>
         </tr>
       </thead>
       <tbody>
         <template v-for="section in sections" :key="section.key">
           <tr v-if="groupByPlatform">
-            <td colspan="6" class="pt-4 first:pt-0">
+            <td :colspan="compact ? 5 : 6" class="pt-4 first:pt-0">
               <button
                 type="button"
                 :class="[
@@ -281,7 +298,47 @@ const sections = computed(() => {
                   {{ siteStatusLabel(site) }}
                 </Badge>
               </td>
-              <td class="py-3 pr-3 align-middle">
+              <td v-if="compact" class="py-3 pr-3 align-middle">
+                <div v-if="truthy(site.enabled)" class="flex flex-wrap gap-1">
+                  <Badge
+                    v-if="sessionFailureBadge(site)"
+                    :tone="sessionFailureBadge(site)!.tone"
+                    :title="sessionFailureBadge(site)!.title"
+                    >{{ sessionFailureBadge(site)!.label }}</Badge
+                  >
+                  <template v-if="site.platform === 'newapi'">
+                    <Badge
+                      v-if="site.auth_mode === 'browser'"
+                      :tone="sessionSyncTone(site.session_sync_status)"
+                      >{{ sessionSyncLabel(site.session_sync_status) }}</Badge
+                    >
+                    <Badge
+                      v-else-if="site.access_user_id && site.has_access_token"
+                      tone="info"
+                      >用户登录</Badge
+                    >
+                    <Badge
+                      v-else
+                      tone="warning"
+                      title="请在「更多 → 编辑渠道」中开启认证增强"
+                      >未登录</Badge
+                    >
+                  </template>
+                  <Badge
+                    v-else-if="site.auth_mode === 'browser'"
+                    :tone="sessionSyncTone(site.session_sync_status)"
+                    >{{ sessionSyncLabel(site.session_sync_status) }}</Badge
+                  >
+                  <Badge v-else-if="site.platform === 'sub2api'" tone="info"
+                    >用户登录</Badge
+                  >
+                  <Badge v-else-if="truthy(site.login_enabled)" tone="info"
+                    >认证增强</Badge
+                  >
+                </div>
+                <span v-else class="text-[11.5px] text-ink-faint">—</span>
+              </td>
+              <td v-else class="py-3 pr-3 align-middle">
                 <div v-if="truthy(site.enabled)" class="flex flex-wrap gap-1">
                   <Badge
                     v-if="sessionFailureBadge(site)"
@@ -325,7 +382,10 @@ const sections = computed(() => {
                 </div>
                 <span v-else class="text-[11.5px] text-ink-faint">—</span>
               </td>
-              <td class="py-3 pr-3 align-middle tabular text-ink-strong">
+              <td
+                v-if="!compact"
+                class="py-3 pr-3 align-middle tabular text-ink-strong"
+              >
                 {{ site.current_groups_count || 0 }}
               </td>
               <td class="py-3 pr-3 align-middle text-[11.5px] text-ink-muted">
@@ -340,7 +400,14 @@ const sections = computed(() => {
                   >
                 </span>
               </td>
-              <td class="py-3 align-middle">
+              <td
+                v-if="compact"
+                class="whitespace-nowrap py-3 align-middle tabular font-medium text-ink-strong"
+                :title="`分组倍率区间（共 ${site.current_groups_count || 0} 个分组）`"
+              >
+                {{ ratioRange(site) }}
+              </td>
+              <td v-else class="py-3 align-middle">
                 <div class="flex flex-nowrap items-center justify-end gap-1">
                   <Button
                     v-if="

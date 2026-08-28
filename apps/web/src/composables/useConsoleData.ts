@@ -22,7 +22,8 @@ async function refresh(): Promise<void> {
   try {
     const [sitesResp, changesResp, notifyResp] = await Promise.all([
       api.sites(),
-      api.changes(50),
+      // 总览「最近变化」需要尽量完整地展示全部变化（固定高度内滚动），多拉一些
+      api.changes(500),
       api.notificationSettings(),
     ]);
     const nextSites = sitesResp.data || [];

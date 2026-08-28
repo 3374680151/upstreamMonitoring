@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import {
   Activity,
   AlertTriangle,
@@ -29,8 +29,6 @@ const {
 } = useAppActions();
 
 const platformFilter = ref("all");
-const leftPanelRef = ref<HTMLDivElement | null>(null);
-const overviewPanelHeight = ref<number | null>(null);
 
 const enabledCount = computed(
   () => sites.value.filter((site) => truthy(site.enabled)).length,
@@ -54,42 +52,6 @@ const overviewSites = computed(() =>
     ? sites.value
     : sites.value.filter((site) => site.platform === platformFilter.value),
 );
-
-// 让右侧「最近变化」面板跟随左侧「渠道概览」面板高度，避免双栏视觉不齐。
-// 仅在 ≥1400px 双栏布局下生效；左侧行数变化时重新测量。
-let resizeObserver: ResizeObserver | null = null;
-
-function syncHeight(): void {
-  const node = leftPanelRef.value;
-  if (!node || typeof ResizeObserver === "undefined") return;
-  if (window.innerWidth < 1400) {
-    overviewPanelHeight.value = null;
-    return;
-  }
-  overviewPanelHeight.value = Math.round(node.getBoundingClientRect().height);
-}
-
-watch(
-  () => overviewSites.value.length,
-  () => {
-    void nextTick(syncHeight);
-  },
-);
-
-onMounted(() => {
-  const node = leftPanelRef.value;
-  if (!node || typeof ResizeObserver === "undefined") return;
-  resizeObserver = new ResizeObserver(syncHeight);
-  resizeObserver.observe(node);
-  window.addEventListener("resize", syncHeight);
-  syncHeight();
-});
-
-onUnmounted(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  window.removeEventListener("resize", syncHeight);
-});
 </script>
 
 <template>
@@ -127,7 +89,7 @@ onUnmounted(() => {
         tone="warning"
       >
         <template #value>{{ changes.length }}</template>
-        <template #hint>最近 50 条</template>
+        <template #hint>最近 500 条</template>
         <template #icon><Activity :size="17" /></template>
       </StatCard>
     </div>
@@ -135,11 +97,11 @@ onUnmounted(() => {
     <div
       class="grid min-w-0 gap-6 min-[1400px]:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] min-[1400px]:items-start"
     >
-      <div ref="leftPanelRef" class="min-w-0">
+      <div class="min-w-0">
         <Panel
           class="flex h-full min-w-0 flex-col"
           title="渠道概览"
-          :subtitle="`${overviewSites.length} 个渠道 · 最近检测状态和分组数量`"
+          :subtitle="`${overviewSites.length} 个渠道 · 状态 / 登陆态 / 倍率`"
         >
           <template #action>
             <label
@@ -154,11 +116,12 @@ onUnmounted(() => {
             </label>
           </template>
 
-          <div class="priceai-scrollbar min-h-0 max-h-[430px] overflow-y-auto pr-1">
+          <div class="priceai-scrollbar h-[430px] min-h-0 overflow-y-auto pr-1">
             <SiteTable
               :sites="overviewSites"
               :selected-id="selectedId"
               :group-by-platform="true"
+              compact
               @view="handleView"
               @ratios="openRatios"
               @check="handleCheck"
@@ -170,22 +133,13 @@ onUnmounted(() => {
         </Panel>
       </div>
 
-      <div
-        class="min-w-0"
-        :style="
-          overviewPanelHeight
-            ? { height: overviewPanelHeight + 'px' }
-            : undefined
-        "
-      >
+      <div class="min-w-0">
         <Panel
           class="flex h-full min-w-0 flex-col"
           title="最近变化"
-          subtitle="最新倍率和分组变化"
+          subtitle="全部倍率和分组变化，超出部分滚动查看"
         >
-          <div
-            class="priceai-scrollbar min-h-0 min-w-0 max-h-[430px] flex-1 overflow-y-auto pr-1 min-[1400px]:max-h-none"
-          >
+          <div class="priceai-scrollbar h-[430px] min-h-0 min-w-0 overflow-y-auto pr-1">
             <ChangeTable :changes="changes" :sites="sites" />
           </div>
         </Panel>

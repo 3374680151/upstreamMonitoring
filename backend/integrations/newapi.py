@@ -29,6 +29,7 @@ from backend.core.normalize import (
     mask_newapi_user_token_key,
     normalize_base_url,
     normalize_newapi_user_token_key,
+    site_merge_key,
     site_origin,
 )
 from backend.core.state import (
@@ -84,11 +85,13 @@ NEWAPI_WAF_BLOCKED_MESSAGE = "上游防护拦截（WAF），与登录态无关�
 def aggregate_newapi_channel_candidates(
     channels: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Group NewAPI channels by normalized, safe upstream Base URL.
+    """Group NewAPI channels by registered domain of the upstream Base URL.
 
-    Dict insertion order preserves the order in which the upstream pagination
-    returned the first channel for each URL.  Source IDs and names are kept in
-    stable order for display and for the discovery-link write.
+    不同子域名但同一注册域名（如 api.example.com 与 vip.example.com）视为
+    同一家上游站点：候选保留组内第一个渠道的完整 URL 作为站点入口，每个
+    渠道的真实 URL 记录在 index-aligned 的 ``channel_base_urls`` 里，供
+    provenance 链接与对账使用。Dict insertion order preserves the order in
+    which the upstream pagination returned the first channel per domain.
     """
     grouped: Dict[str, Dict[str, Any]] = {}
     for channel in channels or []:
@@ -101,12 +104,13 @@ def aggregate_newapi_channel_candidates(
         if not base_url:
             continue
         item = grouped.setdefault(
-            base_url,
+            site_merge_key(base_url) or base_url,
             {
                 "base_url": base_url,
                 "name": "",
                 "channel_ids": [],
                 "channel_names": [],
+                "channel_base_urls": [],
             },
         )
         channel_name = str(channel.get("name") or "").strip()
@@ -114,14 +118,17 @@ def aggregate_newapi_channel_candidates(
             item["name"] = channel_name
         if channel_id not in item["channel_ids"]:
             item["channel_ids"].append(channel_id)
-            # Keep this list index-aligned with channel_ids.  The old code
+            # Keep these lists index-aligned with channel_ids.  The old code
             # omitted empty names, which could associate the next channel's
             # name with the wrong channel during import.
             item["channel_names"].append(channel_name)
-        elif channel_name:
+            item["channel_base_urls"].append(base_url)
+        else:
             index = item["channel_ids"].index(channel_id)
-            if not item["channel_names"][index]:
+            if channel_name and not item["channel_names"][index]:
                 item["channel_names"][index] = channel_name
+            if not item["channel_base_urls"][index]:
+                item["channel_base_urls"][index] = base_url
 
     result: List[Dict[str, Any]] = []
     for item in grouped.values():
@@ -143,9 +150,10 @@ def enrich_channel_candidates_with_sites(
     rows = db_query_all(
         "SELECT id, base_url, platform, status, auth_mode, enabled, "
         "session_sync_status "
-        "FROM sites WHERE platform = 'newapi'"
+        "FROM sites WHERE platform = 'newapi' ORDER BY id ASC"
     )
     by_url: Dict[str, Dict[str, Any]] = {}
+    by_domain: Dict[str, Dict[str, Any]] = {}
     for row in rows or []:
         if not isinstance(row, dict):
             continue
@@ -154,6 +162,7 @@ def enrich_channel_candidates_with_sites(
         normalized, _error = _normalize_discovery_base_url(row.get("base_url"))
         if normalized:
             by_url.setdefault(normalized, row)
+            by_domain.setdefault(site_merge_key(normalized), row)
 
     safe_keys = (
         "base_url",
@@ -175,6 +184,9 @@ def enrich_channel_candidates_with_sites(
         if base_url:
             safe_candidate["base_url"] = base_url
         row = by_url.get(base_url) if base_url else None
+        if row is None and base_url:
+            # 同一注册域名的既有站点视为已导入（与导入侧查重口径一致）
+            row = by_domain.get(site_merge_key(base_url))
         if row:
             safe_candidate["existing_site_id"] = row.get("id")
             # NewAPI local monitoring never inherits a browser session.  Keep
@@ -1293,10 +1305,9 @@ def fetch_all_newapi_user_tokens(
 
     Goes through the unified NewAPI browser executor so browser-mode sites
     also use the full session bundle, and 401/403 failures trigger exactly
-    one forced refresh + retry.
+    one forced refresh + retry.  认证能力（浏览器会话/密码/令牌兜底）由
+    执行器自行解析，这里不再提前用 access_token 字段设卡。
     """
-    if not site.get("access_token") or not site.get("access_user_id"):
-        return False, [], "NewAPI 上游缺少用户认证令牌或用户 ID"
     all_items: List[Dict[str, Any]] = []
     # NewAPI 的 token 页码从 1 开始。p=0 会被服务端兼容成第 1 页，若随后
     # 再请求 p=1 就会把第一页重复计算并提前达到 total，漏掉后续密钥。
@@ -1580,19 +1591,33 @@ def _newapi_status_from_payload(payload: Any) -> Optional[int]:
             return int(raw)
     return None
 
+def _newapi_mark_site_login_expired(site_id: int) -> None:
+    """会话令牌、续期与全部兜底凭证都被上游拒绝：标记过期等扩展重新同步。"""
+    if int(site_id or 0) <= 0:
+        return
+    try:
+        db_execute(
+            """
+            UPDATE sites SET session_sync_status = 'expired',
+                session_sync_error = '登录态已失效，请重新同步浏览器登录', updated_at = ?
+            WHERE id = ?
+            """,
+            (utc_now_iso(), int(site_id)),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 def _newapi_site_fallback_request(
     site: Dict[str, Any],
     url: str,
     payload: Optional[Dict[str, Any]],
     method: str,
 ) -> Tuple[bool, Any, Optional[str]]:
-    """浏览器会话不可用时的凭证回退：用户名密码登录 → 系统访问令牌 → 兜底令牌。
+    """会话令牌失效且续期不可用时的凭证回退：用户名密码登录 → 系统访问令牌。
 
-    仅在站点保留了回退凭证（login_username/login_password、
-    access_token/access_user_id 或 system_access_token）时生效；密码登录成功
-    会把新会话落库（保留回退凭证），令牌兜底不改变任何持久化状态。
-    system_access_token 是用户 opt-in 后自动生成的兜底系统访问令牌，长期
-    有效，放在最后一级。
+    会话令牌（access_token + New-Api-User）已是执行器的主路径，不再在这里
+    重复尝试。密码登录成功会把新会话（含新令牌）落库；system_access_token
+    是用户 opt-in 后自动生成的兜底系统访问令牌，长期有效，放在最后一级。
     """
     base = normalize_base_url(str(site.get("base_url") or ""))
     username = str(site.get("login_username") or "").strip()
@@ -1626,17 +1651,6 @@ def _newapi_site_fallback_request(
                 return True, raw, None
             # 密码登录成功但请求失败：继续尝试令牌兜底
     access_user_id = str(site.get("access_user_id") or "").strip()
-    access_token = str(site.get("access_token") or "").strip()
-    if access_token and access_user_id:
-        headers = newapi_auth_headers(access_token, access_user_id)
-        proof = str(site.get("security_proof") or "").strip()
-        if proof:
-            headers["X-Security-Proof"] = proof
-        ok_req, raw, error = request_json(
-            url, headers=headers, payload=payload, method=method
-        )
-        if ok_req:
-            return True, raw, None
     system_token = str(site.get("system_access_token") or "").strip()
     if system_token and access_user_id:
         headers = newapi_auth_headers(system_token, access_user_id)
@@ -1658,12 +1672,14 @@ def newapi_browser_request(
     """Unified NewAPI request executor with auth-mode awareness.
 
     Behaviour:
-    * token mode: one request using the system access token + New-Api-User
+    * browser/password mode: 「用户 ID + 会话令牌」直连优先——使用浏览器同步
+      或会话续期落库的 access_token（Authorization + New-Api-User），不随请求
+      携带浏览器 Cookie。401/403 时用 Refresh Cookie 自动续期一次（刷新会把
+      新令牌落库）并重试；仍被拒则回退 Cookie 会话 → 密码登录 → 系统兜底
+      令牌，全部登录态被上游拒绝时把站点标记为 expired，等待浏览器扩展重新
+      同步。网络错误、超时、429、5xx 与 WAF 拦截都不触发续期或回退。
+    * token mode: one request using the access token + New-Api-User
       (and X-Security-Proof when present).
-    * browser mode: one request using the full browser session bundle.  If
-      the upstream returns an explicit 401/403 we ``force=True`` refresh the
-      browser session and retry **at most once**.  Network errors, timeouts,
-      429 and 5xx never trigger a refresh.
     """
     base = normalize_base_url(str(site.get("base_url") or ""))
     url = f"{base}{path}"
@@ -1673,7 +1689,7 @@ def newapi_browser_request(
 
     if auth_mode in {BROWSER_AUTH_MODE, "password"}:
         # Re-read latest state so a concurrent refresh by another caller is
-        # honoured before we pick headers.
+        # honoured before we pick credentials.
         latest = db_query_one(
             """
             SELECT access_token, access_user_id, browser_cookie, browser_refresh_cookie,
@@ -1685,45 +1701,106 @@ def newapi_browser_request(
         )
         if latest:
             site.update(latest)
-        ready, ready_error = ensure_newapi_site_browser_session(site)
-        if not ready:
-            # 浏览器会话不可用：回退到站点保留的凭证（密码登录 / 令牌）
-            fallback_ok, fallback_raw, _fallback_error = _newapi_site_fallback_request(
-                site, url, payload, method
-            )
-            if fallback_ok:
-                return True, fallback_raw, None
-            return False, {}, ready_error or "登录态已过期，请重新登录"
-        headers = newapi_site_browser_auth_headers(site)
-        ok, raw, error = request_json(url, headers=headers, payload=payload, method=method)
-        if ok:
-            return True, raw, None
-        # WAF 边缘拦截与登录态无关：不触发强刷，也不降级到密码/兜底令牌
-        if detect_waf_challenge_payload(raw, error):
-            return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
-        status = _newapi_status_from_payload(raw)
-        if force_refresh_on_401 and status in (401, 403):
-            refreshed, refresh_error = refresh_newapi_site_browser_session(
-                site, force=True
-            )
-            if not refreshed:
-                return False, raw, refresh_error or "登录态已失效，请重新验证登录"
-            ready, ready_error = ensure_newapi_site_browser_session(site)
-            if not ready:
-                return False, raw, "请重新网页登录/同步后再试"
-            headers = newapi_site_browser_auth_headers(site)
+        site_id = int(site.get("id") or 0)
+        user_id = str(site.get("access_user_id") or "").strip()
+
+        def _token_attempt(
+            token: str,
+        ) -> Tuple[bool, Any, Optional[str], Optional[int]]:
+            """「用户 ID + 令牌」直连：不带浏览器会话 Cookie。"""
+            if not token or not user_id:
+                return False, {}, None, None
+            headers = newapi_auth_headers(token, user_id)
+            proof = str(site.get("security_proof") or "").strip()
+            if proof:
+                headers["X-Security-Proof"] = proof
             ok, raw, error = request_json(
                 url, headers=headers, payload=payload, method=method
             )
             if ok:
-                return True, raw, None
+                return True, raw, None, None
             if detect_waf_challenge_payload(raw, error):
-                return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
-            status = _newapi_status_from_payload(raw)
-            if status in (401, 403):
-                return False, raw, "登录态已失效，请重新验证登录"
-            return False, raw, newapi_auth_failure_message(raw, error)
-        return False, raw, newapi_auth_failure_message(raw, error)
+                return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE, None
+            return (
+                False,
+                raw,
+                newapi_auth_failure_message(raw, error),
+                _newapi_status_from_payload(raw),
+            )
+
+        saw_auth_reject = False
+        raw: Any = {}
+        error: Optional[str] = None
+        status: Optional[int] = None
+        token = str(site.get("access_token") or "").strip()
+        if token and user_id:
+            # 1) 令牌优先：同步 / 续期 / 密码登录落库的会话令牌直接访问。
+            ok, raw, error, status = _token_attempt(token)
+            if ok:
+                return True, raw, None
+            if error == NEWAPI_WAF_BLOCKED_MESSAGE:
+                return False, raw, error
+            if status not in (401, 403):
+                return False, raw, error or "NewAPI 上游调用失败"
+            saw_auth_reject = True
+            if force_refresh_on_401 and refresh_newapi_site_browser_session(
+                site, force=True
+            )[0]:
+                # 续期会把新令牌落库并同步进 site：用新令牌重试一次。
+                ok, raw, error, status = _token_attempt(
+                    str(site.get("access_token") or "").strip()
+                )
+                if ok:
+                    return True, raw, None
+                if error == NEWAPI_WAF_BLOCKED_MESSAGE:
+                    return False, raw, error
+                if status not in (401, 403):
+                    return False, raw, error or "NewAPI 上游调用失败"
+
+        # 2) 令牌缺失或续期后仍被拒：回退旧版同步遗留的 Cookie 会话。
+        if str(site.get("browser_cookie") or "").strip() and user_id:
+            ready, _ready_error = ensure_newapi_site_browser_session(site)
+            if ready:
+                headers = newapi_site_browser_auth_headers(site)
+                ok, raw, error = request_json(
+                    url, headers=headers, payload=payload, method=method
+                )
+                if ok:
+                    return True, raw, None
+                if detect_waf_challenge_payload(raw, error):
+                    return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
+                status = _newapi_status_from_payload(raw)
+                if status in (401, 403):
+                    saw_auth_reject = True
+                    if (
+                        force_refresh_on_401
+                        and refresh_newapi_site_browser_session(site, force=True)[0]
+                    ):
+                        # 续期会落库新会话令牌：落库后改走「ID + 令牌」直连。
+                        ok, raw, error, status = _token_attempt(
+                            str(site.get("access_token") or "").strip()
+                        )
+                        if ok:
+                            return True, raw, None
+                        if error == NEWAPI_WAF_BLOCKED_MESSAGE:
+                            return False, raw, error
+                        if status in (401, 403):
+                            saw_auth_reject = True
+
+        # 3) 最后兜底：密码登录（成功会落库新会话令牌）→ 系统兜底令牌。
+        fallback_ok, fallback_raw, _fallback_error = _newapi_site_fallback_request(
+            site, url, payload, method
+        )
+        if fallback_ok:
+            return True, fallback_raw, None
+        if saw_auth_reject:
+            _newapi_mark_site_login_expired(site_id)
+            return False, raw if isinstance(raw, dict) else {}, (
+                "登录态已失效，请重新同步浏览器登录"
+            )
+        return False, raw if isinstance(raw, dict) else {}, (
+            error or "登录态已过期，请重新登录"
+        )
 
     # token / system-token path
     headers = newapi_auth_headers(

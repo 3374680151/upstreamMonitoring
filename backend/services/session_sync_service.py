@@ -800,6 +800,22 @@ def complete_session_sync_request(
                 persist_newapi_site_browser_session(
                     int(site_id), session, preserve_login_credentials=True
                 )
+                if not str(session.get("access_token") or "").strip():
+                    # 旧版扩展只回传 Cookie：趁刚验证过的新会话立即续期铸造
+                    # 会话令牌，让后续访问直接走「用户 ID + 令牌」直连；
+                    # 失败只跳过铸造，不影响已达成的 ready 终态。
+                    try:
+                        from backend.integrations.newapi import (
+                            refresh_newapi_site_browser_session,
+                        )
+
+                        fresh_site = db_query_one(
+                            "SELECT * FROM sites WHERE id = ?", (int(site_id),)
+                        )
+                        if fresh_site:
+                            refresh_newapi_site_browser_session(fresh_site, force=True)
+                    except Exception:  # noqa: BLE001
+                        pass
     else:
         finish_session_sync_request(
             str(request_id), "failed", "UNSUPPORTED_TARGET", "当前同步目标暂不支持"

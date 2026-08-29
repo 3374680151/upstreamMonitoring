@@ -25,7 +25,7 @@ interface Props {
   sites: Site[];
   selectedId?: number | null;
   groupByPlatform?: boolean;
-  /** 总览精简模式：只保留 状态 / 登陆态 / 上次检测 / 倍率，无操作列 */
+  /** 总览精简模式：只保留 状态 / 登陆态 / 上次检测，无操作列 */
   compact?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
@@ -138,18 +138,6 @@ function hiddenCount(site: Site): number {
   return Math.max(0, authCount - publicCount);
 }
 
-// 精简模式「倍率」列：从最新快照分组里提炼倍率区间，如 ×0.05 ~ ×2
-function ratioRange(site: Site): string {
-  const ratios = Object.values(site.current_groups || {})
-    .map((group) => Number(group.ratio))
-    .filter((value) => Number.isFinite(value));
-  if (!ratios.length) return "—";
-  const fmt = (value: number) => `×${Number(value.toFixed(4))}`;
-  const min = Math.min(...ratios);
-  const max = Math.max(...ratios);
-  return min === max ? fmt(min) : `${fmt(min)} ~ ${fmt(max)}`;
-}
-
 function timeParts(value?: string | null): [string, string] {
   return fmtTimeParts(value);
 }
@@ -216,14 +204,13 @@ const sections = computed(() => {
           <th v-else class="whitespace-nowrap pb-2.5 pr-3">认证 / 隐藏</th>
           <th v-if="!compact" class="whitespace-nowrap pb-2.5 pr-3">分组</th>
           <th class="whitespace-nowrap pb-2.5 pr-3">上次检测</th>
-          <th v-if="compact" class="whitespace-nowrap pb-2.5">倍率</th>
-          <th v-else class="whitespace-nowrap pb-2.5">操作</th>
+          <th v-if="!compact" class="whitespace-nowrap pb-2.5">操作</th>
         </tr>
       </thead>
       <tbody>
         <template v-for="section in sections" :key="section.key">
           <tr v-if="groupByPlatform">
-            <td :colspan="compact ? 5 : 6" class="pt-4 first:pt-0">
+            <td :colspan="compact ? 4 : 6" class="pt-4 first:pt-0">
               <button
                 type="button"
                 :class="[
@@ -395,14 +382,7 @@ const sections = computed(() => {
                   >
                 </span>
               </td>
-              <td
-                v-if="compact"
-                class="whitespace-nowrap py-3 align-middle tabular font-medium text-ink-strong"
-                :title="`分组倍率区间（共 ${site.current_groups_count || 0} 个分组）`"
-              >
-                {{ ratioRange(site) }}
-              </td>
-              <td v-else class="py-3 align-middle">
+              <td v-if="!compact" class="py-3 align-middle">
                 <div class="flex flex-nowrap items-center justify-end gap-1">
                   <Button
                     v-if="

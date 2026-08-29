@@ -1,0 +1,4616 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Upstream 中转站管理系统 API",
+    "description": "NewAPI / sub2api 上游倍率监控 + 主站渠道管理控制台。\n\n**两类站点不可混淆**：\n- `sites`（监控站点）：只读盯梢上游分组/倍率/余额/历史；\n- `admin_sites`（主站/管理站点）：登录自己的 NewAPI / sub2api 后台做完整渠道 CRUD。\n\n**统一响应信封**：`{\"success\": bool, \"data\": ..., \"message\"?, \"code\"?}`（个别列表接口直接返回 `{data, ...}`）。\n\n**鉴权**：除标注「公开」外，全部接口要求 `Authorization: Bearer <token>`；token 通过 `POST /api/auth/login` 获取，401 时 detail.code = `unauthorized`。`CONSOLE_PASSWORD` 留空 = 不鉴权（仅限内网）。",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/auth/status": {
+      "get": {
+        "summary": "鉴权状态",
+        "operationId": "auth_status_api_auth_status_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "auth_required": {
+                      "type": "boolean",
+                      "description": "CONSOLE_PASSWORD 是否已设置"
+                    },
+                    "authenticated": {
+                      "type": "boolean",
+                      "description": "当前请求是否已登录"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "auth_required",
+                    "authenticated"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "01 认证"
+        ],
+        "description": "查询是否启用控制台鉴权、当前请求是否已登录。公开接口。",
+        "security": []
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "summary": "登录",
+        "operationId": "login_api_auth_login_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "token": {
+                      "type": "string",
+                      "description": "Bearer 会话令牌；未启用鉴权时为空串"
+                    },
+                    "auth_required": {
+                      "type": "boolean",
+                      "description": "是否启用了控制台鉴权"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "01 认证"
+        ],
+        "description": "用控制台密码换取 Bearer token。密码错误返回 401 `{success:false, message:\"密码错误\"}`。公开接口。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "description": "登录凭证"
+        },
+        "security": []
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "登出",
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "01 认证"
+        ],
+        "description": "销毁当前 Bearer 会话。前端同时清除 localStorage.console_token。",
+        "security": []
+      }
+    },
+    "/api/overview": {
+      "get": {
+        "summary": "总览 KPI",
+        "operationId": "overview_api_overview_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "KPI 汇总（结构随前端总览页）"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "站点总数/正常/异常、今日变化数、最近变化等总览指标。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites": {
+      "get": {
+        "summary": "监控站点列表",
+        "operationId": "sites_api_sites_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "站点数组（含分组快照摘要）"
+                    },
+                    "auto_sync": {
+                      "type": "boolean",
+                      "description": "主站渠道自动同步是否开启"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "全部监控站点 + 主站自动同步开关状态。注意：本接口直接返回 `{data, auto_sync}`，非标准信封。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建监控站点",
+        "description": "同 base_url 重复创建幂等（返回 existed=true）。平台/凭证组合校验见 schema 描述。",
+        "operationId": "create_site_route_api_sites_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "existed": {
+                      "type": "boolean",
+                      "description": "同地址站点已存在时 true"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteCreateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/changes": {
+      "get": {
+        "summary": "全局变化列表",
+        "operationId": "changes_api_changes_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            },
+            "description": "返回条数"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "变化记录（分组/倍率/模型上下架 diff）"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/snapshots": {
+      "get": {
+        "summary": "站点快照列表",
+        "operationId": "snapshots_api_sites__site_id__snapshots_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "该站点的历史检测快照（每组分组倍率 JSON）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/changes": {
+      "get": {
+        "summary": "站点变化列表",
+        "operationId": "site_changes_api_sites__site_id__changes_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/account": {
+      "get": {
+        "summary": "账户额度",
+        "operationId": "account_api_sites__site_id__account_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "上游账户信息（额度/已用等，结构随平台）+ success 字段"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "按需查询上游账户额度：NewAPI `/api/user/self`、sub2api `/api/v1/auth/me`。站点不存在 404；上游失败透传错误状态。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/system-token": {
+      "post": {
+        "summary": "刷新兜底系统访问令牌",
+        "description": "手动重新生成 NewAPI 兜底系统访问令牌（会重置上游该账号的系统访问令牌）。仅 NewAPI 站点且已开启 system_token_fallback_enabled；否则 400/409。",
+        "operationId": "refresh_system_token_api_sites__site_id__system_token_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/discovery-links": {
+      "get": {
+        "summary": "站点发现关联",
+        "operationId": "discovery_links_api_sites__site_id__discovery_links_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "该监控站点与主站渠道的 discovery_links 关联。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/models": {
+      "get": {
+        "summary": "站点模型与分组倍率",
+        "operationId": "models_api_sites__site_id__models_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Refresh"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "true=绕过缓存实时拉取并回填"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "cache_hit": {
+                      "type": "boolean"
+                    },
+                    "cache_age_seconds": {
+                      "type": "number"
+                    },
+                    "refreshing": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "分组 → 模型倍率映射"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "倍率弹窗数据。默认走 TTL 缓存（SWR：过旧时后台刷新并返回 refreshing=true）；refresh=1 同步实时穿透。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/pricing": {
+      "get": {
+        "summary": "站点定价（仅 NewAPI）",
+        "operationId": "pricing_api_sites__site_id__pricing_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Refresh"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "site_id": {
+                      "type": "integer"
+                    },
+                    "base_url": {
+                      "type": "string"
+                    },
+                    "auth_used": {
+                      "type": "boolean"
+                    },
+                    "cache_hit": {
+                      "type": "boolean"
+                    },
+                    "cache_age_seconds": {
+                      "type": "number"
+                    },
+                    "refreshing": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "NewAPI pricing 浮层数据。非 NewAPI 站点 400。缓存 SWR 同 models。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/perf-metrics/summary": {
+      "get": {
+        "summary": "模型性能汇总（仅 NewAPI）",
+        "operationId": "perf_summary_api_sites__site_id__perf_metrics_summary_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24",
+              "title": "Hours"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Refresh"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "24"
+            },
+            "description": "统计窗口小时数（会钳制到允许档位）"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "site_id": {
+                      "type": "integer"
+                    },
+                    "hours": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    },
+                    "cache_hit": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "description": "全站模型级性能汇总（不随 group 筛选变化）。SWR 缓存。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/perf-metrics": {
+      "get": {
+        "summary": "单模型性能明细（仅 NewAPI）",
+        "operationId": "perf_metrics_api_sites__site_id__perf_metrics_get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Model"
+            }
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Group"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "24",
+              "title": "Hours"
+            }
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "模型名（必填，缺省 400）"
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "分组过滤"
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "24"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "site_id": {
+                      "type": "integer"
+                    },
+                    "hours": {
+                      "type": "string"
+                    },
+                    "requested_model": {
+                      "type": "string"
+                    },
+                    "requested_group": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/sync": {
+      "post": {
+        "summary": "手动触发主站渠道同步",
+        "description": "双向对账：上游消失的渠道按 reconcile 模式停用/删除（消失的站点停用而非删除）。body 可整体省略（同步全部主站）。",
+        "operationId": "sync_sites_api_sites_sync_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "disable",
+                        "delete"
+                      ]
+                    },
+                    "sync_all": {
+                      "type": "boolean"
+                    },
+                    "channels_changed": {
+                      "type": "boolean"
+                    },
+                    "groups_changed": {
+                      "type": "boolean"
+                    },
+                    "keys_refreshed": {
+                      "type": "integer"
+                    },
+                    "keys_changed": {
+                      "type": "integer"
+                    },
+                    "keys_failed": {
+                      "type": "integer"
+                    },
+                    "key_errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "imported": {
+                      "type": "integer"
+                    },
+                    "conflicts": {
+                      "type": "integer"
+                    },
+                    "excluded": {
+                      "type": "integer"
+                    },
+                    "disabled": {
+                      "type": "integer"
+                    },
+                    "reenabled": {
+                      "type": "integer"
+                    },
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "failed": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SitesSyncRequest"
+              }
+            }
+          },
+          "description": "可选"
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}": {
+      "put": {
+        "summary": "更新监控站点",
+        "description": "更新监控站点配置。",
+        "operationId": "update_site_route_api_sites__site_id__put",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteUpdateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除监控站点",
+        "description": "删除监控站点及其快照/变化记录（不影响上游站点本身）。",
+        "operationId": "delete_site_route_api_sites__site_id__delete",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/check": {
+      "post": {
+        "summary": "手动检测站点",
+        "description": "立即采集分组倍率快照并做 diff（与定时检测同一逻辑）。",
+        "operationId": "check_site_api_sites__site_id__check_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "检测结果（新增/移除/倍率变化明细）"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/discovery-import": {
+      "post": {
+        "summary": "主站渠道发现导入",
+        "description": "把主站渠道候选批量导入/复用为监控站点（幂等）。仅 NewAPI 主站（否则 405）；单次有数量上限（413）。",
+        "operationId": "discovery_import_api_sites_discovery_import_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      },
+                      "description": "逐条导入结果（status: imported/reused/invalid/...）"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoveryImportRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/check-connection": {
+      "post": {
+        "summary": "检测上游连通性",
+        "description": "创建/编辑站点前的连通性探测（拉分组列表）。",
+        "operationId": "check_connection_api_check_connection_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckConnectionRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/check-login": {
+      "post": {
+        "summary": "检测上游登录凭证",
+        "description": "password 模式返回 requires_2fa 提示；token 模式返回 groups_count 与分组映射。",
+        "operationId": "check_login_api_check_login_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "requires_2fa": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "groups_count": {
+                      "type": "integer"
+                    },
+                    "groups": {
+                      "type": "object",
+                      "description": "token 模式成功时返回分组映射"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckLoginRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/auth/login": {
+      "post": {
+        "summary": "站点密码登录",
+        "description": "对指定监控站点执行 NewAPI 用户名密码登录（获取站点管理令牌）。需要 2FA 时返回 requires_2fa=true。",
+        "operationId": "site_password_login_api_sites__site_id__auth_login_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "requires_2fa": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "groups_count": {
+                      "type": "integer"
+                    },
+                    "warning": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "02 监控站点"
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SitePasswordLoginRequest"
+              }
+            }
+          },
+          "description": "可选"
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/settings": {
+      "get": {
+        "summary": "读取推送配置",
+        "operationId": "notification_settings_api_notifications_settings_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "04 推送通知"
+        ],
+        "description": "返回邮件/企微推送配置（密码等敏感字段不回显明文）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "保存推送配置",
+        "operationId": "update_notification_settings_route_api_notifications_settings_put",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "04 推送通知"
+        ],
+        "description": "校验失败（如启用邮箱但缺 SMTP）返回 400。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/logs": {
+      "get": {
+        "summary": "推送日志",
+        "operationId": "notification_logs_api_notifications_logs_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "04 推送通知"
+        ],
+        "description": "历史推送记录（含测试发送）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/test-email": {
+      "post": {
+        "summary": "发送测试邮件",
+        "operationId": "test_email_api_notifications_test_email_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "04 推送通知"
+        ],
+        "description": "body 非空时先保存配置再发送（便于未保存前试发）。",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsRequest"
+              }
+            }
+          },
+          "description": "可选：随测试一起保存的配置"
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/notifications/test-wecom": {
+      "post": {
+        "summary": "发送企业微信测试消息",
+        "operationId": "test_wecom_api_notifications_test_wecom_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "04 推送通知"
+        ],
+        "description": "body 非空时先保存配置再发送。",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationSettingsRequest"
+              }
+            }
+          },
+          "description": "可选：随测试一起保存的配置"
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "summary": "读取系统设置",
+        "operationId": "settings_api_settings_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "main_site_reconcile_mode": {
+                          "type": "string",
+                          "enum": [
+                            "disable",
+                            "delete"
+                          ]
+                        },
+                        "main_site_sync_all": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "05 系统设置"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新系统设置",
+        "operationId": "update_settings_api_settings_put",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "05 系统设置"
+        ],
+        "description": "PATCH 语义，两个键都缺省 400；reconcile mode 非法 400。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/session-sync/requests/{request_id}/complete": {
+      "post": {
+        "summary": "扩展回传登录态",
+        "operationId": "complete_session_sync_api_session_sync_requests__request_id__complete_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            },
+            "description": "会话同步请求 ID"
+          },
+          {
+            "name": "X-Upstream-Sync-Token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "创建同步请求时下发的凭证",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "06 浏览器会话同步"
+        ],
+        "description": "浏览器扩展完成取态后回传。**不走 Bearer**：请求头 `X-Upstream-Sync-Token` 携带创建请求时下发的同步凭证；缺失 401。body 超限 413、JSON 非法 400。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionSyncCompleteRequest"
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/sites/{site_id}/session-sync/requests": {
+      "post": {
+        "summary": "创建会话同步请求",
+        "operationId": "create_session_sync_request_api_sites__site_id__session_sync_requests_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "06 浏览器会话同步"
+        ],
+        "description": "为站点发起浏览器登录态同步，返回待扩展消费的请求（含凭证/二维码等）。成功 201。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/session-sync/requests/{request_id}": {
+      "get": {
+        "summary": "查询会话同步请求",
+        "operationId": "get_session_sync_request_api_sites__site_id__session_sync_requests__request_id__get",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            },
+            "description": "会话同步请求 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "description": "pending | ready | no_session | expired | permission_required | extension_unavailable | failed"
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "06 浏览器会话同步"
+        ],
+        "description": "轮询同步状态。终态集合固定：ready / no_session / expired / permission_required / extension_unavailable / failed。不存在 404。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/session-sync/share": {
+      "post": {
+        "summary": "复用兄弟站点登录态",
+        "description": "同注册域兄弟站点登录态复用：命中则直接落库并返回 ready。",
+        "operationId": "share_session_sync_api_sites__site_id__session_sync_share_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "06 浏览器会话同步"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/sites/{site_id}/session-sync/requests/{request_id}/fail": {
+      "post": {
+        "summary": "标记同步失败",
+        "operationId": "fail_session_sync_request_api_sites__site_id__session_sync_requests__request_id__fail_post",
+        "parameters": [
+          {
+            "name": "site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Site Id"
+            },
+            "description": "监控站点 ID"
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            },
+            "description": "会话同步请求 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "06 浏览器会话同步"
+        ],
+        "description": "扩展侧失败时上报原因码，将请求置为 failed 终态。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionSyncFailRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites": {
+      "get": {
+        "summary": "主站列表",
+        "operationId": "list_admin_sites_api_admin_sites_get",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "全部主站（管理站点）。正在进行的全量 key/倍率刷新批次进度挂在对应站点的 key_refresh / ratio_refresh 字段。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "创建主站",
+        "operationId": "create_admin_site_route_api_admin_sites_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "newapi 必须提供 access_token + access_user_id；sub2api 必须提供管理员邮箱密码（创建时真实登录校验，失败透传上游错误）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSiteCreateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}": {
+      "put": {
+        "summary": "更新主站",
+        "operationId": "update_admin_site_route_api_admin_sites__admin_site_id__put",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "PATCH 语义；platform 不可修改（409）；令牌留空沿用旧值。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSiteUpdateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除主站",
+        "operationId": "delete_admin_site_route_api_admin_sites__admin_site_id__delete",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "仅从本控制台移除（连带清理渠道绑定与 key 缓存），不影响上游后台。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/test": {
+      "post": {
+        "summary": "测试主站连接",
+        "operationId": "test_admin_site_connection_route_api_admin_sites_test_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "success=true 时附测试明细"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "按 body 里的凭证测试连通性，不落库。",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSiteCreateRequest"
+              }
+            }
+          },
+          "description": "与创建主站相同的凭证字段"
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channel-candidates": {
+      "get": {
+        "summary": "渠道候选（发现）",
+        "operationId": "channel_candidates_api_admin_sites__admin_site_id__channel_candidates_get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "按 base_url/渠道名模糊过滤"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "source_channel_total": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "聚合主站渠道为按 base_url 归并的发现候选（仅 NewAPI 主站，否则 405），并标注是否已被监控站点覆盖。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/groups": {
+      "get": {
+        "summary": "主站分组列表",
+        "operationId": "admin_site_groups_api_admin_sites__admin_site_id__groups_get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "上游分组原始载荷"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "透传主站后台的分组数据。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channel-mappings": {
+      "get": {
+        "summary": "渠道上游绑定列表",
+        "operationId": "channel_mappings_api_admin_sites__admin_site_id__channel_mappings_get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "主站渠道 ↔ 上游站点/分组 的匹配绑定（sub2api 主站不使用，405）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels": {
+      "get": {
+        "summary": "主站渠道列表",
+        "operationId": "channel_list_api_admin_sites__admin_site_id__channels_get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Keyword"
+            }
+          },
+          {
+            "name": "keyword",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "渠道名/地址模糊过滤"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    },
+                    "meta": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "newapi 渠道的 key 以掩码返回（真实 key 走详情接口 + 安全验证）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "新建主站渠道",
+        "operationId": "create_channel_api_admin_sites__admin_site_id__channels_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "透传 NewAPI 创建结果 + id / key_cached / cache_pending"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "仅 NewAPI 主站。创建成功后解析新渠道 ID 并同步 key 缓存。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelCreateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/{channel_id}": {
+      "get": {
+        "summary": "主站渠道详情",
+        "operationId": "channel_detail_api_admin_sites__admin_site_id__channels__channel_id__get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "渠道完整字段"
+                    },
+                    "key_error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "newapi：掩码 key 命中时自动取真实 key（需已通过 key 安全验证，失败附 key_error）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新主站渠道",
+        "operationId": "update_channel_api_admin_sites__admin_site_id__channels__channel_id__put",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "透传上游更新结果"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "newapi 透传 NewAPI（**不要带 status**，带必失败）；sub2api 走白名单校验（见 schema）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelUpdateRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除主站渠道",
+        "operationId": "delete_channel_api_admin_sites__admin_site_id__channels__channel_id__delete",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "透传上游删除结果"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "真删上游渠道；同时清理本系统的绑定与 key 缓存。sub2api 405。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/{channel_id}/test": {
+      "get": {
+        "summary": "测试主站渠道",
+        "operationId": "channel_test_api_admin_sites__admin_site_id__channels__channel_id__test_get",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "透传 NewAPI 测试结果"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "对上游执行渠道连通测试（仅 NewAPI，405 otherwise）。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/key-verification": {
+      "post": {
+        "summary": "key 安全验证",
+        "operationId": "key_verification_api_admin_sites__admin_site_id__key_verification_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "读取主站渠道真实 key 前的安全验证；验证码错误 400。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyVerificationRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/batch": {
+      "post": {
+        "summary": "渠道批量操作",
+        "operationId": "batch_channels_api_admin_sites__admin_site_id__channels_batch_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "逐渠道 results"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "逐渠道执行并汇总，任一失败不影响其余；action=delete 时同步清理绑定。仅 NewAPI（405 otherwise）。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelBatchRequest"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/{channel_id}/key/refresh": {
+      "post": {
+        "summary": "刷新单渠道 key",
+        "operationId": "key_refresh_api_admin_sites__admin_site_id__channels__channel_id__key_refresh_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "channel_id": {
+                          "type": "integer"
+                        },
+                        "changed": {
+                          "type": "boolean"
+                        },
+                        "first_fetch": {
+                          "type": "boolean"
+                        },
+                        "fetched_at": {
+                          "type": "string"
+                        },
+                        "match_success": {
+                          "type": "boolean"
+                        },
+                        "match_message": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "binding": {
+                          "type": "object"
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "强制重新读取上游真实 key 并回存缓存、重跑倍率匹配。429=限流；400+code=security_verification_required 需先做 key 安全验证。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/keys/refresh": {
+      "post": {
+        "summary": "全量刷新本主站渠道 key",
+        "operationId": "refresh_all_channel_keys_api_admin_sites__admin_site_id__channels_keys_refresh_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "already_running": {
+                          "type": "boolean"
+                        },
+                        "progress": {
+                          "type": "object",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "启动后台批次（仅 NewAPI）。重复触发返回 already_running=true。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/keys/refresh-all": {
+      "post": {
+        "summary": "全量刷新所有主站渠道 key",
+        "description": "为每个 NewAPI 主站各启动一个批次（sub2api 跳过）。",
+        "operationId": "refresh_all_sites_channel_keys_api_admin_sites_keys_refresh_all_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "triggered": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        },
+                        "skipped_sub2api": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/ratios/refresh": {
+      "post": {
+        "summary": "全量刷新本主站渠道倍率",
+        "description": "复用已存 key 重新匹配全部渠道的上游分组倍率（不触发 2FA 接口）。NewAPI / sub2api 均可。",
+        "operationId": "refresh_all_channel_ratios_api_admin_sites__admin_site_id__channels_ratios_refresh_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "already_running": {
+                          "type": "boolean"
+                        },
+                        "progress": {
+                          "type": "object",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/ratios/refresh-all": {
+      "post": {
+        "summary": "全量刷新所有主站渠道倍率",
+        "description": "为所有主站（NewAPI + sub2api）各启动一个倍率刷新批次。",
+        "operationId": "refresh_all_sites_channel_ratios_api_admin_sites_ratios_refresh_all_post",
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "triggered": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/admin/sites/{admin_site_id}/channels/{channel_id}/match": {
+      "post": {
+        "summary": "渠道倍率匹配",
+        "operationId": "channel_match_api_admin_sites__admin_site_id__channels__channel_id__match_post",
+        "parameters": [
+          {
+            "name": "admin_site_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Admin Site Id"
+            },
+            "description": "主站（管理站点）ID"
+          },
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Channel Id"
+            },
+            "description": "主站渠道 ID"
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Refresh"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "1/true/yes = 强制重新匹配；默认复用已有匹配结果"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "description": "业务是否成功"
+                    },
+                    "data": {
+                      "type": "object",
+                      "description": "绑定 payload（match_status 等）"
+                    },
+                    "message": {
+                      "type": "string",
+                      "description": "提示 / 错误信息"
+                    },
+                    "code": {
+                      "type": "string",
+                      "description": "机器可读错误码（如 unauthorized / database_busy）"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "03 主站管理（渠道 CRUD）"
+        ],
+        "description": "用渠道 key 在上游站点中定位所属账号/分组并回写绑定（key 属于其他账号时给出换绑提示）。sub2api 405。",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "控制台密码（.env 的 CONSOLE_PASSWORD）"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string",
+            "description": "Bearer 会话令牌；未启用鉴权时为空串"
+          },
+          "auth_required": {
+            "type": "boolean",
+            "description": "是否启用了控制台鉴权"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "AuthStatusResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "auth_required": {
+            "type": "boolean",
+            "description": "CONSOLE_PASSWORD 是否已设置"
+          },
+          "authenticated": {
+            "type": "boolean",
+            "description": "当前请求是否已登录"
+          }
+        },
+        "required": [
+          "success",
+          "auth_required",
+          "authenticated"
+        ]
+      },
+      "SiteCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "base_url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "站点显示名（必填）"
+          },
+          "base_url": {
+            "type": "string",
+            "description": "上游站点地址（必填，会做规范化，不接受带 userinfo 的 URL）"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "newapi",
+              "sub2api"
+            ],
+            "default": "newapi"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否参与定时检测"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "description": "检测间隔（分钟，有最小值下限）"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "password",
+              "token",
+              "browser"
+            ],
+            "default": "password",
+            "description": "password=用户名密码；token=系统访问令牌（需 access_token+access_user_id）；browser=浏览器会话同步"
+          },
+          "login_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "login_username": {
+            "type": "string",
+            "description": "auth_mode=password 时必填"
+          },
+          "login_password": {
+            "type": "string",
+            "description": "auth_mode=password 时必填"
+          },
+          "access_token": {
+            "type": "string",
+            "description": "NewAPI/sub2api 系统访问令牌（token 模式必填）"
+          },
+          "access_user_id": {
+            "type": "string",
+            "description": "NewAPI 用户 ID（token 模式必填）"
+          },
+          "refresh_token": {
+            "type": "string",
+            "description": "sub2api 刷新令牌"
+          },
+          "token_expires_at": {
+            "type": "string",
+            "description": "令牌过期时间（ISO）"
+          },
+          "system_token_fallback_enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "仅 NewAPI：会话失效时用系统访问令牌兜底；令牌内容由服务端生成"
+          }
+        }
+      },
+      "SiteUpdateRequest": {
+        "type": "object",
+        "description": "PATCH 语义：只传要改的字段，字段定义同创建站点。",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "newapi",
+              "sub2api"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "interval_minutes": {
+            "type": "integer"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "password",
+              "token",
+              "browser"
+            ]
+          },
+          "login_enabled": {
+            "type": "boolean"
+          },
+          "login_username": {
+            "type": "string"
+          },
+          "login_password": {
+            "type": "string"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "access_user_id": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "token_expires_at": {
+            "type": "string"
+          },
+          "system_token_fallback_enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SitesSyncRequest": {
+        "type": "object",
+        "properties": {
+          "admin_site_id": {
+            "type": "integer",
+            "description": "只同步指定主站；缺省=同步全部主站"
+          }
+        }
+      },
+      "CheckConnectionRequest": {
+        "type": "object",
+        "required": [
+          "base_url"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "description": "上游站点地址（必填）"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "newapi",
+              "sub2api"
+            ],
+            "default": "newapi"
+          },
+          "login_username": {
+            "type": "string"
+          },
+          "login_password": {
+            "type": "string"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "password",
+              "token"
+            ],
+            "default": "password"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          }
+        },
+        "description": "探测上游分组列表。sub2api 会带凭证探测；newapi 仅探测地址连通性。"
+      },
+      "CheckLoginRequest": {
+        "type": "object",
+        "required": [
+          "base_url"
+        ],
+        "properties": {
+          "base_url": {
+            "type": "string"
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "password",
+              "token"
+            ],
+            "default": "token"
+          },
+          "login_username": {
+            "type": "string",
+            "description": "password 模式必填"
+          },
+          "login_password": {
+            "type": "string",
+            "description": "password 模式必填"
+          },
+          "two_factor_code": {
+            "type": "string",
+            "description": "两步验证码（开启 2FA 时）"
+          },
+          "access_token": {
+            "type": "string",
+            "description": "token 模式必填"
+          },
+          "access_user_id": {
+            "type": "string",
+            "description": "token 模式必填（NewAPI 用户 ID）"
+          }
+        },
+        "description": "校验上游登录凭证。password 模式走 NewAPI 密码登录；token 模式用系统访问令牌拉分组验证。"
+      },
+      "SitePasswordLoginRequest": {
+        "type": "object",
+        "properties": {
+          "two_factor_code": {
+            "type": "string",
+            "description": "两步验证码（上游开启 2FA 时需要）"
+          }
+        }
+      },
+      "DiscoveryImportRequest": {
+        "type": "object",
+        "required": [
+          "admin_site_id",
+          "items"
+        ],
+        "properties": {
+          "admin_site_id": {
+            "type": "integer",
+            "description": "NewAPI 主站 ID（仅支持 NewAPI）"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "description": "新监控站点的检测间隔（分钟，会钳制到允许范围）"
+          },
+          "items": {
+            "type": "array",
+            "description": "待导入的渠道候选（单次有数量上限）",
+            "items": {
+              "type": "object",
+              "required": [
+                "base_url"
+              ],
+              "properties": {
+                "base_url": {
+                  "type": "string",
+                  "description": "候选渠道的上游地址"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "监控站点名（缺省可用渠道名）"
+                },
+                "channel_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  },
+                  "description": "关联的主站渠道 ID 列表"
+                },
+                "channel_names": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotificationSettingsRequest": {
+        "type": "object",
+        "description": "邮件 / 企业微信推送配置。启用邮箱推送时 SMTP 五项必填；启用企微时 webhook 必填。",
+        "properties": {
+          "email_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "smtp_host": {
+            "type": "string"
+          },
+          "smtp_port": {
+            "type": "integer",
+            "default": 465
+          },
+          "smtp_username": {
+            "type": "string"
+          },
+          "smtp_password": {
+            "type": "string",
+            "description": "留空 = 沿用已保存密码"
+          },
+          "smtp_use_ssl": {
+            "type": "boolean",
+            "default": true
+          },
+          "smtp_from": {
+            "type": "string",
+            "description": "缺省用 smtp_username"
+          },
+          "smtp_to": {
+            "type": "string",
+            "description": "收件人（启用邮箱推送时必填）"
+          },
+          "wecom_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "wecom_webhook": {
+            "type": "string",
+            "description": "企业微信机器人 Webhook（启用时必填）"
+          }
+        }
+      },
+      "SettingsPatchRequest": {
+        "properties": {
+          "main_site_reconcile_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main Site Reconcile Mode"
+          },
+          "main_site_sync_all": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Main Site Sync All"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "SettingsPatchRequest",
+        "description": "PATCH 语义：传哪个字段更新哪个，两者都缺视为无效请求。"
+      },
+      "SessionSyncCompleteRequest": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "session_found",
+              "no_session"
+            ],
+            "description": "浏览器扩展是否拿到了登录态"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "newapi",
+              "sub2api"
+            ]
+          },
+          "observed_origin": {
+            "type": "string",
+            "description": "扩展观察到的站点 origin"
+          },
+          "session": {
+            "type": "object",
+            "description": "登录态（status=session_found 时必填）。newapi 允许字段：access_token / access_user_id / browser_cookie / browser_refresh_cookie / browser_session_id / browser_access_expires_at；sub2api 允许：access_token / refresh_token / token_expires_at。多传字段会被 400 拒绝。"
+          }
+        }
+      },
+      "SessionSyncFailRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "失败原因码（扩展侧失败枚举）"
+          }
+        }
+      },
+      "AdminSiteCreateRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "platform",
+          "base_url"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "newapi",
+              "sub2api"
+            ]
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "access_token": {
+            "type": "string",
+            "description": "NewAPI 管理员系统访问令牌（newapi 必填）"
+          },
+          "access_user_id": {
+            "type": "string",
+            "description": "NewAPI 管理员用户 ID（newapi 必填）"
+          },
+          "login_username": {
+            "type": "string",
+            "description": "sub2api 管理员邮箱（sub2api 必填，创建时会真实登录校验）"
+          },
+          "login_password": {
+            "type": "string",
+            "description": "sub2api 管理员密码（sub2api 必填）"
+          },
+          "key_sync_enabled": {
+            "type": "boolean",
+            "description": "key 自动更新开关（仅 newapi 生效）"
+          },
+          "key_sync_interval_minutes": {
+            "type": "integer",
+            "default": 5,
+            "description": "key 自动更新间隔（分钟，5~1440）"
+          }
+        }
+      },
+      "AdminSiteUpdateRequest": {
+        "type": "object",
+        "description": "PATCH 语义。platform 创建后不可修改（改了返回 409）；令牌留空 = 沿用旧值。",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "access_user_id": {
+            "type": "string"
+          },
+          "login_username": {
+            "type": "string"
+          },
+          "login_password": {
+            "type": "string"
+          },
+          "key_sync_enabled": {
+            "type": "boolean"
+          },
+          "key_sync_interval_minutes": {
+            "type": "integer"
+          }
+        }
+      },
+      "KeyVerificationRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "管理员输入的安全验证码（读取主站渠道真实 key 需要）"
+          }
+        }
+      },
+      "ChannelBatchRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "ids"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "enable",
+              "disable",
+              "delete",
+              "set_group",
+              "set_tag",
+              "add_tag"
+            ],
+            "description": "注意：delete 是真删除上游渠道（NewAPI /api/channel/batch 即删除）"
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 1,
+            "description": "渠道 ID 列表"
+          },
+          "group": {
+            "type": "string",
+            "description": "action=set_group 时必填"
+          },
+          "tag": {
+            "type": "string",
+            "description": "action=set_tag / add_tag 时必填"
+          }
+        }
+      },
+      "ChannelCreateRequest": {
+        "type": "object",
+        "description": "NewAPI 渠道字段透传（常用：mode / name / type / base_url / key / models / groups / tags / priority / weight / status）。sub2api 主站不允许在本系统新建渠道（405）。",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "single / batch"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "integer",
+            "description": "NewAPI 渠道类型"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "description": "渠道密钥（创建成功后会同步进本系统缓存）"
+          },
+          "models": {
+            "type": "string",
+            "description": "逗号分隔模型列表"
+          },
+          "groups": {
+            "type": "string",
+            "description": "分组（逗号分隔或数组）"
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "weight": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "integer",
+            "description": "1=启用 2=手动禁用 3=自动禁用"
+          }
+        },
+        "additionalProperties": true
+      },
+      "ChannelUpdateRequest": {
+        "type": "object",
+        "description": "newapi：字段透传 NewAPI PUT 渠道接口（注意：带 status 必失败）；sub2api：仅允许 name / description / status(active|disabled) / group_ids / model_pricing / model_mapping / billing_model_source(channel_mapped|requested|upstream) / restrict_models / features / features_config / apply_pricing_to_account_stats / account_stats_pricing_rules，其他字段 400。",
+        "additionalProperties": true
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "token"
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8000",
+      "description": "本地开发"
+    }
+  ],
+  "tags": [
+    {
+      "name": "01 认证",
+      "description": "auth"
+    },
+    {
+      "name": "02 监控站点",
+      "description": "monitoring"
+    },
+    {
+      "name": "03 主站管理（渠道 CRUD）",
+      "description": "admin"
+    },
+    {
+      "name": "04 推送通知",
+      "description": "notifications"
+    },
+    {
+      "name": "05 系统设置",
+      "description": "settings"
+    },
+    {
+      "name": "06 浏览器会话同步",
+      "description": "sync"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

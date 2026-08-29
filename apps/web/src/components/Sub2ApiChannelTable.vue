@@ -83,7 +83,7 @@ const rows = computed(() =>
       </colgroup>
       <thead class="sticky top-0 z-10 bg-panel">
         <tr class="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
-          <th class="pb-2">渠道</th>
+          <th class="pl-3 pb-2">渠道</th>
           <th class="pb-2">状态</th>
           <th class="pb-2">分组</th>
           <th class="pb-2">分组倍率</th>
@@ -98,7 +98,7 @@ const rows = computed(() =>
           :key="row.channel.id"
           class="border-b border-line-soft last:border-0 hover:bg-sunken-hover"
         >
-          <td class="max-w-0 py-3 pr-3">
+          <td class="max-w-0 py-3 pl-3 pr-3">
             <div class="truncate font-bold text-ink-strong">
               {{ row.channel.name || `#${row.channel.id}` }}
             </div>
@@ -148,7 +148,7 @@ const rows = computed(() =>
               {{ billingSummary(row.channel) }}
             </div>
           </td>
-          <td class="py-3">
+          <td class="py-3 pr-3">
             <div class="flex min-h-8 items-center justify-end gap-1.5">
               <button
                 type="button"

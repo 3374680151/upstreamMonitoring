@@ -237,14 +237,72 @@ const groupChannelCount = computed(() => {
   return count;
 });
 
-const groupRows = computed(() => {
-  if (allowedGroupNames.value) return Array.from(allowedGroupNames.value).sort();
-  const names = new Set<string>([
-    ...Object.keys(groups.value),
-    ...Object.keys(groupChannelCount.value),
-  ]);
-  return Array.from(names).sort();
+// 分组视角的自定义排序：拖拽侧栏卡片调整顺序，localStorage 持久化；
+// 顺序只约束当前仍存在的分组，新增分组按默认字母序追加，不丢项。
+const GROUP_ORDER_STORAGE_KEY = "upstream.group_view_order";
+
+function loadGroupOrder(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(GROUP_ORDER_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+const customGroupOrder = ref<string[]>(loadGroupOrder());
+const dragGroupName = ref<string | null>(null);
+const dragOverGroupName = ref<string | null>(null);
+
+watch(customGroupOrder, (order) => {
+  try {
+    localStorage.setItem(GROUP_ORDER_STORAGE_KEY, JSON.stringify(order));
+  } catch {
+    // localStorage 不可用（隐私模式等）时静默降级，顺序仅本次会话生效
+  }
 });
+
+const groupRows = computed(() => {
+  const names = allowedGroupNames.value
+    ? new Set<string>(allowedGroupNames.value)
+    : new Set<string>([
+        ...Object.keys(groups.value),
+        ...Object.keys(groupChannelCount.value),
+      ]);
+  const defaults = Array.from(names).sort();
+  const ordered = customGroupOrder.value.filter((name) => names.has(name));
+  return [...ordered, ...defaults.filter((name) => !ordered.includes(name))];
+});
+
+function onGroupDragStart(name: string, event: DragEvent) {
+  dragGroupName.value = name;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", name);
+  }
+}
+
+function onGroupDragOver(name: string, event: DragEvent) {
+  if (!dragGroupName.value || dragGroupName.value === name) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  dragOverGroupName.value = name;
+}
+
+function onGroupDrop(name: string) {
+  const dragged = dragGroupName.value;
+  dragGroupName.value = null;
+  dragOverGroupName.value = null;
+  if (!dragged || dragged === name) return;
+  const current = [...groupRows.value];
+  const from = current.indexOf(dragged);
+  const to = current.indexOf(name);
+  if (from < 0 || to < 0) return;
+  current.splice(to, 0, ...current.splice(from, 1));
+  customGroupOrder.value = current;
+}
 
 const visibleChannels = computed(() => {
   if (!groupFilter.value) return channels.value;
@@ -1321,6 +1379,7 @@ watch(
               清除
             </button>
           </div>
+          <div class="priceai-scrollbar space-y-2 lg:max-h-[calc(100vh-19.5rem)] lg:overflow-y-auto">
           <button
             :class="[
               'w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left text-sm transition',
@@ -1340,12 +1399,22 @@ watch(
           <button
             v-for="name in groupRows"
             :key="name"
+            draggable="true"
             :class="[
-              'w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left transition',
+              'w-full cursor-grab rounded-[var(--radius-sm)] border px-3 py-2 text-left transition active:cursor-grabbing',
               groupFilter === name
                 ? 'border-[var(--color-accent)] bg-sunken'
                 : 'border-line hover:bg-sunken-hover',
+              dragGroupName === name ? 'opacity-50' : '',
+              dragOverGroupName === name && dragGroupName !== name
+                ? 'border-dashed border-[var(--color-accent)]'
+                : '',
             ]"
+            @dragstart="onGroupDragStart(name, $event)"
+            @dragover="onGroupDragOver(name, $event)"
+            @dragleave="dragOverGroupName = null"
+            @drop.prevent="onGroupDrop(name)"
+            @dragend="dragGroupName = null; dragOverGroupName = null"
             @click="groupFilter = groupFilter === name ? null : name"
           >
             <div class="flex items-center justify-between gap-2">
@@ -1368,6 +1437,7 @@ watch(
               {{ groups[name].desc }}
             </div>
           </button>
+          </div>
         </aside>
 
         <!-- 渠道主区域 -->
@@ -1404,7 +1474,7 @@ watch(
               </colgroup>
               <thead class="sticky top-0 z-10 bg-panel">
                 <tr class="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
-                  <th class="pb-2">渠道</th>
+                  <th class="pl-3 pb-2">渠道</th>
                   <th class="pb-2">分组</th>
                   <th class="pb-2">当前 key 上游倍率</th>
                   <th class="pb-2">权重</th>
@@ -1422,7 +1492,7 @@ watch(
                     row.isSelected ? 'bg-sunken' : '',
                   ]"
                 >
-                  <td class="max-w-0 py-3 pr-3">
+                  <td class="max-w-0 py-3 pl-3 pr-3">
                     <button
                       class="max-w-full text-left"
                       @click="toggleSelectChannel(row.channel)"
@@ -1511,7 +1581,7 @@ watch(
                       {{ row.meta.label }}
                     </Badge>
                   </td>
-                  <td class="py-3">
+                  <td class="py-3 pr-3">
                     <div class="flex flex-nowrap items-center gap-1.5">
                       <Button
                         variant="secondary"

@@ -254,7 +254,8 @@ function loadGroupOrder(): string[] {
 
 const customGroupOrder = ref<string[]>(loadGroupOrder());
 const dragGroupName = ref<string | null>(null);
-const dragOverGroupName = ref<string | null>(null);
+const dragInsertIndex = ref<number | null>(null);
+const dragPlaceholderHeight = ref(96);
 
 watch(customGroupOrder, (order) => {
   try {
@@ -276,32 +277,69 @@ const groupRows = computed(() => {
   return [...ordered, ...defaults.filter((name) => !ordered.includes(name))];
 });
 
+// 拖拽期间原卡片从列表移除，由等高占位卡指示落点，松手落在占位卡位置
+const dragListRows = computed(() =>
+  dragGroupName.value
+    ? groupRows.value.filter((name) => name !== dragGroupName.value)
+    : groupRows.value,
+);
+
+function clearGroupDragState() {
+  dragGroupName.value = null;
+  dragInsertIndex.value = null;
+}
+
 function onGroupDragStart(name: string, event: DragEvent) {
   dragGroupName.value = name;
+  dragInsertIndex.value = groupRows.value.indexOf(name);
+  dragPlaceholderHeight.value =
+    event.currentTarget instanceof HTMLElement
+      ? event.currentTarget.offsetHeight
+      : 96;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", name);
   }
 }
 
-function onGroupDragOver(name: string, event: DragEvent) {
-  if (!dragGroupName.value || dragGroupName.value === name) return;
+function onGroupListDragOver(event: DragEvent) {
+  if (!dragGroupName.value) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  dragOverGroupName.value = name;
+  const container = event.currentTarget as HTMLElement;
+  const cards = Array.from(
+    container.querySelectorAll<HTMLElement>("[data-group-card]"),
+  );
+  let index = cards.length;
+  for (let i = 0; i < cards.length; i += 1) {
+    const rect = cards[i].getBoundingClientRect();
+    if (event.clientY < rect.top + rect.height / 2) {
+      index = i;
+      break;
+    }
+  }
+  dragInsertIndex.value = index;
 }
 
-function onGroupDrop(name: string) {
+function onGroupListDragLeave(event: DragEvent) {
+  const container = event.currentTarget as HTMLElement;
+  if (!container.contains(event.relatedTarget as Node | null)) {
+    dragInsertIndex.value = null;
+  }
+}
+
+function onGroupListDrop() {
   const dragged = dragGroupName.value;
-  dragGroupName.value = null;
-  dragOverGroupName.value = null;
-  if (!dragged || dragged === name) return;
-  const current = [...groupRows.value];
-  const from = current.indexOf(dragged);
-  const to = current.indexOf(name);
-  if (from < 0 || to < 0) return;
-  current.splice(to, 0, ...current.splice(from, 1));
-  customGroupOrder.value = current;
+  const index = dragInsertIndex.value;
+  clearGroupDragState();
+  if (!dragged || index == null) return;
+  const visible = groupRows.value.filter((name) => name !== dragged);
+  if (index > visible.length) return;
+  customGroupOrder.value = [
+    ...visible.slice(0, index),
+    dragged,
+    ...visible.slice(index),
+  ];
 }
 
 const visibleChannels = computed(() => {
@@ -1379,7 +1417,12 @@ watch(
               清除
             </button>
           </div>
-          <div class="priceai-scrollbar space-y-2 lg:max-h-[calc(100vh-19.5rem)] lg:overflow-y-auto">
+          <div
+            class="priceai-scrollbar space-y-2 lg:max-h-[calc(100vh-19.5rem)] lg:overflow-y-auto"
+            @dragover="onGroupListDragOver"
+            @dragleave="onGroupListDragLeave"
+            @drop="onGroupListDrop"
+          >
           <button
             :class="[
               'w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left text-sm transition',
@@ -1396,27 +1439,26 @@ watch(
               {{ channels.length }}
             </span>
           </button>
-          <button
-            v-for="name in groupRows"
-            :key="name"
-            draggable="true"
-            :class="[
-              'w-full cursor-grab rounded-[var(--radius-sm)] border px-3 py-2 text-left transition active:cursor-grabbing',
-              groupFilter === name
-                ? 'border-[var(--color-accent)] bg-sunken'
-                : 'border-line hover:bg-sunken-hover',
-              dragGroupName === name ? 'opacity-50' : '',
-              dragOverGroupName === name && dragGroupName !== name
-                ? 'border-dashed border-[var(--color-accent)]'
-                : '',
-            ]"
-            @dragstart="onGroupDragStart(name, $event)"
-            @dragover="onGroupDragOver(name, $event)"
-            @dragleave="dragOverGroupName = null"
-            @drop.prevent="onGroupDrop(name)"
-            @dragend="dragGroupName = null; dragOverGroupName = null"
-            @click="groupFilter = groupFilter === name ? null : name"
-          >
+          <template v-for="(name, index) in dragListRows" :key="name">
+            <div
+              v-if="dragGroupName && dragInsertIndex === index"
+              class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
+              :style="{ height: `${dragPlaceholderHeight}px` }"
+              aria-hidden="true"
+            />
+            <button
+              draggable="true"
+              data-group-card
+              :class="[
+                'w-full cursor-grab rounded-[var(--radius-sm)] border px-3 py-2 text-left transition active:cursor-grabbing',
+                groupFilter === name
+                  ? 'border-[var(--color-accent)] bg-sunken'
+                  : 'border-line hover:bg-sunken-hover',
+              ]"
+              @dragstart="onGroupDragStart(name, $event)"
+              @dragend="clearGroupDragState"
+              @click="groupFilter = groupFilter === name ? null : name"
+            >
             <div class="flex items-center justify-between gap-2">
               <span class="truncate font-semibold text-ink-strong">
                 {{ name }}
@@ -1437,6 +1479,13 @@ watch(
               {{ groups[name].desc }}
             </div>
           </button>
+          </template>
+          <div
+            v-if="dragGroupName && dragInsertIndex !== null && dragInsertIndex >= dragListRows.length"
+            class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
+            :style="{ height: `${dragPlaceholderHeight}px` }"
+            aria-hidden="true"
+          />
           </div>
         </aside>
 

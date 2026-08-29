@@ -98,7 +98,7 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
     </div>
 
     <div
-      class="grid min-w-0 gap-6 min-[1400px]:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)] min-[1400px]:items-start"
+      class="grid min-w-0 gap-6 min-[1400px]:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]"
     >
       <div class="min-w-0">
         <Panel
@@ -119,7 +119,9 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
             </label>
           </template>
 
-          <div class="priceai-scrollbar h-[430px] min-h-0 overflow-y-auto pr-1">
+          <div
+            class="priceai-scrollbar h-[430px] min-h-0 overflow-y-auto pr-1 min-[1400px]:h-auto min-[1400px]:flex-1"
+          >
             <SiteTable
               :sites="overviewSites"
               :selected-id="selectedId"

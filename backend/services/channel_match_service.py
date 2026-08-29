@@ -46,6 +46,7 @@ from backend.integrations.sub2api import (
     fetch_sub2api_usage_by_token,
     fetch_sub2api_user_groups,
     parse_sub2api_groups,
+    probe_sub2api_gateway_key,
     sub2api_key_group_name,
 )
 from backend.repositories.admin_sites import (
@@ -671,7 +672,15 @@ def match_channel_upstream_binding(
             None,
         )
         if not isinstance(key_match, dict):
-            message = "当前渠道 key 未在 sub2api 登录账号的 key 列表中找到（可能已被删除或重置）"
+            # key 列表按登录账号隔离：key 仍被网关接受却不在列表里，说明它
+            # 属于另一个账号，提示换绑而不是误导性的「已删除或重置」。
+            if probe_sub2api_gateway_key(upstream_base, channel_key):
+                message = (
+                    "当前渠道 key 与 sub2api 登录账号不匹配：key 在上游仍然有效，"
+                    "但属于其他账号；请更换渠道 key，或重新同步该账号的登录态"
+                )
+            else:
+                message = "当前渠道 key 未在 sub2api 登录账号的 key 列表中找到（可能已被删除或重置）"
             persist_channel_match(admin_site_id, channel_id, "key_not_found", message, [])
             return False, {}, message
 

@@ -1455,6 +1455,33 @@ def fetch_sub2api_usage_by_token(
     return True, {"success": True, "data": data}, None
 
 
+def probe_sub2api_gateway_key(base_url: str, api_key: str) -> bool:
+    """探测渠道 key 是否仍被上游网关接受，用于区分「key 已失效」和
+    「key 属于其他账号」：key 列表按登录账号隔离，有效 key 不会出现在
+    其他账号的列表里。仅当渠道 key 请求 /v1/models 返回 200、且无效 key
+    的对照请求被 401/403 拒绝时才判定有效；网关不校验鉴权、WAF 拦截或
+    网络异常时返回 False，调用方沿用原有失效提示。"""
+    key = str(api_key or "").strip()
+    if not key:
+        return False
+    base = normalize_base_url(base_url)
+    ok, _payload, _error = request_json(
+        f"{base}/v1/models",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    if not ok:
+        return False
+    control_ok, _control_payload, control_error = request_json(
+        f"{base}/v1/models",
+        headers={"Authorization": "Bearer sk-invalid-key-probe"},
+    )
+    if control_ok:
+        return False
+    return bool(
+        control_error and control_error.startswith(("HTTP 401", "HTTP 403"))
+    )
+
+
 def fetch_sub2api_channel_monitors_by_token(base_url: str, access_token: str) -> Tuple[bool, Dict[str, Any], Optional[str]]:
     token = (access_token or "").strip()
     if not token:

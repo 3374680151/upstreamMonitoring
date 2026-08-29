@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 主站同步范围选择弹窗 — 渠道页「同步主站 / 同步全部主站」共用的范围确认层。
+ * 主站同步范围选择弹窗 — 渠道页「同步主站」的范围确认层。
  * 纯展示组件：可同步候选由页面拉取并按平台识别筛过后传入，
  * 确认时回传 { scope, channelIds }，同步请求由页面发起。
  */
@@ -12,8 +12,6 @@ type SyncScope = "all" | "recognized" | "selected";
 
 interface Props {
   open: boolean;
-  /** single=当前主站（三档范围）；batch=全部主站（只有全部/仅识别两档） */
-  mode: "single" | "batch";
   siteLabel?: string;
   candidatesLoading?: boolean;
   candidates?: ChannelDiscoveryCandidate[];
@@ -49,14 +47,12 @@ const scopeOptions = computed(() => {
       label: "仅识别 NewAPI / sub2api",
       hint: "只导入平台识别命中的渠道，并把本地已导入但平台不符的站点直接删除",
     },
-  ];
-  if (props.mode === "single") {
-    options.push({
+    {
       value: "selected",
       label: "勾选渠道",
       hint: "只导入勾选渠道的上游站点，未勾选渠道的站点保持不动",
-    });
-  }
+    },
+  ];
   return options;
 });
 
@@ -108,12 +104,8 @@ function submit() {
 <template>
   <Modal
     :open="open"
-    :title="mode === 'single' ? '同步主站' : '同步全部主站'"
-    :subtitle="
-      mode === 'single'
-        ? `选择本次同步的渠道范围：${siteLabel || '当前主站'}`
-        : '对全部主站执行一次同步，选择本次的渠道范围'
-    "
+    title="同步主站"
+    :subtitle="`选择本次同步的渠道范围：${siteLabel || '当前主站'}`"
     @close="emit('close')"
   >
     <div class="space-y-2">
@@ -146,7 +138,7 @@ function submit() {
     </div>
 
     <div
-      v-if="scopeChoice === 'selected' && mode === 'single'"
+      v-if="scopeChoice === 'selected'"
       class="mt-4 rounded-[var(--radius-md)] border border-line"
     >
       <div

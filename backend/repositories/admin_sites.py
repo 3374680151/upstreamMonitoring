@@ -67,6 +67,45 @@ def admin_site_capabilities(site: Dict[str, Any]) -> Dict[str, bool]:
     return dict(ADMIN_SITE_CAPABILITIES[admin_site_platform(site)])
 
 
+# 每主站同步配置（从全局 app_settings 迁移为按行配置，2026-08）：
+# reconcile_mode 决定对账时上游已消失渠道的处理方式；
+# sync_all_channels 决定同步导入范围；retention_days 决定该主站底下
+# 监控站点的快照/变化保留天数（0 = 永久保留，不做清理）。
+RECONCILE_MODE_DISABLE = "disable"
+RECONCILE_MODE_DELETE = "delete"
+RECONCILE_MODES = {RECONCILE_MODE_DISABLE, RECONCILE_MODE_DELETE}
+MAX_RETENTION_DAYS = 3650
+
+
+def admin_site_reconcile_mode(site: Dict[str, Any]) -> str:
+    mode = str(site.get("reconcile_mode") or "").strip().lower()
+    return mode if mode in RECONCILE_MODES else RECONCILE_MODE_DISABLE
+
+
+def admin_site_sync_all_channels(site: Dict[str, Any]) -> bool:
+    value = site.get("sync_all_channels")
+    if value is None:
+        return True
+    return str(value).strip().lower() not in {"0", "false", "off"}
+
+
+def admin_site_retention_days(site: Dict[str, Any]) -> int:
+    try:
+        retention_days = int(site.get("retention_days") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(MAX_RETENTION_DAYS, retention_days))
+
+
+def admin_site_sync_config_payload(site: Dict[str, Any]) -> Dict[str, Any]:
+    """Serialize the per-admin sync config for the UI list payload."""
+    return {
+        "sync_all_channels": admin_site_sync_all_channels(site),
+        "reconcile_mode": admin_site_reconcile_mode(site),
+        "retention_days": admin_site_retention_days(site),
+    }
+
+
 def validate_admin_site_base_url(value: str) -> Tuple[str, Optional[str]]:
     normalized = normalize_base_url(value)
     try:
@@ -180,6 +219,7 @@ def list_admin_sites_payload() -> List[Dict[str, Any]]:
             "key_sync_last_error": r.get("key_sync_last_error"),
             "key_sync_backoff_until": r.get("key_sync_backoff_until"),
             "key_sync_failure_count": int(r.get("key_sync_failure_count") or 0),
+            **admin_site_sync_config_payload(r),
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }
@@ -206,6 +246,15 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
         key_sync_interval = max(5, min(1440, int(body.get("key_sync_interval_minutes") or 5)))
     except (TypeError, ValueError):
         return False, None, "key 自动更新间隔无效"
+    sync_all_channels = 1 if body.get("sync_all_channels", True) else 0
+    reconcile_mode = admin_site_reconcile_mode(
+        {"reconcile_mode": body.get("reconcile_mode")}
+    )
+    try:
+        retention_days = int(body.get("retention_days") or 0)
+    except (TypeError, ValueError):
+        return False, None, "快照保留天数无效"
+    retention_days = max(0, min(MAX_RETENTION_DAYS, retention_days))
     if not name or not base_url:
         return False, None, "请填写管理站点名称和 Base URL"
     if platform == "newapi" and (not access_token or not access_user_id):
@@ -236,9 +285,10 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             sub2api_refresh_token, sub2api_access_expires_at,
             browser_login_last_error, browser_login_last_check_at,
             key_sync_enabled, key_sync_interval_minutes, key_sync_next_at,
+            sync_all_channels, reconcile_mode, retention_days,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -255,6 +305,9 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             key_sync_enabled,
             key_sync_interval,
             now if key_sync_enabled else None,
+            sync_all_channels,
+            reconcile_mode,
+            retention_days,
             now,
             now,
         ),
@@ -315,6 +368,23 @@ def update_admin_site(admin_site_id: int, body: Dict[str, Any]) -> Tuple[bool, O
         next_base_url = base_url
         fields.append("base_url = ?")
         params.append(base_url)
+
+    if "sync_all_channels" in body:
+        fields.append("sync_all_channels = ?")
+        params.append(1 if body.get("sync_all_channels") else 0)
+    if "reconcile_mode" in body:
+        requested_mode = str(body.get("reconcile_mode") or "").strip().lower()
+        if requested_mode not in RECONCILE_MODES:
+            return False, "消失渠道处理方式无效"
+        fields.append("reconcile_mode = ?")
+        params.append(requested_mode)
+    if "retention_days" in body:
+        try:
+            retention_days = int(body.get("retention_days") or 0)
+        except (TypeError, ValueError):
+            return False, "快照保留天数无效"
+        fields.append("retention_days = ?")
+        params.append(max(0, min(MAX_RETENTION_DAYS, retention_days)))
 
     if platform == "sub2api":
         next_username = (

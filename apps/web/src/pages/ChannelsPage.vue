@@ -20,7 +20,6 @@ import { explainUpstreamError } from "@/lib/upstreamError";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
 import { useConsoleData } from "@/composables/useConsoleData";
-import { useReconcileMode, type ReconcileMode } from "@/composables/useReconcileMode";
 import type {
   AdminSite,
   Channel,
@@ -137,8 +136,6 @@ function bindingFailure(binding?: ChannelUpstreamBinding): { summary: string; ra
 }
 
 // ---- composables ----
-const enabled = ref(true);
-const { reconcileMode, handleReconcileModeChange } = useReconcileMode(enabled);
 const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
 // 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
@@ -150,7 +147,6 @@ const siteId = ref<number | null>(null);
 const adminLoading = ref(true);
 const adminFormOpen = ref(false);
 const editingAdmin = shallowRef<AdminSite | null>(null);
-const keyRefreshTriggering = ref(false);
 
 const channels = shallowRef<Channel[]>([]);
 const groups = shallowRef<Record<string, GroupItem>>({});
@@ -160,9 +156,6 @@ const loading = ref(false);
 const error = ref("");
 const staleDataWarning = ref("");
 const groupFilter = ref<string | null>(null);
-// 全站批量刷新（所有主站，后台批次）
-const refreshingAllSitesKeys = ref(false);
-const refreshingAllSitesRatios = ref(false);
 const selectedChannelId = ref<number | null>(null);
 const matching = shallowRef<Set<number>>(new Set());
 const refreshingKeyIds = shallowRef<Set<number>>(new Set());
@@ -172,7 +165,6 @@ const sub2ApiChannel = shallowRef<Channel | null>(null);
 const updatingChannelIds = shallowRef<Set<number>>(new Set());
 const actionError = ref("");
 const syncing = ref(false);
-const syncingAll = ref(false);
 
 // ---- 非响应式变量（跨渲染保持，不触发视图更新）----
 let loadVersion = 0;
@@ -571,30 +563,6 @@ async function pollKeyRefreshProgress() {
   }
 }
 
-async function triggerFullKeyRefresh() {
-  if (siteId.value == null || isSub2Api.value) return;
-  if (securityVerifyNeeded("key")) {
-    requestSecurityVerify("key", triggerFullKeyRefresh);
-    return;
-  }
-  keyRefreshTriggering.value = true;
-  actionError.value = "";
-  try {
-    const response = await api.refreshAllChannelKeys(siteId.value);
-    if (!response.success) throw new Error(response.message || "触发全量渠道 key 刷新失败");
-    await pollKeyRefreshProgress();
-    if (response.data?.progress?.status === "running" || currentKeyRefresh.value?.status === "running") {
-      ensureKeyRefreshPolling();
-    }
-    toast.info(response.message || "已启动全量渠道 key 刷新");
-  } catch (err) {
-    const message = errorText(err, "触发全量 key 刷新失败");
-    toast.error(message);
-  } finally {
-    keyRefreshTriggering.value = false;
-  }
-}
-
 async function triggerFullRatioRefresh() {
   if (siteId.value == null) return;
   if (securityVerifyNeeded("ratio")) {
@@ -616,76 +584,6 @@ async function triggerFullRatioRefresh() {
     toast.error(message);
   } finally {
     ratioRefreshTriggering.value = false;
-  }
-}
-
-/** 全站批量：为所有 NewAPI 主站触发全量渠道 key 刷新（后台批次，进度徽标跟随当前主站） */
-async function triggerAllSitesKeyRefresh() {
-  if (refreshingAllSitesKeys.value) return;
-  refreshingAllSitesKeys.value = true;
-  actionError.value = "";
-  try {
-    const result = await api.refreshAllSitesChannelKeys();
-    if (result.success === false) {
-      throw new Error(result.message || "触发全量 key 刷新失败");
-    }
-    const triggered = result.data?.triggered || [];
-    const okRows = triggered.filter((row) => row.success);
-    const failRows = triggered.filter((row) => !row.success);
-    if (okRows.length) {
-      toast.success(`已为 ${okRows.length} 个 NewAPI 主站启动全量渠道 key 刷新`);
-      ensureKeyRefreshPolling();
-    } else {
-      toast.info("没有可刷新的 NewAPI 主站");
-    }
-    if (failRows.length) {
-      actionError.value =
-        `部分主站全量 key 刷新启动失败：` +
-        failRows
-          .map((row) => `${row.name || `#${row.admin_site_id}`}：${row.message || "启动失败"}`)
-          .join("；");
-    }
-  } catch (err) {
-    const message = errorText(err, "触发全量 key 刷新失败");
-    actionError.value = `全量 key 刷新启动失败：${message}`;
-    toast.error(`全量 key 刷新启动失败：${message}`);
-  } finally {
-    refreshingAllSitesKeys.value = false;
-  }
-}
-
-/** 全站批量：为所有主站触发全量倍率刷新（后台批次，进度徽标跟随当前主站） */
-async function triggerAllSitesRatioRefresh() {
-  if (refreshingAllSitesRatios.value) return;
-  refreshingAllSitesRatios.value = true;
-  actionError.value = "";
-  try {
-    const result = await api.refreshAllSitesChannelRatios();
-    if (result.success === false) {
-      throw new Error(result.message || "触发全量倍率刷新失败");
-    }
-    const triggered = result.data?.triggered || [];
-    const okRows = triggered.filter((row) => row.success);
-    const failRows = triggered.filter((row) => !row.success);
-    if (okRows.length) {
-      toast.success(`已为 ${okRows.length} 个主站启动全量倍率刷新`);
-      ensureKeyRefreshPolling();
-    } else {
-      toast.info("没有可刷新倍率的主站");
-    }
-    if (failRows.length) {
-      actionError.value =
-        `部分主站全量倍率刷新启动失败：` +
-        failRows
-          .map((row) => `${row.name || `#${row.admin_site_id}`}：${row.message || "启动失败"}`)
-          .join("；");
-    }
-  } catch (err) {
-    const message = errorText(err, "触发全量倍率刷新失败");
-    actionError.value = `全量倍率刷新启动失败：${message}`;
-    toast.error(`全量倍率刷新启动失败：${message}`);
-  } finally {
-    refreshingAllSitesRatios.value = false;
   }
 }
 
@@ -857,23 +755,17 @@ async function load(
 // ---- 主站同步：先弹范围选择（全部 / 仅识别 / 勾选渠道）再执行 ----
 const SYNCABLE_PLATFORMS = new Set(["newapi", "sub2api"]);
 const syncDialogOpen = ref(false);
-const syncDialogMode = ref<"single" | "batch">("single");
 const syncCandidates = shallowRef<ChannelDiscoveryCandidate[]>([]);
 const syncCandidatesLoading = ref(false);
 
 /** 打开同步范围弹窗；sub2api 主站渠道无上游地址可发现，保持直接同步（仅快照） */
-async function openSyncDialog(mode: "single" | "batch") {
-  if (mode === "single" && siteId.value == null) return;
-  if (mode === "single" && isSub2Api.value) {
-    await runMainSiteSync(siteId.value ?? undefined, "all", [], false);
+async function openSyncDialog() {
+  if (siteId.value == null) return;
+  if (isSub2Api.value) {
+    await runMainSiteSync(siteId.value ?? undefined, "all", []);
     return;
   }
-  syncDialogMode.value = mode;
   syncDialogOpen.value = true;
-  if (mode !== "single" || siteId.value == null) {
-    syncCandidates.value = [];
-    return;
-  }
   syncCandidatesLoading.value = true;
   try {
     const response = await api.channelCandidates(siteId.value);
@@ -891,10 +783,8 @@ async function runMainSiteSync(
   adminSiteId: number | undefined,
   scope: "all" | "recognized" | "selected",
   channelIds: number[],
-  batch: boolean,
 ): Promise<boolean> {
-  if (batch) syncingAll.value = true;
-  else syncing.value = true;
+  syncing.value = true;
   try {
     const synced = await handleSyncMainSites(adminSiteId, { scope, channelIds });
     if (!synced) return false;
@@ -902,12 +792,10 @@ async function runMainSiteSync(
     selectedChannelId.value = null;
     sub2ApiChannel.value = null;
     rowNote.value = {};
-    if (batch) await loadAdminSites();
     await load("");
     return true;
   } finally {
-    if (batch) syncingAll.value = false;
-    else syncing.value = false;
+    syncing.value = false;
   }
 }
 
@@ -916,9 +804,7 @@ function onSyncDialogConfirm(payload: {
   channelIds: number[];
 }) {
   syncDialogOpen.value = false;
-  const batch = syncDialogMode.value === "batch";
-  const targetId = batch ? undefined : (siteId.value ?? undefined);
-  void runMainSiteSync(targetId, payload.scope, payload.channelIds, batch);
+  void runMainSiteSync(siteId.value ?? undefined, payload.scope, payload.channelIds);
 }
 
 async function matchUpstream(ch: Channel) {
@@ -1148,10 +1034,6 @@ async function onSiteIdChange(v: string) {
   siteId.value = Number(v);
 }
 
-function onReconcileModeChange(v: string) {
-  handleReconcileModeChange(v as ReconcileMode);
-}
-
 function toggleSelectChannel(channel: Channel) {
   const isSelected = selectedChannelId.value === channel.id;
   selectedChannelId.value = isSelected ? null : channel.id;
@@ -1275,52 +1157,16 @@ watch(
               }}<span v-if="site.platform === 'sub2api' && !site.has_login_password"> · 未配置管理员密码</span><span v-else-if="!site.has_access_token"> · 未配置令牌</span>
             </option>
           </Select>
-          <label class="flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
-            <span>消失渠道</span>
-            <Select
-              class="w-[4.5rem]"
-              :model-value="reconcileMode"
-              @update:model-value="onReconcileModeChange"
-              aria-label="上游消失渠道的处理方式"
-              title="主站同步时，上游已消失的监控渠道如何处理"
-            >
-              <option value="disable">停用</option>
-              <option value="delete">删除</option>
-            </Select>
-          </label>
-          <Button
-            variant="secondary"
-            aria-label="同步全部主站"
-            title="选择渠道范围后同步所有主站，并对账消失渠道"
-            :disabled="syncingAll || adminSites.length === 0"
-            :loading="syncingAll"
-            @click="openSyncDialog('batch')"
-          >
-            <Cloud v-if="!syncingAll" :size="13" />
-            同步全部主站
-          </Button>
           <Button
             variant="secondary"
             aria-label="同步主站渠道"
             title="选择渠道范围后同步当前主站，并对账消失渠道"
-            :disabled="siteId == null || syncingAll"
+            :disabled="siteId == null"
             :loading="syncing"
-            @click="openSyncDialog('single')"
+            @click="openSyncDialog()"
           >
             <Cloud v-if="!syncing" :size="13" />
             同步主站
-          </Button>
-          <Button
-            v-if="!isSub2Api"
-            variant="secondary"
-            aria-label="刷新全部渠道 key"
-            title="立即并发刷新当前主站全部渠道 key 并重新匹配上游倍率"
-            :disabled="siteId == null || keyRefreshTriggering"
-            :loading="keyRefreshTriggering"
-            @click="triggerFullKeyRefresh"
-          >
-            <KeyRound v-if="!keyRefreshTriggering" :size="13" />
-            刷新全部 key
           </Button>
           <Button
             variant="secondary"
@@ -1361,28 +1207,6 @@ watch(
           >
             {{ ratioRefreshStatusText }}
           </span>
-          <Button
-            variant="secondary"
-            aria-label="刷新全部主站 key"
-            title="为所有 NewAPI 主站立即并发刷新全部渠道 key 并重新匹配倍率（后台执行，进度徽标跟随当前主站）"
-            :disabled="refreshingAllSitesKeys"
-            :loading="refreshingAllSitesKeys"
-            @click="triggerAllSitesKeyRefresh"
-          >
-            <KeyRound v-if="!refreshingAllSitesKeys" :size="13" />
-            刷新全部主站 key
-          </Button>
-          <Button
-            variant="secondary"
-            aria-label="刷新全部主站倍率"
-            title="为所有主站并发重新匹配全部渠道的上游分组倍率（后台执行，进度徽标跟随当前主站）"
-            :disabled="refreshingAllSitesRatios"
-            :loading="refreshingAllSitesRatios"
-            @click="triggerAllSitesRatioRefresh"
-          >
-            <Percent v-if="!refreshingAllSitesRatios" :size="13" />
-            刷新全部主站倍率
-          </Button>
           <span class="mx-1 h-5 w-px bg-line-strong" aria-hidden="true" />
           <Button
             variant="secondary"
@@ -1791,12 +1615,12 @@ watch(
 
     <SyncScopeDialog
       :open="syncDialogOpen"
-      :mode="syncDialogMode"
       :site-label="
         currentAdminSite
           ? `${currentAdminSite.platform_label || 'NewAPI'} · ${currentAdminSite.name}`
           : ''
       "
+      :default-scope="currentAdminSite?.sync_all_channels === false ? 'recognized' : 'all'"
       :candidates-loading="syncCandidatesLoading"
       :candidates="syncCandidates"
       @close="syncDialogOpen = false"

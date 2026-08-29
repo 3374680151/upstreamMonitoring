@@ -430,6 +430,12 @@ export type AdminSite = {
   key_sync_last_error?: string | null;
   key_sync_backoff_until?: string | null;
   key_sync_failure_count?: number;
+  /** 主站同步范围：true = 导入全部渠道；false = 仅识别为 NewAPI / sub2api 的渠道 */
+  sync_all_channels?: boolean;
+  /** 消失渠道处理：disable = 停用；delete = 删除 */
+  reconcile_mode?: "disable" | "delete";
+  /** 快照/变化保留天数；0 = 永久保留（仅对该主站同步导入的监控站点生效） */
+  retention_days?: number;
   /** 全量 key 刷新批次进度；无批次时后端不返回该字段 */
   key_refresh?: AdminKeyRefreshProgress;
   /** 全量倍率刷新批次进度；无批次时后端不返回该字段 */
@@ -451,6 +457,12 @@ export type AdminSiteFormPayload = {
   login_password: string;
   key_sync_enabled: boolean;
   key_sync_interval_minutes: number;
+  /** 主站同步范围：true = 导入全部渠道；false = 仅识别平台 */
+  sync_all_channels: boolean;
+  /** 消失渠道处理：disable = 停用；delete = 删除 */
+  reconcile_mode: "disable" | "delete";
+  /** 快照/变化保留天数；0 = 永久保留 */
+  retention_days: number;
 };
 
 export type AdminSiteListResponse = {

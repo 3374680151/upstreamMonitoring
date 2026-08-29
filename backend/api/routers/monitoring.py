@@ -37,7 +37,6 @@ from backend.services.discovery_service import (
 )
 from backend.services.monitoring_service import (
     MonitoringService,
-    RECONCILE_MODE_DISABLE,
     cache_newapi_perf_summary_payload,
     cache_newapi_pricing_payload,
     detect_site,
@@ -355,12 +354,15 @@ async def sync_sites(request: Request):
                 status_code=400,
             )
 
-    scope = str(body.get("scope") or "all").strip().lower() or "all"
-    if scope not in SYNC_SCOPES:
-        return JSONResponse(
-            {"success": False, "message": f"同步范围无效：{scope}"},
-            status_code=400,
-        )
+    raw_scope = body.get("scope")
+    scope: str | None = None
+    if raw_scope not in (None, ""):
+        scope = str(raw_scope).strip().lower()
+        if scope not in SYNC_SCOPES:
+            return JSONResponse(
+                {"success": False, "message": f"同步范围无效：{scope}"},
+                status_code=400,
+            )
     raw_channel_ids = body.get("channel_ids")
     channel_ids: list[int] = []
     if isinstance(raw_channel_ids, list):
@@ -467,8 +469,7 @@ async def sync_sites(request: Request):
         {
             "success": True,
             "data": results,
-            "mode": reconcile.get("mode") or RECONCILE_MODE_DISABLE,
-            "scope": scope,
+            "scope": scope or "auto",
             "platform_deleted": platform_deleted,
             "channels_changed": channels_changed,
             "groups_changed": groups_changed,

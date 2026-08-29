@@ -13,7 +13,6 @@ import { errorText, useToast } from "@/composables/useToast";
 import { useAuth } from "@/composables/useAuth";
 import { useConsoleData } from "@/composables/useConsoleData";
 import { useAutoSessionResync } from "@/composables/useAutoSessionResync";
-import { useReconcileMode } from "@/composables/useReconcileMode";
 import { provideAppActions } from "@/composables/useAppActions";
 import {
   syncWithLoginAssist,
@@ -39,10 +38,6 @@ const { sites, loading, error, setSelectedId, refresh, reload } =
 
 // ---- 登录态后台自愈：扩展在线时自动重同步已失效的浏览器登录渠道 ----
 useAutoSessionResync(dataEnabled, sites, refresh);
-
-// ---- 对账模式 ----
-const { pendingDeleteMode, setPendingDeleteMode, persistReconcileMode } =
-  useReconcileMode(dataEnabled);
 
 // ---- 页面级 UI 状态 ----
 const deleteTarget = shallowRef<Site | null>(null);
@@ -286,19 +281,6 @@ provideAppActions({
       确认删除渠道「<b>{{ deleteTarget?.name }}</b>」？
       <br />
       该渠道的历史快照与变化记录会一并删除，且不可撤销。
-    </ConfirmDialog>
-    <ConfirmDialog
-      :open="pendingDeleteMode"
-      title="切换为删除模式"
-      confirm-label="切换为删除"
-      danger
-      @confirm="pendingDeleteMode = false; persistReconcileMode('delete')"
-      @cancel="setPendingDeleteMode(false)"
-    >
-      开启后，主站同步时<b>上游已消失</b>的监控渠道会被<b>永久删除</b>，
-      连带其历史快照与变化记录一并删除，且不可恢复。
-      <br />
-      确认切换为删除模式？
     </ConfirmDialog>
   </AppShell>
 

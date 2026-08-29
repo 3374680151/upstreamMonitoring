@@ -49,11 +49,14 @@ from backend.repositories.sites import (
     normalize_admin_sync_groups,
 )
 from backend.repositories.admin_sites import (
+    RECONCILE_MODE_DELETE,
     get_cached_admin_channel_key,
     persist_admin_channel_key,
     get_admin_site_or_404,
     list_admin_sites_payload,
     admin_site_platform,
+    admin_site_reconcile_mode,
+    admin_site_sync_all_channels,
 )
 from backend.services.channel_match_service import (
     match_channel_upstream_binding,
@@ -71,10 +74,6 @@ from backend.integrations.newapi import (
 from backend.services.admin_site_service import (
     fetch_admin_site_channels,
     fetch_admin_site_groups,
-)
-from backend.services.monitoring_service import (
-    RECONCILE_MODE_DELETE,
-    get_main_site_reconcile_mode,
 )
 from backend.services.platform_detect_service import PlatformDetectService
 
@@ -237,13 +236,23 @@ def _apply_admin_site_channel_reconcile_in_connection(
 
 
 def _normalize_sync_scope(
-    scope: str, selected_channel_ids: Optional[List[Any]]
-) -> Tuple[str, List[int]]:
-    """Validate the per-run sync scope; ValueError maps to a 400 in the router."""
-    scope = str(scope or "all").strip().lower()
+    scope: Optional[str], selected_channel_ids: Optional[List[Any]]
+) -> Tuple[Optional[str], List[int]]:
+    """Validate the per-run sync scope; ValueError maps to a 400 in the router.
+
+    ``None`` 表示未显式选择：由各主站行的 sync_all_channels 决定默认范围。
+    """
+    if scope is None:
+        channel_ids: List[int] = []
+        for raw in selected_channel_ids or []:
+            channel_id = _positive_channel_id(raw)
+            if channel_id is not None:
+                channel_ids.append(channel_id)
+        return None, channel_ids
+    scope = str(scope).strip().lower()
     if scope not in SYNC_SCOPES:
         raise ValueError(f"同步范围无效：{scope}")
-    channel_ids: List[int] = []
+    channel_ids = []
     for raw in selected_channel_ids or []:
         channel_id = _positive_channel_id(raw)
         if channel_id is not None:
@@ -1046,7 +1055,7 @@ def _sync_one_admin_site(
 
 def _run_admin_site_sync(
     admin_site_id: Optional[int] = None,
-    scope: str = "all",
+    scope: Optional[str] = None,
     channel_ids: Optional[List[Any]] = None,
 ) -> List[Dict[str, Any]]:
     scope, selected_channel_ids = _normalize_sync_scope(scope, channel_ids)
@@ -1072,20 +1081,31 @@ def _run_admin_site_sync(
                 "deleted": 0,
             }
         ]
-    mode = get_main_site_reconcile_mode()
     results: List[Dict[str, Any]] = []
     # 多主站并发同步，默认线程池大小为主站数量（上限8），避免串行等每个主站的HTTP
+    # 对账模式一律按主站行配置（admin_sites.reconcile_mode）；范围请求显式指定时
+    # 全局生效，未指定（scope=None）时按主站行 sync_all_channels 决定默认范围
+    def _sync_args(admin: Dict[str, Any]) -> tuple:
+        admin_scope = scope or (
+            "all" if admin_site_sync_all_channels(admin) else "recognized"
+        )
+        admin_selected = selected_channel_ids if admin_scope == "selected" else None
+        return (
+            admin,
+            admin_site_reconcile_mode(admin),
+            admin_scope,
+            admin_selected,
+        )
+
     valid_admins = [a for a in admin_sites if isinstance(a, dict)]
     max_workers = max(1, min(8, len(valid_admins)))
     if max_workers <= 1:
         for admin in valid_admins:
-            results.append(_sync_one_admin_site(admin, mode, scope, selected_channel_ids))
+            results.append(_sync_one_admin_site(*_sync_args(admin)))
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_map = {
-                pool.submit(
-                    _sync_one_admin_site, admin, mode, scope, selected_channel_ids
-                ): int(
+                pool.submit(_sync_one_admin_site, *_sync_args(admin)): int(
                     admin.get("id") or 0
                 )
                 for admin in valid_admins
@@ -1107,8 +1127,6 @@ def _run_admin_site_sync(
     results.append(
         {
             "status": "reconcile",
-            "mode": mode,
-            "scope": scope,
             "channels_changed": any(
                 bool(item.get("channels_changed"))
                 for item in results
@@ -1141,13 +1159,14 @@ def _run_admin_site_sync(
 
 def auto_sync_admin_site_channels_to_sites(
     admin_site_id: Optional[int] = None,
-    scope: str = "all",
+    scope: Optional[str] = None,
     channel_ids: Optional[List[Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Synchronize one selected admin site, or all admin sites for API callers.
 
     ``scope`` picks the per-run import range (all / recognized / selected);
-    ``channel_ids`` is required when scope is "selected".
+    ``channel_ids`` is required when scope is "selected". ``None`` falls back
+    to each admin site's own sync_all_channels config.
     """
     return _run_admin_site_sync(admin_site_id, scope, channel_ids)
 

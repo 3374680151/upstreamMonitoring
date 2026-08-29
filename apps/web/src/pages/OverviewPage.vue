@@ -142,9 +142,7 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
           title="最近变化"
           subtitle="最近 50 条倍率和分组变化，超出部分滚动查看"
         >
-          <div
-            class="priceai-scrollbar h-[430px] min-h-0 min-w-0 overflow-y-auto pr-1 min-[1400px]:h-auto min-[1400px]:flex-1"
-          >
+          <div class="priceai-scrollbar h-[430px] min-h-0 min-w-0 overflow-y-auto pr-1">
             <ChangeTable :changes="recentChanges" :sites="sites" />
           </div>
         </Panel>

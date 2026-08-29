@@ -1424,6 +1424,37 @@ def fetch_sub2api_keys_by_token(
     return True, {"success": True, "data": aggregated}, None
 
 
+def fetch_sub2api_usage_by_token(
+    base_url: str,
+    access_token: str,
+    key_id: Any = None,
+    page_size: int = 5,
+) -> Tuple[bool, Dict[str, Any], Optional[str]]:
+    """读取最近用量记录（按时间倒序）。记录带 api_key_id / group_id /
+    rate_multiplier，是路由型 key「当前实际计费分组」的唯一可靠来源。
+    二开版支持 api_key_id 过滤，单 key 定位只需一页。"""
+    token = (access_token or "").strip()
+    if not token:
+        return False, {}, "auth_token 为空"
+    page_size = max(1, min(200, int(page_size)))
+    query = f"page=1&page_size={int(page_size)}"
+    if key_id is not None:
+        try:
+            query += f"&api_key_id={int(key_id)}"
+        except (TypeError, ValueError):
+            pass
+    ok, payload, error = request_json(
+        f"{normalize_base_url(base_url)}/api/v1/usage?{query}",
+        headers=sub2api_token_headers(token),
+    )
+    if not ok:
+        return False, {"usage": payload}, error or "上游用量请求失败"
+    success, data, message = unwrap_sub2api_response(payload)
+    if not success or not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return False, {"usage": payload}, message or "上游用量响应格式异常"
+    return True, {"success": True, "data": data}, None
+
+
 def fetch_sub2api_channel_monitors_by_token(base_url: str, access_token: str) -> Tuple[bool, Dict[str, Any], Optional[str]]:
     token = (access_token or "").strip()
     if not token:

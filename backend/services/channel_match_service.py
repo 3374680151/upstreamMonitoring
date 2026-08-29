@@ -43,6 +43,7 @@ from backend.integrations.newapi import (
 from backend.integrations.sub2api import (
     classify_sub2api_auth_failure,
     fetch_sub2api_keys,
+    fetch_sub2api_usage_by_token,
     fetch_sub2api_user_groups,
     parse_sub2api_groups,
     sub2api_key_group_name,
@@ -245,6 +246,129 @@ def _cached_newapi_match_groups(
     with NEWAPI_MATCH_GROUPS_LOCK:
         NEWAPI_MATCH_GROUPS_CACHE[cache_key] = result
     return result
+
+
+def resolve_sub2api_key_current_group(
+    base_url: str,
+    access_token: str,
+    key_item: Dict[str, Any],
+    groups: Dict[str, Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """定位路由型 key 的「当前分组」，返回标准 matched_groups 条目；无法
+    定位时返回 None，由调用方退回 key 列表 group 字段的标准解析。
+
+    二开版 sub2api（如 ai98）允许一个 key 配置多个路由分组：key 列表项带
+    routing_groups（带 priority / availability）与 group_selection_mode
+    （balanced/speed/cost/ordered），group 字段只是主分组，实际计费分组
+    随路由动态变化。最近一条用量日志带 api_key_id / group_id /
+    rate_multiplier，是当前实际计费分组的唯一可靠来源；没有用量时退回
+    priority=1 的主分组。普通 sub2api 站点没有 routing_groups，直接返回
+    None，行为不变。
+    """
+    raw_entries = key_item.get("routing_groups")
+    routing_entries = (
+        [item for item in raw_entries if isinstance(item, dict)]
+        if isinstance(raw_entries, list)
+        else []
+    )
+    if len(routing_entries) <= 1:
+        return None
+
+    groups_by_id: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+    for name, info in groups.items():
+        if isinstance(info, dict) and info.get("id") is not None:
+            groups_by_id[str(info.get("id"))] = (name, info)
+
+    current_group_id = ""
+    located_by = ""
+    billed_ratio: Any = None
+    usage_group: Dict[str, Any] = {}
+    key_id_text = str(key_item.get("id") or "")
+    if key_id_text:
+        usage_ok, usage_payload, _usage_error = fetch_sub2api_usage_by_token(
+            base_url, access_token, key_id=int(key_id_text), page_size=1
+        )
+        if usage_ok:
+            items = (usage_payload.get("data") or {}).get("items") or []
+            latest = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict)
+                    and str(item.get("api_key_id") or "") == key_id_text
+                ),
+                None,
+            )
+            if isinstance(latest, dict):
+                group_obj = latest.get("group")
+                usage_group = group_obj if isinstance(group_obj, dict) else {}
+                if latest.get("group_id") is not None:
+                    current_group_id = str(latest.get("group_id"))
+                    located_by = "usage"
+                    billed_ratio = latest.get("rate_multiplier")
+
+    routed_group: Dict[str, Any] = {}
+    if not current_group_id:
+        def _priority(item: Dict[str, Any]) -> int:
+            try:
+                return int(item.get("priority") or 0)
+            except (TypeError, ValueError):
+                return 999
+
+        entry = min(routing_entries, key=_priority)
+        routed_group = (
+            entry.get("group") if isinstance(entry.get("group"), dict) else {}
+        )
+        if entry.get("group_id") is not None:
+            current_group_id = str(entry.get("group_id"))
+            located_by = "routing"
+    if not current_group_id:
+        return None
+
+    name = ""
+    group_info: Dict[str, Any] = {}
+    matched = groups_by_id.get(current_group_id)
+    if matched:
+        name, group_info = matched
+    if not name:
+        name = str((usage_group or routed_group).get("name") or "").strip()
+    if not name:
+        return None
+    group_obj = group_info or usage_group or routed_group
+
+    ratio: Any = None
+    ratio_type = "text"
+    ratio_source = ""
+    if billed_ratio is not None:
+        try:
+            ratio = float(billed_ratio)
+            ratio_type = "number"
+            ratio_source = "usage"
+        except (TypeError, ValueError):
+            ratio = None
+    if ratio is None and group_info.get("ratio") is not None:
+        ratio = group_info.get("ratio")
+        ratio_type = str(group_info.get("ratio_type") or "text")
+    if ratio is None and group_obj.get("rate_multiplier") is not None:
+        try:
+            ratio = float(group_obj.get("rate_multiplier"))
+            ratio_type = "number"
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "name": name,
+        "ratio": ratio,
+        "ratio_type": ratio_type,
+        "desc": str(
+            group_info.get("desc") or group_obj.get("description") or ""
+        ),
+        "available_to_login": name in groups,
+        "located_by": located_by,
+        "ratio_source": ratio_source,
+        "routing_count": len(routing_entries),
+        "selection_mode": str(key_item.get("group_selection_mode") or "").strip(),
+    }
 
 
 def match_channel_upstream_binding(
@@ -553,33 +677,54 @@ def match_channel_upstream_binding(
 
         raw_group = key_match.get("group")
         key_group = raw_group if isinstance(raw_group, dict) else {}
-        key_group_name = sub2api_key_group_name(key_match, groups)
+        # 二开版 sub2api 允许一个 key 配置多个路由分组，列表里的 group 只是
+        # 主分组；先按用量日志/路由配置定位「当前分组」，失败再退标准解析，
+        # 普通 sub2api 站点行为不变。
+        current_group = resolve_sub2api_key_current_group(
+            upstream_base, key_token, key_match, groups
+        )
+        key_group_name = (
+            str(current_group.get("name") or "").strip()
+            if current_group
+            else sub2api_key_group_name(key_match, groups)
+        )
         if not key_group_name:
             message = "sub2api 已找到当前 key，但该 key 没有返回所属分组"
             persist_channel_match(admin_site_id, channel_id, "no_group", message, [])
             return False, {}, message
         group_names = [key_group_name]
         matched_by = "key 精确匹配"
-        matched_groups = [
-            {
-                "name": name,
-                "ratio": (
-                    (groups.get(name) or {}).get("ratio")
-                    if (groups.get(name) or {}).get("ratio") is not None
-                    else (key_group or {}).get("rate_multiplier")
-                ),
-                # /groups/rates 是当前用户实际计费的专属倍率，优先于 key.group
-                # 返回的分组基础倍率；没有专属/可用分组数据时再回退基础倍率。
-                "ratio_type": (
-                    (groups.get(name) or {}).get("ratio_type") or "text"
-                    if (groups.get(name) or {}).get("ratio") is not None
-                    else "number" if (key_group or {}).get("rate_multiplier") is not None else "text"
-                ),
-                "desc": (key_group or {}).get("description") or (groups.get(name) or {}).get("desc") or "",
-                "available_to_login": name in groups,
-            }
-            for name in group_names
-        ]
+        if current_group:
+            matched_groups = [
+                {
+                    "name": key_group_name,
+                    "ratio": current_group.get("ratio"),
+                    "ratio_type": current_group.get("ratio_type") or "text",
+                    "desc": current_group.get("desc") or "",
+                    "available_to_login": bool(current_group.get("available_to_login")),
+                }
+            ]
+        else:
+            matched_groups = [
+                {
+                    "name": name,
+                    "ratio": (
+                        (groups.get(name) or {}).get("ratio")
+                        if (groups.get(name) or {}).get("ratio") is not None
+                        else (key_group or {}).get("rate_multiplier")
+                    ),
+                    # /groups/rates 是当前用户实际计费的专属倍率，优先于 key.group
+                    # 返回的分组基础倍率；没有专属/可用分组数据时再回退基础倍率。
+                    "ratio_type": (
+                        (groups.get(name) or {}).get("ratio_type") or "text"
+                        if (groups.get(name) or {}).get("ratio") is not None
+                        else "number" if (key_group or {}).get("rate_multiplier") is not None else "text"
+                    ),
+                    "desc": (key_group or {}).get("description") or (groups.get(name) or {}).get("desc") or "",
+                    "available_to_login": name in groups,
+                }
+                for name in group_names
+            ]
         status = "matched" if all(item["available_to_login"] for item in matched_groups) else "matched_partial"
         if status == "matched":
             message = f"已按{matched_by}读取 sub2api 分组倍率"
@@ -605,6 +750,22 @@ def match_channel_upstream_binding(
                 f"已按{matched_by}找到分组「{missing_names}」，"
                 f"但该分组已不在上游可见分组目录中，{ratio_hint}"
             )
+        if current_group:
+            routing_count = int(current_group.get("routing_count") or 0)
+            mode_text = (
+                str(current_group.get("selection_mode") or "").strip()
+                or "未知模式"
+            )
+            if current_group.get("located_by") == "usage":
+                message += (
+                    f"；该 key 配置了 {routing_count} 个路由分组（{mode_text}），"
+                    "已按最近一次用量定位当前分组，倍率为实际计费倍率"
+                )
+            else:
+                message += (
+                    f"；该 key 配置了 {routing_count} 个路由分组（{mode_text}），"
+                    "暂无用量记录，按主分组（priority=1）展示"
+                )
     else:
         message = f"暂不支持上游平台：{platform}"
         persist_channel_match(admin_site_id, channel_id, "unsupported", message, [])

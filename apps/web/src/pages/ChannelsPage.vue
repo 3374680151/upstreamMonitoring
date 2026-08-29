@@ -20,7 +20,6 @@ import { explainUpstreamError } from "@/lib/upstreamError";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
 import { useConsoleData } from "@/composables/useConsoleData";
-import { useReconcileMode, type ReconcileMode } from "@/composables/useReconcileMode";
 import type {
   AdminSite,
   Channel,
@@ -137,8 +136,6 @@ function bindingFailure(binding?: ChannelUpstreamBinding): { summary: string; ra
 }
 
 // ---- composables ----
-const enabled = ref(true);
-const { reconcileMode, handleReconcileModeChange } = useReconcileMode(enabled);
 const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
 // 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
@@ -1037,10 +1034,6 @@ async function onSiteIdChange(v: string) {
   siteId.value = Number(v);
 }
 
-function onReconcileModeChange(v: string) {
-  handleReconcileModeChange(v as ReconcileMode);
-}
-
 function toggleSelectChannel(channel: Channel) {
   const isSelected = selectedChannelId.value === channel.id;
   selectedChannelId.value = isSelected ? null : channel.id;
@@ -1164,19 +1157,6 @@ watch(
               }}<span v-if="site.platform === 'sub2api' && !site.has_login_password"> · 未配置管理员密码</span><span v-else-if="!site.has_access_token"> · 未配置令牌</span>
             </option>
           </Select>
-          <label class="flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
-            <span>消失渠道</span>
-            <Select
-              class="w-[4.5rem]"
-              :model-value="reconcileMode"
-              @update:model-value="onReconcileModeChange"
-              aria-label="上游消失渠道的处理方式"
-              title="主站同步时，上游已消失的监控渠道如何处理"
-            >
-              <option value="disable">停用</option>
-              <option value="delete">删除</option>
-            </Select>
-          </label>
           <Button
             variant="secondary"
             aria-label="同步主站渠道"

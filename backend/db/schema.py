@@ -179,6 +179,9 @@ DDL_STATEMENTS = [
         key_sync_last_error TEXT,
         key_sync_backoff_until VARCHAR(40),
         key_sync_failure_count INT NOT NULL DEFAULT 0,
+        sync_all_channels TINYINT NOT NULL DEFAULT 1,
+        reconcile_mode VARCHAR(32) NOT NULL DEFAULT 'disable',
+        retention_days INT NOT NULL DEFAULT 7,
         created_at VARCHAR(40) NOT NULL,
         updated_at VARCHAR(40) NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -368,6 +371,9 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
     "key_sync_last_error": "TEXT",
     "key_sync_backoff_until": "VARCHAR(40)",
     "key_sync_failure_count": "INT NOT NULL DEFAULT 0",
+    "sync_all_channels": "TINYINT NOT NULL DEFAULT 1",
+    "reconcile_mode": "VARCHAR(32) NOT NULL DEFAULT 'disable'",
+    "retention_days": "INT NOT NULL DEFAULT 7",
 }
 
 
@@ -376,6 +382,8 @@ SUB2API_BROWSER_FIRST_MIGRATION = "2026-08-02-sub2api-browser-first"
 NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION = (
     "2026-08-28-newapi-system-token-fallback-default"
 )
+
+ADMIN_SITE_SYNC_CONFIG_MIGRATION = "2026-08-29-admin-site-sync-config-per-site"
 
 
 def migrate_sub2api_sites_to_browser_first(cursor: Any) -> None:
@@ -438,6 +446,52 @@ def run_newapi_system_token_fallback_migration_once(cursor: Any) -> bool:
     return True
 
 
+def run_admin_site_sync_config_migration_once(cursor: Any) -> bool:
+    """把全局主站同步配置迁移为按主站行配置（一次性）。
+
+    用户决策（2026-08）：同步范围 / 消失渠道处理改为每个主站在编辑弹窗里
+    自己选择；存量主站写入当时的全局 app_settings 值，行为不变。
+    快照/变化保留天数对存量主站一次性设为 0（永久保留），避免升级即清理
+    历史数据；新建主站默认 7 天。
+    """
+    cursor.execute(
+        "SELECT name FROM app_schema_migrations WHERE name = %s",
+        (ADMIN_SITE_SYNC_CONFIG_MIGRATION,),
+    )
+    if cursor.fetchone():
+        return False
+    cursor.execute(
+        "SELECT value FROM app_settings WHERE name = 'main_site_sync_all'"
+    )
+    row = cursor.fetchone()
+    sync_all = str((row or {}).get("value") or "1").strip().lower() not in {
+        "0",
+        "false",
+        "off",
+    }
+    cursor.execute(
+        "SELECT value FROM app_settings WHERE name = 'main_site_reconcile_mode'"
+    )
+    row = cursor.fetchone()
+    reconcile_mode = str((row or {}).get("value") or "disable").strip().lower()
+    if reconcile_mode not in ("disable", "delete"):
+        reconcile_mode = "disable"
+    cursor.execute(
+        """
+        UPDATE admin_sites
+        SET sync_all_channels = %s,
+            reconcile_mode = %s,
+            retention_days = 0
+        """,
+        (1 if sync_all else 0, reconcile_mode),
+    )
+    cursor.execute(
+        "INSERT INTO app_schema_migrations (name, applied_at) VALUES (%s, %s)",
+        (ADMIN_SITE_SYNC_CONFIG_MIGRATION, utc_now_iso()),
+    )
+    return True
+
+
 def init_db() -> None:
     with DB_LOCK:
         conn = connect_db()
@@ -465,6 +519,7 @@ def init_db() -> None:
 
                 run_sub2api_browser_first_migration_once(cur)
                 run_newapi_system_token_fallback_migration_once(cur)
+                run_admin_site_sync_config_migration_once(cur)
 
                 # 说明：这里曾有一段把 newapi + browser 行强制归一化为 token
                 # 的启动期 UPDATE，那是 NewAPI 浏览器登录态同步落地前的过渡

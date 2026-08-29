@@ -12,6 +12,7 @@ from backend.core.state import STOP_EVENT
 from backend.core.time import app_now, next_check_iso, utc_now_iso
 from backend.db.connection import db_execute, db_query_all
 from backend.services.monitoring_service import detect_site
+from backend.services.retention_service import pruneExpiredMonitoringData
 from backend.services.sync_service import run_due_admin_key_syncs
 
 
@@ -94,6 +95,14 @@ class SchedulerWorker:
             seconds=SCAN_INTERVAL_SECONDS,
             id="upstream-due-scan",
             # 立即先跑一轮，保持与旧线程实现一致的启动行为。
+            next_run_time=datetime.now(tz=timezone.utc),
+        )
+        # 快照/变化保留清理：按各主站的 retention_days 每天清一次（0 = 永久）。
+        self._scheduler.add_job(
+            pruneExpiredMonitoringData,
+            "interval",
+            hours=24,
+            id="monitoring-retention-prune",
             next_run_time=datetime.now(tz=timezone.utc),
         )
         self._scheduler.start()

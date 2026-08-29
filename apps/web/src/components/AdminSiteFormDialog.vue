@@ -24,6 +24,9 @@ const empty: AdminSiteFormPayload = {
   login_password: "",
   key_sync_enabled: false,
   key_sync_interval_minutes: 5,
+  sync_all_channels: true,
+  reconcile_mode: "disable",
+  retention_days: 7,
 };
 
 function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
@@ -37,6 +40,9 @@ function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
     login_password: form.login_password,
     key_sync_enabled: form.platform === "newapi" && form.key_sync_enabled,
     key_sync_interval_minutes: Math.max(5, Math.min(1440, Number(form.key_sync_interval_minutes) || 5)),
+    sync_all_channels: form.sync_all_channels,
+    reconcile_mode: form.reconcile_mode,
+    retention_days: Math.max(0, Math.min(3650, Number(form.retention_days) || 0)),
   };
 }
 
@@ -65,6 +71,9 @@ watch(
           login_password: "",
           key_sync_enabled: !!props.site.key_sync_enabled,
           key_sync_interval_minutes: props.site.key_sync_interval_minutes || 5,
+          sync_all_channels: props.site.sync_all_channels !== false,
+          reconcile_mode: props.site.reconcile_mode === "delete" ? "delete" : "disable",
+          retention_days: Math.max(0, Math.min(3650, Number(props.site.retention_days ?? 7) || 0)),
         }
       : { ...empty };
   },
@@ -117,6 +126,21 @@ function onPlatformChange(value: string) {
 const keySyncIntervalModel = computed<string>({
   get: () => String(form.value.key_sync_interval_minutes),
   set: (v: string) => set("key_sync_interval_minutes", Number(v)),
+});
+
+const syncAllChannelsModel = computed<string>({
+  get: () => (form.value.sync_all_channels ? "all" : "recognized"),
+  set: (v: string) => set("sync_all_channels", v === "all"),
+});
+
+const reconcileModeModel = computed<string>({
+  get: () => form.value.reconcile_mode,
+  set: (v: string) => set("reconcile_mode", v === "delete" ? "delete" : "disable"),
+});
+
+const retentionDaysModel = computed<string>({
+  get: () => String(form.value.retention_days),
+  set: (v: string) => set("retention_days", Number(v)),
 });
 
 function validateCredentials(payload: AdminSiteFormPayload): string {
@@ -263,6 +287,37 @@ async function save() {
         <div v-else-if="site?.login_last_error" class="text-[12.5px] text-danger-fg sm:col-span-2">
           最近登录失败：{{ site.login_last_error }}
         </div>
+      </div>
+
+      <div class="flex flex-col gap-3 border-t border-line-soft pt-4">
+        <span class="text-[12.5px] font-semibold text-ink-strong">同步与数据</span>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <Field label="同步范围" help="主站同步导入哪些渠道">
+            <Select v-model="syncAllChannelsModel">
+              <option value="all">全部渠道</option>
+              <option value="recognized">仅识别平台</option>
+            </Select>
+          </Field>
+          <Field label="消失渠道处理" help="对账发现上游渠道已消失时">
+            <Select v-model="reconcileModeModel">
+              <option value="disable">停用</option>
+              <option value="delete">删除</option>
+            </Select>
+          </Field>
+          <Field label="快照保留" help="该主站底下监控站点的快照与变化记录">
+            <Select v-model="retentionDaysModel">
+              <option value="7">保留 7 天</option>
+              <option value="14">保留 14 天</option>
+              <option value="30">保留 30 天</option>
+              <option value="90">保留 90 天</option>
+              <option value="365">保留 365 天</option>
+              <option value="0">永久保留</option>
+            </Select>
+          </Field>
+        </div>
+        <p class="text-[12px] leading-relaxed text-ink-muted">
+          仅对本主站同步导入的监控站点生效；「删除」会连带删除该渠道的监控站点及全部快照与变化记录，请谨慎选择。
+        </p>
       </div>
 
       <div class="flex flex-wrap gap-2 border-t border-line-soft pt-4">

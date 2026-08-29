@@ -5,7 +5,6 @@
  *   authApi          ← backend/api/routers/auth.py
  *   monitoringApi    ← backend/api/routers/monitoring.py
  *   notificationsApi ← backend/api/routers/notifications.py
- *   settingsApi      ← backend/api/routers/settings.py
  *   sessionSyncApi   ← backend/api/routers/session_sync.py
  *   adminSitesApi    ← backend/api/routers/admin_sites.py
  *
@@ -16,7 +15,6 @@
 import { authApi } from "./auth";
 import { monitoringApi } from "./monitoring";
 import { notificationsApi } from "./notifications";
-import { settingsApi } from "./settings";
 import { sessionSyncApi } from "./sessionSync";
 import { adminSitesApi } from "./adminSites";
 
@@ -26,7 +24,6 @@ export const api = {
   ...authApi,
   ...monitoringApi,
   ...notificationsApi,
-  ...settingsApi,
   ...sessionSyncApi,
   ...adminSitesApi,
 };

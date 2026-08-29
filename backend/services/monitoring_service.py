@@ -91,14 +91,6 @@ from backend.repositories.sites import (
 )
 from backend.services.notification_service import notify_changes
 
-# Reconcile-mode constants (mirrored from legacy_runtime to avoid a
-# top-level ``from backend.legacy_runtime import`` that would create a
-# circular import when legacy_runtime resolves this module lazily).
-RECONCILE_MODE_DISABLE = "disable"
-RECONCILE_MODE_DELETE = "delete"
-RECONCILE_MODES = {RECONCILE_MODE_DISABLE, RECONCILE_MODE_DELETE}
-SETTING_RECONCILE_MODE = "main_site_reconcile_mode"
-
 from backend.services.session_sync_service import mark_site_browser_session_expired
 from backend.integrations.http import (
     _upstream_response_details,
@@ -143,43 +135,6 @@ def site_failure_kind(payload: Any, error_message: Optional[str]) -> Optional[st
     if any(marker in text for marker in _NETWORK_ERROR_MARKERS):
         return "network"
     return None
-
-
-# ---------------------------------------------------------------------------
-# App settings
-# ---------------------------------------------------------------------------
-
-def get_app_setting(name: str, default: str = "") -> str:
-    try:
-        row = db_query_one("SELECT value FROM app_settings WHERE name = ?", (name,))
-    except Exception:
-        return default
-    if not isinstance(row, dict):
-        return default
-    value = row.get("value")
-    return str(value) if value is not None else default
-
-
-def set_app_setting(name: str, value: str) -> None:
-    db_execute(
-        "INSERT INTO app_settings (name, value, updated_at) VALUES (?, ?, ?) "
-        "ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)",
-        (name, value, utc_now_iso()),
-    )
-
-
-def get_main_site_reconcile_mode() -> str:
-    """User-selected handling for monitoring sites whose upstream channel vanished.
-
-    ``disable`` (default) flips them to enabled=0 and keeps their history;
-    ``delete`` physically removes the site (cascading snapshots + changes).
-    """
-    mode = (
-        get_app_setting(SETTING_RECONCILE_MODE, RECONCILE_MODE_DISABLE)
-        .strip()
-        .lower()
-    )
-    return mode if mode in RECONCILE_MODES else RECONCILE_MODE_DISABLE
 
 
 # ---------------------------------------------------------------------------

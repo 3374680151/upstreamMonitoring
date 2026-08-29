@@ -252,6 +252,8 @@ function loadGroupOrder(): string[] {
   }
 }
 
+// 拖拽期间原卡片保留在原位（半透明），占位卡跟随指针指示落点。
+// 注意不能把拖拽源从列表移除——源元素离开 DOM 会直接取消原生拖拽。
 const customGroupOrder = ref<string[]>(loadGroupOrder());
 const dragGroupName = ref<string | null>(null);
 const dragInsertIndex = ref<number | null>(null);
@@ -277,13 +279,6 @@ const groupRows = computed(() => {
   return [...ordered, ...defaults.filter((name) => !ordered.includes(name))];
 });
 
-// 拖拽期间原卡片从列表移除，由等高占位卡指示落点，松手落在占位卡位置
-const dragListRows = computed(() =>
-  dragGroupName.value
-    ? groupRows.value.filter((name) => name !== dragGroupName.value)
-    : groupRows.value,
-);
-
 function clearGroupDragState() {
   dragGroupName.value = null;
   dragInsertIndex.value = null;
@@ -291,7 +286,6 @@ function clearGroupDragState() {
 
 function onGroupDragStart(name: string, event: DragEvent) {
   dragGroupName.value = name;
-  dragInsertIndex.value = groupRows.value.indexOf(name);
   dragPlaceholderHeight.value =
     event.currentTarget instanceof HTMLElement
       ? event.currentTarget.offsetHeight
@@ -333,13 +327,12 @@ function onGroupListDrop() {
   const index = dragInsertIndex.value;
   clearGroupDragState();
   if (!dragged || index == null) return;
-  const visible = groupRows.value.filter((name) => name !== dragged);
-  if (index > visible.length) return;
-  customGroupOrder.value = [
-    ...visible.slice(0, index),
-    dragged,
-    ...visible.slice(index),
-  ];
+  const current = [...groupRows.value];
+  const from = current.indexOf(dragged);
+  if (from < 0) return;
+  current.splice(from, 1);
+  current.splice(index > from ? index - 1 : index, 0, dragged);
+  customGroupOrder.value = current;
 }
 
 const visibleChannels = computed(() => {
@@ -1439,7 +1432,7 @@ watch(
               {{ channels.length }}
             </span>
           </button>
-          <template v-for="(name, index) in dragListRows" :key="name">
+          <template v-for="(name, index) in groupRows" :key="name">
             <div
               v-if="dragGroupName && dragInsertIndex === index"
               class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
@@ -1454,6 +1447,7 @@ watch(
                 groupFilter === name
                   ? 'border-[var(--color-accent)] bg-sunken'
                   : 'border-line hover:bg-sunken-hover',
+                dragGroupName === name ? 'opacity-40' : '',
               ]"
               @dragstart="onGroupDragStart(name, $event)"
               @dragend="clearGroupDragState"
@@ -1481,7 +1475,7 @@ watch(
           </button>
           </template>
           <div
-            v-if="dragGroupName && dragInsertIndex !== null && dragInsertIndex >= dragListRows.length"
+            v-if="dragGroupName && dragInsertIndex !== null && dragInsertIndex >= groupRows.length"
             class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
             :style="{ height: `${dragPlaceholderHeight}px` }"
             aria-hidden="true"

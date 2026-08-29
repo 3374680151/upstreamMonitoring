@@ -100,7 +100,7 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
     <div
       class="grid min-w-0 gap-6 min-[1400px]:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]"
     >
-      <div class="min-w-0">
+      <div class="min-w-0 h-[528px] min-[1400px]:h-[560px]">
         <Panel
           class="flex h-full min-w-0 flex-col"
           title="渠道概览"
@@ -119,7 +119,7 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
             </label>
           </template>
 
-          <div class="priceai-scrollbar h-[430px] min-h-0 overflow-y-auto pr-1">
+          <div class="priceai-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
             <SiteTable
               :sites="overviewSites"
               :selected-id="selectedId"
@@ -136,13 +136,13 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
         </Panel>
       </div>
 
-      <div class="min-w-0">
+      <div class="min-w-0 h-[528px] min-[1400px]:h-[560px]">
         <Panel
           class="flex h-full min-w-0 flex-col"
           title="最近变化"
           subtitle="最近 50 条倍率和分组变化，超出部分滚动查看"
         >
-          <div class="priceai-scrollbar h-[430px] min-h-0 min-w-0 overflow-y-auto pr-1">
+          <div class="priceai-scrollbar min-h-0 flex-1 overflow-y-auto pr-1">
             <ChangeTable :changes="recentChanges" :sites="sites" />
           </div>
         </Panel>

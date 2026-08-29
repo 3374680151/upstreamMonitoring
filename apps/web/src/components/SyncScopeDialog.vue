@@ -15,6 +15,8 @@ interface Props {
   siteLabel?: string;
   candidatesLoading?: boolean;
   candidates?: ChannelDiscoveryCandidate[];
+  /** 主站行配置的默认范围（sync_all_channels），打开弹窗时预选 */
+  defaultScope?: "all" | "recognized";
 }
 const props = defineProps<Props>();
 const emit = defineEmits<{
@@ -29,7 +31,7 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
-      scopeChoice.value = "all";
+      scopeChoice.value = props.defaultScope || "all";
       checkedUrls.value = new Set();
     }
   },

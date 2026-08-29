@@ -1620,6 +1620,7 @@ watch(
           ? `${currentAdminSite.platform_label || 'NewAPI'} · ${currentAdminSite.name}`
           : ''
       "
+      :default-scope="currentAdminSite?.sync_all_channels === false ? 'recognized' : 'all'"
       :candidates-loading="syncCandidatesLoading"
       :candidates="syncCandidates"
       @close="syncDialogOpen = false"

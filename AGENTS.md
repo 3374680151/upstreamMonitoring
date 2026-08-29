@@ -53,15 +53,15 @@
 
 ## 接口设计与 Apifox 同步（强制）
 
-Apifox 项目（project id `8772928`）是**接口契约的唯一事实来源**；仓库根目录 `openapi.apifox.json` 是与云端保持一致的规范基线（含全部接口的参数说明、请求体 schema、分组与鉴权标注）。
+Apifox 项目（project id `8772928`）是**接口契约的唯一事实来源**，仓库内**不保留**规范文件；两台电脑靠同账号云端多端同步，无需其他同步机制。
 
 1. **接功能先分流**：只动业务逻辑、不涉及接口契约（routers / schemas / `lib/api/<domain>.ts` 无变化）→ 直接按业务流程规划并实现；涉及接口新增 / 修改 / 删除 → **先设计接口，经用户确认后才允许实现**。
 2. **设计输出双通道**：
    - 对话里给出设计要点：路径 / 方法 / 参数 / 响应 / 错误码，以及涉及的数据库表结构变更（`db/migrations.py` 层面）；
-   - 同步更新 `openapi.apifox.json` 对应接口定义，并调用 Apifox Open API 推送云端：`POST https://api.apifox.com/v1/projects/8772928/import-openapi`，Header 带 `Authorization: Bearer $APIFOX_ACCESS_TOKEN` + `X-Apifox-Api-Version: 2024-03-28`，`endpointOverwriteBehavior=OVERWRITE_EXISTING`。推送完成提醒用户「去 Apifox 查看」。
+   - 调用 Apifox Open API **增量推送**本次设计的接口到云端：`POST https://api.apifox.com/v1/projects/8772928/import-openapi`，Header 带 `Authorization: Bearer $APIFOX_ACCESS_TOKEN` + `X-Apifox-Api-Version: 2024-03-28`；spec 只包含本次新增 / 修改的接口，`endpointOverwriteBehavior=OVERWRITE_EXISTING` 只覆盖同名接口、不影响其他接口。推送完成提醒用户「去 Apifox 查看」。
 3. **确认门槛**：用户在 Apifox 审阅并明确同意之前，禁止写 schemas / routers / 前端 API 层代码。极小改动经用户同意可只在对话里确认、推送延后。
-4. **实现以契约为准**：用户同意后，用 Apifox MCP 读取最终定义核对字段，再实现后端（routers + schemas + migrations）与前端（`lib/api` + `lib/types.ts` + 页面）；完成后从代码 `app.openapi()` 生成结果与基线比对，做一致性核对，防止实现跑偏。
-5. **删除接口**：设计确认后同步删基线与云端（云端用 `deleteUnmatchedResources=true` 单独跑一次），代码随实现删除；日常推送**不要**开 `deleteUnmatchedResources`，避免未合入分支的实验性删除污染云端。
+4. **实现以契约为准**：用户同意后，用 Apifox MCP 读取云端最终定义核对字段，再实现后端（routers + schemas + migrations）与前端（`lib/api` + `lib/types.ts` + 页面）；完成后从代码 `app.openapi()` 生成规范与云端导出比对做一致性核对（临时生成、不落库），防止实现跑偏。
+5. **删除接口**：设计确认后用 `deleteUnmatchedResources=true` 单独跑一次清理式推送；日常增量推送**不要**开它，避免误删云端其他接口。
 6. **凭据纪律**：`APIFOX_ACCESS_TOKEN` 只放各机器本地 `.env`（或 ZCode MCP 配置），不进 git；两台电脑用同账号令牌，Apifox 云端自动多端同步，无需其他同步机制。
 
 ---
@@ -288,7 +288,6 @@ upstream/
 ├── design/                      # PriceAI 风格调研（历史归档）
 ├── tests/                       # 已有测试（默认不再新增）
 ├── AGENTS.md                    # 本文件（全仓库唯一权威规范）
-├── openapi.apifox.json          # 接口规范基线（与 Apifox 云端同步，见「接口设计与 Apifox 同步」）
 ├── README.md
 ├── requirements.txt
 ├── Dockerfile

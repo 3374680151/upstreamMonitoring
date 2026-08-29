@@ -237,14 +237,103 @@ const groupChannelCount = computed(() => {
   return count;
 });
 
-const groupRows = computed(() => {
-  if (allowedGroupNames.value) return Array.from(allowedGroupNames.value).sort();
-  const names = new Set<string>([
-    ...Object.keys(groups.value),
-    ...Object.keys(groupChannelCount.value),
-  ]);
-  return Array.from(names).sort();
+// 分组视角的自定义排序：拖拽侧栏卡片调整顺序，localStorage 持久化；
+// 顺序只约束当前仍存在的分组，新增分组按默认字母序追加，不丢项。
+const GROUP_ORDER_STORAGE_KEY = "upstream.group_view_order";
+
+function loadGroupOrder(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(GROUP_ORDER_STORAGE_KEY) || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+// 拖拽期间原卡片保留在原位（半透明），占位卡跟随指针指示落点。
+// 注意不能把拖拽源从列表移除——源元素离开 DOM 会直接取消原生拖拽。
+const customGroupOrder = ref<string[]>(loadGroupOrder());
+const dragGroupName = ref<string | null>(null);
+const dragInsertIndex = ref<number | null>(null);
+const dragPlaceholderHeight = ref(96);
+
+watch(customGroupOrder, (order) => {
+  try {
+    localStorage.setItem(GROUP_ORDER_STORAGE_KEY, JSON.stringify(order));
+  } catch {
+    // localStorage 不可用（隐私模式等）时静默降级，顺序仅本次会话生效
+  }
 });
+
+const groupRows = computed(() => {
+  const names = allowedGroupNames.value
+    ? new Set<string>(allowedGroupNames.value)
+    : new Set<string>([
+        ...Object.keys(groups.value),
+        ...Object.keys(groupChannelCount.value),
+      ]);
+  const defaults = Array.from(names).sort();
+  const ordered = customGroupOrder.value.filter((name) => names.has(name));
+  return [...ordered, ...defaults.filter((name) => !ordered.includes(name))];
+});
+
+function clearGroupDragState() {
+  dragGroupName.value = null;
+  dragInsertIndex.value = null;
+}
+
+function onGroupDragStart(name: string, event: DragEvent) {
+  dragGroupName.value = name;
+  dragPlaceholderHeight.value =
+    event.currentTarget instanceof HTMLElement
+      ? event.currentTarget.offsetHeight
+      : 96;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", name);
+  }
+}
+
+function onGroupListDragOver(event: DragEvent) {
+  if (!dragGroupName.value) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  const container = event.currentTarget as HTMLElement;
+  const cards = Array.from(
+    container.querySelectorAll<HTMLElement>("[data-group-card]"),
+  );
+  let index = cards.length;
+  for (let i = 0; i < cards.length; i += 1) {
+    const rect = cards[i].getBoundingClientRect();
+    if (event.clientY < rect.top + rect.height / 2) {
+      index = i;
+      break;
+    }
+  }
+  dragInsertIndex.value = index;
+}
+
+function onGroupListDragLeave(event: DragEvent) {
+  const container = event.currentTarget as HTMLElement;
+  if (!container.contains(event.relatedTarget as Node | null)) {
+    dragInsertIndex.value = null;
+  }
+}
+
+function onGroupListDrop() {
+  const dragged = dragGroupName.value;
+  const index = dragInsertIndex.value;
+  clearGroupDragState();
+  if (!dragged || index == null) return;
+  const current = [...groupRows.value];
+  const from = current.indexOf(dragged);
+  if (from < 0) return;
+  current.splice(from, 1);
+  current.splice(index > from ? index - 1 : index, 0, dragged);
+  customGroupOrder.value = current;
+}
 
 const visibleChannels = computed(() => {
   if (!groupFilter.value) return channels.value;
@@ -1321,6 +1410,12 @@ watch(
               清除
             </button>
           </div>
+          <div
+            class="priceai-scrollbar space-y-2 lg:max-h-[calc(100vh-19.5rem)] lg:overflow-y-auto"
+            @dragover="onGroupListDragOver"
+            @dragleave="onGroupListDragLeave"
+            @drop="onGroupListDrop"
+          >
           <button
             :class="[
               'w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left text-sm transition',
@@ -1337,17 +1432,27 @@ watch(
               {{ channels.length }}
             </span>
           </button>
-          <button
-            v-for="name in groupRows"
-            :key="name"
-            :class="[
-              'w-full rounded-[var(--radius-sm)] border px-3 py-2 text-left transition',
-              groupFilter === name
-                ? 'border-[var(--color-accent)] bg-sunken'
-                : 'border-line hover:bg-sunken-hover',
-            ]"
-            @click="groupFilter = groupFilter === name ? null : name"
-          >
+          <template v-for="(name, index) in groupRows" :key="name">
+            <div
+              v-if="dragGroupName && dragInsertIndex === index"
+              class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
+              :style="{ height: `${dragPlaceholderHeight}px` }"
+              aria-hidden="true"
+            />
+            <button
+              draggable="true"
+              data-group-card
+              :class="[
+                'w-full cursor-grab rounded-[var(--radius-sm)] border px-3 py-2 text-left transition active:cursor-grabbing',
+                groupFilter === name
+                  ? 'border-[var(--color-accent)] bg-sunken'
+                  : 'border-line hover:bg-sunken-hover',
+                dragGroupName === name ? 'opacity-40' : '',
+              ]"
+              @dragstart="onGroupDragStart(name, $event)"
+              @dragend="clearGroupDragState"
+              @click="groupFilter = groupFilter === name ? null : name"
+            >
             <div class="flex items-center justify-between gap-2">
               <span class="truncate font-semibold text-ink-strong">
                 {{ name }}
@@ -1368,6 +1473,14 @@ watch(
               {{ groups[name].desc }}
             </div>
           </button>
+          </template>
+          <div
+            v-if="dragGroupName && dragInsertIndex !== null && dragInsertIndex >= groupRows.length"
+            class="rounded-[var(--radius-sm)] border border-dashed border-[var(--color-accent)] bg-sunken"
+            :style="{ height: `${dragPlaceholderHeight}px` }"
+            aria-hidden="true"
+          />
+          </div>
         </aside>
 
         <!-- 渠道主区域 -->
@@ -1404,7 +1517,7 @@ watch(
               </colgroup>
               <thead class="sticky top-0 z-10 bg-panel">
                 <tr class="border-b border-line-soft text-[12.5px] font-semibold text-ink-muted">
-                  <th class="pb-2">渠道</th>
+                  <th class="pl-3 pb-2">渠道</th>
                   <th class="pb-2">分组</th>
                   <th class="pb-2">当前 key 上游倍率</th>
                   <th class="pb-2">权重</th>
@@ -1422,7 +1535,7 @@ watch(
                     row.isSelected ? 'bg-sunken' : '',
                   ]"
                 >
-                  <td class="max-w-0 py-3 pr-3">
+                  <td class="max-w-0 py-3 pl-3 pr-3">
                     <button
                       class="max-w-full text-left"
                       @click="toggleSelectChannel(row.channel)"
@@ -1511,7 +1624,7 @@ watch(
                       {{ row.meta.label }}
                     </Badge>
                   </td>
-                  <td class="py-3">
+                  <td class="py-3 pr-3">
                     <div class="flex flex-nowrap items-center gap-1.5">
                       <Button
                         variant="secondary"

@@ -9,12 +9,15 @@ import {
   type LoginAssistPhase,
 } from "@/composables/useLoginAssistSync";
 
-const PHASE_BADGE: Record<LoginAssistPhase, { tone: "info" | "warning" | "success" | "danger"; text: string }> = {
-  probing: { tone: "info", text: "正在探测登录态" },
+const PHASE_BADGE: Record<
+  LoginAssistPhase,
+  { tone: "info" | "warning" | "success" | "danger"; text: string }
+> = {
+  probing: { tone: "info", text: "正在同步登录态" },
   opening: { tone: "info", text: "正在打开站点页" },
-  waiting: { tone: "warning", text: "等待登录" },
+  waiting: { tone: "warning", text: "等待登录完成" },
   success: { tone: "success", text: "登录态已同步" },
-  stopped: { tone: "danger", text: "已停止" },
+  stopped: { tone: "danger", text: "需要处理" },
 };
 
 const badge = computed(() => PHASE_BADGE[loginAssistState.phase]);
@@ -30,13 +33,13 @@ const bodyText = computed(() => {
     case "opening":
       return "正在为你打开站点页面，请在其中完成登录。";
     case "waiting":
-      return "已在浏览器打开站点页，请在其中完成登录。登录后回到本页点「我已登录完成」立即获取；不点击也会每几秒自动探测。";
+      return "已在浏览器打开站点页，请在其中完成登录；登录完成后回到本页点「我已登录完成」，我会立即同步并保留登录态。";
     case "probing":
-      return "正在读取站点登录态，稍候…";
+      return "正在读取站点登录态，请稍候…";
     case "success":
       return "已拿到最新登录态并保存，弹窗将自动关闭。";
     case "stopped":
-      return loginAssistState.hint || "登录引导已停止。";
+      return loginAssistState.hint || "同步遇到问题，请按指引处理后点「重试」。";
   }
   return "";
 });
@@ -59,7 +62,7 @@ const bodyText = computed(() => {
       </div>
       <p class="text-[13px] leading-relaxed text-ink">{{ bodyText }}</p>
       <p
-        v-if="loginAssistState.hint && loginAssistState.phase !== 'stopped'"
+        v-if="loginAssistState.hint && loginAssistState.phase === 'waiting'"
         class="text-[12px] leading-relaxed text-ink-muted"
       >
         {{ loginAssistState.hint }}
@@ -78,16 +81,11 @@ const bodyText = computed(() => {
       </p>
     </div>
     <div class="mt-5 flex items-center justify-end gap-2">
-      <Button variant="ghost" :disabled="false" @click="cancelLoginAssist">
+      <Button variant="ghost" @click="cancelLoginAssist">
         {{ stopped ? "关闭" : "取消" }}
       </Button>
-      <Button
-        v-if="!stopped"
-        variant="brand"
-        :loading="busy"
-        @click="retryLoginAssistNow"
-      >
-        我已登录完成
+      <Button variant="brand" :loading="busy" @click="retryLoginAssistNow">
+        {{ stopped ? "重试" : "我已登录完成" }}
       </Button>
     </div>
   </Modal>

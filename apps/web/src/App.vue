@@ -15,7 +15,11 @@ import { useConsoleData } from "@/composables/useConsoleData";
 import { useAutoSessionResync } from "@/composables/useAutoSessionResync";
 import { useReconcileMode } from "@/composables/useReconcileMode";
 import { provideAppActions } from "@/composables/useAppActions";
-import { syncWithLoginAssist } from "@/composables/useLoginAssistSync";
+import {
+  syncWithLoginAssist,
+  onLoginAssistSettled,
+  loginAssistState,
+} from "@/composables/useLoginAssistSync";
 import { api } from "@/lib/api";
 import { syncSiteBrowserSession } from "@/lib/browserSessionBridge";
 import type { Site } from "@/lib/types";
@@ -114,9 +118,11 @@ async function handleCheck(site: Site): Promise<void> {
 
 async function handleSessionSync(site: Site): Promise<void> {
   try {
-    // 无登录态时自动打开站点页引导登录，登录后自动探测接管
+    // 无登录态时弹窗引导：打开站点页，用户登录后点「我已登录完成」手动继续
     const result = await syncWithLoginAssist(site);
     await refresh();
+    // 弹窗仍在引导时不要额外提示，最终结果由 onLoginAssistSettled 在关闭时统一反馈
+    if (loginAssistState.open) return;
     if (result.status === "ready") {
       toast.success(`渠道「${site.name}」登录态已同步`);
       return;
@@ -126,6 +132,20 @@ async function handleSessionSync(site: Site): Promise<void> {
     toast.error(errorText(err, "登录态同步失败"));
   }
 }
+
+// 登录引导弹窗关闭（成功 / 取消）时的统一反馈
+onLoginAssistSettled(async (result, site) => {
+  try {
+    await refresh();
+  } catch {
+    // 刷新失败不掩盖弹窗结果
+  }
+  if (result.status === "ready") {
+    toast.success(`渠道「${site?.name ?? ""}」登录态已同步`);
+    return;
+  }
+  toast.info(result.message || result.error_code || "登录态同步未完成");
+});
 
 async function confirmDelete(): Promise<void> {
   if (!deleteTarget.value) return;

@@ -1,18 +1,23 @@
 /**
- * 登录态同步 + 登录引导。
+ * 登录态同步 + 登录引导（完全手动驱动）。
  *
- * 点击同步后若上游没有登录态（no_session），不再只提示「请提前登录」：
- * 1. 让扩展前台打开站点首页（旧扩展回退 window.open，最终兜底为弹窗内手动链接）；
- * 2. 弹窗进入等待状态，期间每 6 秒自动重跑一次 session-sync；
- * 3. 用户在站点页完成登录后，下一次探测即可拿到登录态并由后端落库保留；
- * 4. 权限缺失 / 扩展断开时提前结束，超时（默认 5 分钟）或取消时放弃。
+ * 点击行内「同步」后弹窗接管：
+ * 1. 第一次探测是用户点「同步」触发的；若没有登录态（no_session），
+ *    让扩展前台打开站点首页（旧扩展回退 window.open，兜底为弹窗内手动链接），
+ *    弹窗进入等待，不做任何自动重试；
+ * 2. 用户在站点页登录完成后，回本页点「我已登录完成」才再探测一次；
+ *    成功则落库保留并关闭弹窗，仍无登录态则提示后再等下一次手动触发；
+ * 3. 权限缺失 / 扩展断开 / 其他失败：弹窗保持打开，显示原因与修复指引，
+ *    由用户处理后手动点「重试」；
+ * 4. 取消弹窗随时可用，不影响已完成的同步。
  */
 import { reactive } from "vue";
-import { openSiteLoginTab, syncSiteBrowserSession } from "@/lib/browserSessionBridge";
+import {
+  extensionRequiredMessage,
+  openSiteLoginTab,
+  syncSiteBrowserSession,
+} from "@/lib/browserSessionBridge";
 import type { Site, SiteSessionSyncState } from "@/lib/types";
-
-const POLL_INTERVAL_MS = 6000;
-const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type LoginAssistPhase =
   | "probing"
@@ -33,30 +38,24 @@ export const loginAssistState = reactive({
 });
 
 let runToken = 0;
-let wake: (() => void) | null = null;
+let currentSite: LoginAssistSite | null = null;
+let openedLoginPage = false;
+let settledNotifier:
+  | ((result: SiteSessionSyncState, site: LoginAssistSite | null) => void)
+  | null = null;
 
-function waitForNextProbe(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(finish, milliseconds);
-    function finish() {
-      wake = null;
-      window.clearTimeout(timer);
-      resolve();
-    }
-    wake = finish;
-  });
+/** 注册弹窗关闭（成功 / 取消）时的回调：刷新列表并给出最终提示。 */
+export function onLoginAssistSettled(
+  callback: (result: SiteSessionSyncState, site: LoginAssistSite | null) => void,
+): void {
+  settledNotifier = callback;
 }
 
-/** 立即触发下一次登录态探测（弹窗「立即重试」按钮）。 */
-export function retryLoginAssistNow(): void {
-  wake?.();
-}
-
-/** 关闭弹窗并放弃本次登录引导（不影响已完成的同步）。 */
-export function cancelLoginAssist(): void {
-  runToken += 1;
-  wake?.();
-  loginAssistState.open = false;
+function isBusy(): boolean {
+  return (
+    loginAssistState.phase === "probing" ||
+    loginAssistState.phase === "opening"
+  );
 }
 
 function stoppedState(
@@ -74,6 +73,17 @@ function stoppedState(
   };
 }
 
+function failureGuidance(state: SiteSessionSyncState): string {
+  if (state.status === "extension_unavailable") {
+    return extensionRequiredMessage();
+  }
+  if (state.status === "permission_required") {
+    const base = state.message ? `${state.message}。` : "";
+    return `${base}修复方式：打开 chrome://extensions →「Upstream 登录态同步」→ 详情，将「网站访问权限」设为「在所有网站上」，然后点「重试」。也可以先手动登录站点。`;
+  }
+  return state.message || state.error_code || "登录态同步失败";
+}
+
 async function openSitePage(site: LoginAssistSite): Promise<void> {
   loginAssistState.phase = "opening";
   const openedByExtension = await openSiteLoginTab(site.base_url);
@@ -87,69 +97,76 @@ async function openSitePage(site: LoginAssistSite): Promise<void> {
   }
 }
 
+/** 执行一次同步探测；调用方保证不在 busy 状态下重入。 */
+async function runAttempt(token: number): Promise<SiteSessionSyncState | null> {
+  const site = currentSite;
+  if (!site || token !== runToken) return null;
+  loginAssistState.attempt += 1;
+  loginAssistState.phase = "probing";
+  loginAssistState.hint = "";
+  const result = await syncSiteBrowserSession(site.id).catch((err: unknown) =>
+    stoppedState(site, err instanceof Error ? err.message : String(err)),
+  );
+  if (token !== runToken) return null;
+  if (result.status === "ready") {
+    loginAssistState.phase = "success";
+    loginAssistState.open = false;
+    const notifier = settledNotifier;
+    currentSite = null;
+    notifier?.(result, site);
+    return result;
+  }
+  if (result.status === "no_session") {
+    if (!openedLoginPage) {
+      openedLoginPage = true;
+      await openSitePage(site);
+      if (token !== runToken) return null;
+      loginAssistState.hint = "未检测到登录态，请在打开的站点页面完成登录";
+    } else {
+      loginAssistState.hint =
+        "仍未检测到登录态，请确认已在站点页登录成功，再点「我已登录完成」";
+    }
+    loginAssistState.phase = "waiting";
+  } else {
+    // 权限缺失 / 扩展断开 / 其他失败：保持弹窗并给出处理指引
+    loginAssistState.phase = "stopped";
+    loginAssistState.hint = failureGuidance(result);
+  }
+  return result;
+}
+
+/** 行内「同步」入口：打开弹窗并执行第一次探测（这次由用户的点击触发）。 */
 export async function syncWithLoginAssist(
   site: LoginAssistSite,
 ): Promise<SiteSessionSyncState> {
   const token = ++runToken;
+  currentSite = site;
+  openedLoginPage = false;
   loginAssistState.open = true;
   loginAssistState.siteName = site.name;
   loginAssistState.siteUrl = site.base_url;
-  loginAssistState.attempt = 1;
+  loginAssistState.attempt = 0;
   loginAssistState.hint = "";
   loginAssistState.phase = "probing";
+  const result = await runAttempt(token);
+  return result ?? stoppedState(site, "已取消");
+}
 
-  const alive = () => token === runToken;
-  const first = await syncSiteBrowserSession(site.id).catch(
-    (err: unknown) =>
-      stoppedState(site, err instanceof Error ? err.message : String(err)),
-  );
-  if (!alive()) return stoppedState(site, "已取消");
-  if (first.status === "ready") {
-    loginAssistState.phase = "success";
-    loginAssistState.open = false;
-    return first;
-  }
-  if (first.status !== "no_session") {
-    // 扩展未连接 / 权限缺失等：等登录也解决不了，交给调用方按原逻辑提示
-    loginAssistState.open = false;
-    return first;
-  }
+/** 弹窗「我已登录完成 / 重试」按钮：手动触发下一次探测，不自动轮询。 */
+export function retryLoginAssistNow(): void {
+  if (!loginAssistState.open || !currentSite || isBusy()) return;
+  void runAttempt(runToken);
+}
 
-  await openSitePage(site);
-  if (!alive()) return stoppedState(site, "已取消");
-  loginAssistState.hint = "未检测到登录态，请在打开的站点页面完成登录";
-
-  const deadline = Date.now() + WAIT_TIMEOUT_MS;
-  let last = first;
-  while (Date.now() < deadline) {
-    loginAssistState.phase = "waiting";
-    await waitForNextProbe(POLL_INTERVAL_MS);
-    if (!alive()) return stoppedState(site, "已取消");
-    loginAssistState.attempt += 1;
-    loginAssistState.phase = "probing";
-    last = await syncSiteBrowserSession(site.id).catch((err: unknown) =>
-      stoppedState(site, err instanceof Error ? err.message : String(err)),
-    );
-    if (!alive()) return stoppedState(site, "已取消");
-    if (last.status === "ready") {
-      loginAssistState.phase = "success";
-      loginAssistState.open = false;
-      return last;
-    }
-    if (
-      last.status === "permission_required" ||
-      last.status === "extension_unavailable"
-    ) {
-      // 这两类失败与是否登录无关，继续等待没有意义
-      loginAssistState.phase = "stopped";
-      loginAssistState.hint = last.message || last.error_code || "同步无法继续";
-      return last;
-    }
-    if (last.status === "failed" && last.message) {
-      loginAssistState.hint = last.message;
-    }
+/** 关闭弹窗并放弃本次登录引导（不影响已完成的同步）。 */
+export function cancelLoginAssist(): void {
+  const hadSession = loginAssistState.open;
+  runToken += 1;
+  loginAssistState.open = false;
+  const notifier = settledNotifier;
+  const site = currentSite;
+  currentSite = null;
+  if (hadSession && site) {
+    notifier?.(stoppedState(site, "已取消"), site);
   }
-  loginAssistState.phase = "stopped";
-  loginAssistState.hint = "等待登录超时，请登录后重新点击同步";
-  return stoppedState(site, "等待登录超时，请登录后重新点击同步");
 }

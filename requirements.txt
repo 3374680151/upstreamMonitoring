@@ -1,9 +1,11 @@
 # Web 层：FastAPI/Uvicorn（ASGI）
 fastapi>=0.128,<1
 uvicorn>=0.39,<1
-# 数据库：PyMySQL 驱动；连接池/生命周期复用 SQLAlchemy Engine（仅池化，不用 ORM）
+# 数据库：PyMySQL 驱动；连接池/生命周期复用 SQLAlchemy Engine（仅池化）
 PyMySQL>=1.1,<3
 SQLAlchemy>=2.0,<3
+# SQLModel：仅用于定义数据库行模型（强类型行对象），替代 repositories 返回的裸 dict；禁用 ORM 自动迁移
+SQLModel>=0.0.16,<1
 # 后台定时调度：APScheduler（替代手写调度线程）
 APScheduler>=3.10,<4
 # 环境变量加载：python-dotenv（替代手写 .env 解析）

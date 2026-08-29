@@ -33,7 +33,7 @@
 5. 推送通道：邮件 + 企业微信；不主动复活 QQ 推送。
 6. **依赖纪律：基础设施用成熟库，业务逻辑优先标准库**。凡是成熟库已解决的通用基础设施问题（连接池 / 定时调度 / .env 解析 / HTTP 客户端 / TTL 缓存等）一律用现成包，不要自己造轮子；业务逻辑优先用标准库（smtplib / urllib.parse / zoneinfo 等），不要为小事引包。后端依赖白名单：
     - `fastapi` + `uvicorn`（Web / ASGI）
-    - `PyMySQL`（驱动）+ `SQLAlchemy`（**仅**用 Engine/QueuePool 做连接池与生命周期管理，禁用 ORM 模型 / declarative / 异步引擎）
+    - `PyMySQL`（驱动）+ `SQLAlchemy Engine`（**仅**用 QueuePool 做连接池与生命周期管理）+ `SQLModel`（**仅**用于定义数据库行模型 / 强类型行对象：供 `repositories/` 返回以替代裸 `dict`，可兼作 Pydantic 响应模型；**禁用** ORM 的 session 自动迁移、declarative 关系映射、异步引擎）
     - `APScheduler`（进程内定时调度，BackgroundScheduler）
     - `python-dotenv`（.env 加载）
     - `httpx`（上游 HTTP 客户端，共享 Client + 手动重定向）
@@ -137,7 +137,7 @@
 
 ### 数据库
 
-- 驱动唯一 PyMySQL；连接池唯一来源 `db/connection.py` 的 SQLAlchemy Engine（QueuePool + `pool_pre_ping`），**仅池化用途**，禁 ORM / declarative / 异步引擎 / 绕池直连。
+- 驱动唯一 PyMySQL；连接池唯一来源 `db/connection.py` 的 SQLAlchemy Engine（QueuePool + `pool_pre_ping`），**仅池化用途**。允许用 `SQLModel` 定义数据库行模型（`class X(SQLModel, table=False)`），供 `repositories/` 返回强类型行对象以替代裸 `dict`；**禁用** ORM 的 session 自动迁移、declarative 关系映射、异步引擎 / 绕池直连。表结构 DDL 仍集中在 `db/migrations.py`，不引入自动迁移。
 - SQL 占位符统一 `?`（`_q()` 转 `%s`），不要在代码里直接写 `%s`；事务用 `db_connection()` context manager；池忙抛 `DatabasePoolTimeoutError`；`DB_POOL_SIZE` 默认 8（最小 1、最大 32）。
 - 表结构变更只在 `backend/db/migrations.py` 的 `init_db()`。
 
@@ -350,4 +350,4 @@ cd apps/web && npm run build && cd ../.. && python3 app.py
 
 - 不要把 UI 改成深色 Linear 风却声称「暖纸 + 浓墨」
 - 不要为「好看」删监控字段与检测能力
-- 硬性禁引（白名单纪律的红线）：Celery / RQ / Redis 队列、Django / Flask、Tortoise / 异步 ORM；SQLAlchemy 仅限连接池用途，禁写 ORM 模型
+- 硬性禁引（白名单纪律的红线）：Celery / RQ / Redis 队列、Django / Flask、Tortoise / 异步 ORM / 重型 ORM 自动迁移。`PyMySQL` + `SQLAlchemy Engine`（连接池）+ `SQLModel`（行模型，非自动迁移 ORM）在白名单内：`repositories/` 可用 `SQLModel` 定义强类型行对象替代裸 `dict`，但**表结构 DDL 仍由 `db/migrations.py` 管理，不引入 ORM 自动迁移**。

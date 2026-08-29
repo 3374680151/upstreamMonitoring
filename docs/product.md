@@ -112,4 +112,4 @@ Upstream 是上游 AI 中转分组倍率监控控制台：盯 NewAPI / sub2api �
 
 ## UI 原则
 
-PriceAI 风格：见 skill `priceai-ui` 与 `design/priceai-style.md`。
+「暖纸 + 浓墨」风格：见根目录 `AGENTS.md`「UI」章节与 `apps/web/src/styles/tokens.css`（`design/priceai-style.md` 仅为早期调研归档）。

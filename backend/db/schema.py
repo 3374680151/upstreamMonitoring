@@ -383,7 +383,9 @@ NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION = (
     "2026-08-28-newapi-system-token-fallback-default"
 )
 
-ADMIN_SITE_SYNC_CONFIG_MIGRATION = "2026-08-29-admin-site-sync-config-per-site"
+# v2：旧名在早期迭代（尚无「存量 retention_days 回填 0」逻辑）就已被部分环境
+# 执行并记录，导致存量主站带着列默认值 7 进入快照保留清理；改名让回填重放一次。
+ADMIN_SITE_SYNC_CONFIG_MIGRATION = "2026-08-29-admin-site-sync-config-retention-backfill"
 
 
 def migrate_sub2api_sites_to_browser_first(cursor: Any) -> None:

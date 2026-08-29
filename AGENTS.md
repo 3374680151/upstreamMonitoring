@@ -107,7 +107,7 @@
 | `core/state.py` | **进程级单例唯一来源**：锁、缓存（TTLCache）、`KeyedLockManager`、`STOP_EVENT`；禁止业务模块顶层自建 `Lock/RLock/Event`/dict 缓存 |
 | `core/time.py` | 时区、ISO 解析、稳定哈希；业务时间处理走这里 |
 | `core/normalize.py` | 纯函数（URL 规范化 / cookie 解析 / 掩码 / 字段过滤）；不放 I/O、DB、可变状态 |
-| `services/<domain>_service.py` | 业务门面（Monitoring / Notification / AdminSite / SessionSync / Site / Discovery / ChannelClassification）；router 默认只依赖 service |
+| `services/<domain>_service.py` | 业务门面（Monitoring / Notification / AdminSite / SessionSync / Site / Sync / Discovery / ChannelMatch / PlatformDetect）；router 默认只依赖 service |
 | `repositories/<table>.py` | 表级 SQL（sites / admin_sites / changes / notifications）；service 不直接 `db_query_*` |
 | `integrations/<protocol>.py` | 第三方协议客户端（NewAPI / sub2api / 邮件 / 企微）；service / router 不许 urllib 直连 |
 | `workers/` | `SchedulerWorker` / `ModelCacheWorker`；别处不直接 `start()` 线程 |

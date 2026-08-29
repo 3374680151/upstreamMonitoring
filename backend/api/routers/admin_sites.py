@@ -56,6 +56,7 @@ from backend.services.channel_match_service import (
     list_channel_upstream_bindings,
     match_channel_upstream_binding,
 )
+from backend.services.platform_detect_service import PlatformDetectService
 from backend.services.sync_service import (
     admin_site_key_refresh_progress,
     trigger_admin_site_full_key_refresh,
@@ -202,6 +203,16 @@ async def channel_candidates(admin_site_id: int, request: Request):
     source_channels = channels if isinstance(channels, list) else []
     candidates = aggregate_newapi_channel_candidates(source_channels)
     candidates = enrich_channel_candidates_with_sites(candidates)
+    # 平台识别结果随候选下发（带进程内缓存），供主站同步弹窗筛出「可同步」渠道，
+    # 与主站同步 recognized/selected 过滤共用同一套识别逻辑。
+    platform_by_url = await run_in_threadpool(
+        PlatformDetectService().platforms_for_base_urls,
+        [str(item.get("base_url") or "") for item in candidates],
+    )
+    for candidate in candidates:
+        candidate["platform"] = platform_by_url.get(
+            str(candidate.get("base_url") or ""), "unknown"
+        )
     keyword = str(
         (request.query_params.get("keyword") or "")
     ).strip().casefold()

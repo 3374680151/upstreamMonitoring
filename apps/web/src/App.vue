@@ -53,15 +53,19 @@ const editing = shallowRef<Site | null>(null);
 const ratiosSite = shallowRef<Site | null>(null);
 
 // ---- handlers ----
-async function handleSyncMainSites(adminSiteId?: number): Promise<boolean> {
+async function handleSyncMainSites(
+  adminSiteId?: number,
+  opts?: { scope?: "all" | "recognized" | "selected"; channelIds?: number[] },
+): Promise<boolean> {
   try {
-    const result = await api.syncMainSites(adminSiteId);
+    const result = await api.syncMainSites(adminSiteId, opts);
     await refresh();
     const parts: string[] = [];
     if (result.imported) parts.push(`新增 ${result.imported}`);
     if (result.reenabled) parts.push(`恢复 ${result.reenabled}`);
     if (result.disabled) parts.push(`停用 ${result.disabled}`);
     if (result.deleted) parts.push(`删除 ${result.deleted}`);
+    if (result.platform_deleted) parts.push(`平台不符删除 ${result.platform_deleted} 个站点`);
     if (result.conflicts) parts.push(`平台冲突 ${result.conflicts}`);
     if (result.excluded) parts.push(`跳过 ${result.excluded} 个未识别渠道`);
     if (result.channels_changed) parts.push("渠道数据已更新");

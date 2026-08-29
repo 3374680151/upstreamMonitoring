@@ -11,7 +11,10 @@ export interface AppActions {
   confirmDelete: (site: Site) => void;
   handleCheck: (site: Site) => Promise<void>;
   handleSyncSession: (site: Site) => Promise<void>;
-  handleSyncMainSites: (adminSiteId?: number) => Promise<boolean>;
+  handleSyncMainSites: (
+    adminSiteId?: number,
+    opts?: { scope?: "all" | "recognized" | "selected"; channelIds?: number[] },
+  ) => Promise<boolean>;
   handleView: (site: Site) => void;
   handleEditSite: (siteId: number) => void;
 }

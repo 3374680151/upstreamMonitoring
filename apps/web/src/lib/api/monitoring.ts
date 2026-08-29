@@ -27,13 +27,18 @@ import type {
 export const monitoringApi = {
   overview: () => request<Overview>("/api/overview"),
   sites: () => request<{ data: Site[] }>("/api/sites"),
-  /** 手动触发当前主站的完整渠道/分组同步与本地关联对账 */
-  syncMainSites: (adminSiteId?: number) =>
+  /** 手动触发主站同步：可选范围（all=全部渠道 / recognized=仅识别 NewAPI+sub2api /
+   *  selected=勾选渠道），recognized 模式会删除本地平台不符的监控站点 */
+  syncMainSites: (
+    adminSiteId?: number,
+    opts?: { scope?: "all" | "recognized" | "selected"; channelIds?: number[] },
+  ) =>
     request<{
       success: boolean;
       data?: unknown[];
       mode?: string;
-      sync_all?: boolean;
+      scope?: string;
+      platform_deleted?: number;
       imported?: number;
       conflicts?: number;
       excluded?: number;
@@ -49,9 +54,11 @@ export const monitoringApi = {
       failed?: number;
     }>("/api/sites/sync", {
       method: "POST",
-      body: JSON.stringify(
-        adminSiteId ? { admin_site_id: adminSiteId } : {},
-      ),
+      body: JSON.stringify({
+        ...(adminSiteId ? { admin_site_id: adminSiteId } : {}),
+        ...(opts?.scope ? { scope: opts.scope } : {}),
+        ...(opts?.channelIds?.length ? { channel_ids: opts.channelIds } : {}),
+      }),
     }),
   changes: (limit = 100) =>
     request<{ data: Change[] }>(`/api/changes?limit=${limit}`),

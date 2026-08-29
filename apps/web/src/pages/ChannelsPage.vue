@@ -9,6 +9,7 @@ import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
 import Sub2ApiChannelTable from "@/components/Sub2ApiChannelTable.vue";
+import SyncScopeDialog from "@/components/SyncScopeDialog.vue";
 import UpstreamGroupsPopover from "@/components/UpstreamGroupsPopover.vue";
 import { Button, EmptyState, Select, Spinner } from "@/components/ui";
 import { claimAutomaticRefresh } from "@/lib/automaticRefresh";
@@ -20,10 +21,10 @@ import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
 import { useConsoleData } from "@/composables/useConsoleData";
 import { useReconcileMode, type ReconcileMode } from "@/composables/useReconcileMode";
-import { useSyncAllChannels } from "@/composables/useSyncAllChannels";
 import type {
   AdminSite,
   Channel,
+  ChannelDiscoveryCandidate,
   ChannelUpstreamBinding,
   GroupItem,
   Site,
@@ -138,7 +139,6 @@ function bindingFailure(binding?: ChannelUpstreamBinding): { summary: string; ra
 // ---- composables ----
 const enabled = ref(true);
 const { reconcileMode, handleReconcileModeChange } = useReconcileMode(enabled);
-const { syncAllChannels, handleSyncAllChange } = useSyncAllChannels(enabled);
 const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
 // 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
@@ -854,36 +854,71 @@ async function load(
   }
 }
 
-async function syncCurrentMainSite() {
-  if (siteId.value == null) return;
-  syncing.value = true;
+// ---- 主站同步：先弹范围选择（全部 / 仅识别 / 勾选渠道）再执行 ----
+const SYNCABLE_PLATFORMS = new Set(["newapi", "sub2api"]);
+const syncDialogOpen = ref(false);
+const syncDialogMode = ref<"single" | "batch">("single");
+const syncCandidates = shallowRef<ChannelDiscoveryCandidate[]>([]);
+const syncCandidatesLoading = ref(false);
+
+/** 打开同步范围弹窗；sub2api 主站渠道无上游地址可发现，保持直接同步（仅快照） */
+async function openSyncDialog(mode: "single" | "batch") {
+  if (mode === "single" && siteId.value == null) return;
+  if (mode === "single" && isSub2Api.value) {
+    await runMainSiteSync(siteId.value ?? undefined, "all", [], false);
+    return;
+  }
+  syncDialogMode.value = mode;
+  syncDialogOpen.value = true;
+  if (mode !== "single" || siteId.value == null) {
+    syncCandidates.value = [];
+    return;
+  }
+  syncCandidatesLoading.value = true;
   try {
-    const synced = await handleSyncMainSites(siteId.value);
-    if (!synced) return;
-    groupFilter.value = null;
-    selectedChannelId.value = null;
-    sub2ApiChannel.value = null;
-    rowNote.value = {};
-    await load("");
+    const response = await api.channelCandidates(siteId.value);
+    syncCandidates.value = (response.data || []).filter((candidate) =>
+      SYNCABLE_PLATFORMS.has(String(candidate.platform || "unknown")),
+    );
+  } catch (err) {
+    toast.error(errorText(err, "读取可同步渠道失败"));
   } finally {
-    syncing.value = false;
+    syncCandidatesLoading.value = false;
   }
 }
 
-async function syncAllMainSites() {
-  syncingAll.value = true;
+async function runMainSiteSync(
+  adminSiteId: number | undefined,
+  scope: "all" | "recognized" | "selected",
+  channelIds: number[],
+  batch: boolean,
+): Promise<boolean> {
+  if (batch) syncingAll.value = true;
+  else syncing.value = true;
   try {
-    const synced = await handleSyncMainSites();
-    if (!synced) return;
+    const synced = await handleSyncMainSites(adminSiteId, { scope, channelIds });
+    if (!synced) return false;
     groupFilter.value = null;
     selectedChannelId.value = null;
     sub2ApiChannel.value = null;
     rowNote.value = {};
-    await loadAdminSites();
+    if (batch) await loadAdminSites();
     await load("");
+    return true;
   } finally {
-    syncingAll.value = false;
+    if (batch) syncingAll.value = false;
+    else syncing.value = false;
   }
+}
+
+function onSyncDialogConfirm(payload: {
+  scope: "all" | "recognized" | "selected";
+  channelIds: number[];
+}) {
+  syncDialogOpen.value = false;
+  const batch = syncDialogMode.value === "batch";
+  const targetId = batch ? undefined : (siteId.value ?? undefined);
+  void runMainSiteSync(targetId, payload.scope, payload.channelIds, batch);
 }
 
 async function matchUpstream(ch: Channel) {
@@ -1253,35 +1288,13 @@ watch(
               <option value="delete">删除</option>
             </Select>
           </label>
-          <span class="flex shrink-0 items-center gap-1.5 text-[12.5px] font-medium text-ink-muted">
-            <span>全部同步</span>
-            <button
-              type="button"
-              role="switch"
-              :aria-checked="syncAllChannels"
-              aria-label="同步全部渠道开关"
-              title="开启：主站同步导入全部渠道；关闭：仅同步识别为 NewAPI / sub2api 的渠道，已导入站点不受影响"
-              :class="[
-                'relative inline-flex h-4 w-8 shrink-0 items-center rounded-full transition-colors duration-[var(--motion-base)]',
-                syncAllChannels ? 'bg-accent' : 'bg-sunken-active',
-              ]"
-              @click="handleSyncAllChange(!syncAllChannels)"
-            >
-              <span
-                :class="[
-                  'inline-block h-3 w-3 transform rounded-full bg-paper shadow-[var(--shadow-pop)] transition-transform duration-[var(--motion-base)]',
-                  syncAllChannels ? 'translate-x-[18px]' : 'translate-x-0.5',
-                ]"
-              />
-            </button>
-          </span>
           <Button
             variant="secondary"
             aria-label="同步全部主站"
-            title="同步所有已配置的主站渠道和分组，并对账消失渠道"
+            title="选择渠道范围后同步所有主站，并对账消失渠道"
             :disabled="syncingAll || adminSites.length === 0"
             :loading="syncingAll"
-            @click="syncAllMainSites"
+            @click="openSyncDialog('batch')"
           >
             <Cloud v-if="!syncingAll" :size="13" />
             同步全部主站
@@ -1289,10 +1302,10 @@ watch(
           <Button
             variant="secondary"
             aria-label="同步主站渠道"
-            title="同步当前主站的全部渠道和分组，并对账消失渠道"
+            title="选择渠道范围后同步当前主站，并对账消失渠道"
             :disabled="siteId == null || syncingAll"
             :loading="syncing"
-            @click="syncCurrentMainSite"
+            @click="openSyncDialog('single')"
           >
             <Cloud v-if="!syncing" :size="13" />
             同步主站
@@ -1774,6 +1787,20 @@ watch(
       :intent="twoFaIntent"
       :on-submit="submitAdminTwoFa"
       @close="onTwoFaDialogClose"
+    />
+
+    <SyncScopeDialog
+      :open="syncDialogOpen"
+      :mode="syncDialogMode"
+      :site-label="
+        currentAdminSite
+          ? `${currentAdminSite.platform_label || 'NewAPI'} · ${currentAdminSite.name}`
+          : ''
+      "
+      :candidates-loading="syncCandidatesLoading"
+      :candidates="syncCandidates"
+      @close="syncDialogOpen = false"
+      @confirm="onSyncDialogConfirm"
     />
   </div>
 </template>

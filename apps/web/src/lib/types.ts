@@ -87,6 +87,8 @@ export type ChannelDiscoveryCandidate = {
   channel_ids: number[];
   channel_names: string[];
   channel_count: number;
+  /** 上游平台识别结果；newapi / sub2api 视为可同步（对应后端 PlatformDetectService） */
+  platform?: string;
   existing_site_id?: number | null;
   existing_site_status?: string | null;
   /** 已存在站点的非敏感认证模式，用于决定是否允许发现面板重试浏览器同步。 */

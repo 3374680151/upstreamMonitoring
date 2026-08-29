@@ -38,7 +38,11 @@ from backend.db.connection import (
     db_query_all,
     _q,
 )
-from backend.core.normalize import _positive_channel_id, _normalize_discovery_base_url
+from backend.core.normalize import (
+    _normalize_discovery_base_url,
+    _positive_channel_id,
+    normalize_base_url,
+)
 from backend.repositories.sites import (
     find_monitor_site_for_channel,
     normalize_admin_sync_channels,
@@ -71,9 +75,14 @@ from backend.services.admin_site_service import (
 from backend.services.monitoring_service import (
     RECONCILE_MODE_DELETE,
     get_main_site_reconcile_mode,
-    get_main_site_sync_all_channels,
 )
 from backend.services.platform_detect_service import PlatformDetectService
+
+# 每次同步可选的范围：all=全部渠道；recognized=仅平台识别为 NewAPI/sub2api
+# 的渠道（并把本地已关联但平台不符的站点直接删除）；selected=勾选的渠道
+# （platform 识别同样必须命中，未勾选渠道的本地站点保持不动）。
+SYNC_SCOPES = ("all", "recognized", "selected")
+SYNCABLE_PLATFORMS = ("newapi", "sub2api")
 
 
 def record_admin_site_sync_error(admin_site_id: int, message: str) -> None:
@@ -227,13 +236,100 @@ def _apply_admin_site_channel_reconcile_in_connection(
     return disabled, reenabled, deleted
 
 
+def _normalize_sync_scope(
+    scope: str, selected_channel_ids: Optional[List[Any]]
+) -> Tuple[str, List[int]]:
+    """Validate the per-run sync scope; ValueError maps to a 400 in the router."""
+    scope = str(scope or "all").strip().lower()
+    if scope not in SYNC_SCOPES:
+        raise ValueError(f"同步范围无效：{scope}")
+    channel_ids: List[int] = []
+    for raw in selected_channel_ids or []:
+        channel_id = _positive_channel_id(raw)
+        if channel_id is not None:
+            channel_ids.append(channel_id)
+    if scope == "selected" and not channel_ids:
+        raise ValueError("勾选渠道同步需要至少勾选一个渠道")
+    return scope, channel_ids
+
+
+def _delete_platform_mismatch_site_links_in_connection(
+    connection: Any,
+    admin_site_id: int,
+    mismatch_urls: set,
+) -> Tuple[int, int]:
+    """recognized 模式对账加强：删除本地已关联但平台不符的监控站点。
+
+    只摘除该主站来源的发现链接；站点若仍被其他主站的渠道关联则仅摘链，
+    无剩余关联时物理删除站点。平台判定复用本次同步的识别结果（mismatch_urls），
+    不在此处二次探测，避免把探测失败的 unknown 误判成不符。返回 (摘链数, 删站数)。
+    """
+    normalized_urls = {
+        normalized
+        for normalized in (
+            normalize_base_url(str(url or "")) for url in mismatch_urls
+        )
+        if normalized
+    }
+    if not normalized_urls:
+        return 0, 0
+    rows = db_query_all(
+        "SELECT id, site_id, upstream_base_url FROM site_discovery_links "
+        "WHERE admin_site_id = ?",
+        (int(admin_site_id),),
+        connection=connection,
+    )
+    removed_links = 0
+    mismatch_site_ids: set = set()
+    with connection.cursor(DictCursor) as cursor:
+        for row in rows:
+            current = normalize_base_url(str(row.get("upstream_base_url") or ""))
+            if not current or current not in normalized_urls:
+                continue
+            cursor.execute(
+                _q("DELETE FROM site_discovery_links WHERE id = ?"),
+                (int(row.get("id") or 0),),
+            )
+            removed_links += int(cursor.rowcount or 0)
+            site_id = _positive_channel_id(row.get("site_id"))
+            if site_id is not None:
+                mismatch_site_ids.add(site_id)
+    deleted_sites = 0
+    for site_id in sorted(mismatch_site_ids):
+        remaining = db_query_one(
+            "SELECT COUNT(*) AS count FROM site_discovery_links WHERE site_id = ?",
+            (site_id,),
+            connection=connection,
+        )
+        if int((remaining or {}).get("count") or 0) > 0:
+            continue
+        site = db_query_one(
+            "SELECT name, base_url FROM sites WHERE id = ?",
+            (site_id,),
+            connection=connection,
+        )
+        with connection.cursor(DictCursor) as cursor:
+            cursor.execute(_q("DELETE FROM sites WHERE id = ?"), (site_id,))
+            deleted = int(cursor.rowcount or 0)
+        if deleted:
+            deleted_sites += 1
+            print(
+                f"[主站同步] admin_site_id={admin_site_id} 平台不符删除站点 "
+                f"#{site_id} {(site or {}).get('name') or ''} "
+                f"{(site or {}).get('base_url') or ''}",
+                flush=True,
+            )
+    return removed_links, deleted_sites
+
+
 def _sync_admin_site_snapshot_in_connection(
     connection: Any,
     admin: Dict[str, Any],
     channels: List[Dict[str, Any]],
     groups: Dict[str, Any],
     mode: str,
-    sync_all: bool = True,
+    scope: str = "all",
+    selected_channel_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Write one complete admin-site snapshot and reconcile its local links."""
     admin_site_id = int(admin.get("id") or 0)
@@ -275,24 +371,41 @@ def _sync_admin_site_snapshot_in_connection(
     preferred_site_by_channel: Dict[int, int] = {}
     excluded_candidates = 0
     excluded_channels = 0
+    mismatch_urls: set = set()
     if platform == "newapi":
         candidates = aggregate_newapi_channel_candidates(channels)
         import_candidates = candidates
-        if not sync_all:
-            # 只导入识别为 NewAPI/sub2api 的渠道；未识别平台仅跳过导入，
-            # 不参与对账排除，已有链接与站点保持原样。
+        selected_ids = set(selected_channel_ids or [])
+        if scope in ("recognized", "selected"):
             classifier = PlatformDetectService()
             platform_by_url = classifier.platforms_for_base_urls(
                 [str(item.get("base_url") or "") for item in candidates]
             )
+
+            def _candidate_platform(item: Dict[str, Any]) -> str:
+                return platform_by_url.get(
+                    str(item.get("base_url") or ""), "unknown"
+                )
+
+            def _holds_selected_channel(item: Dict[str, Any]) -> bool:
+                return any(
+                    _positive_channel_id(raw) in selected_ids
+                    for raw in (item.get("channel_ids") or [])
+                )
+
+        if scope == "recognized":
+            # 只导入识别为 NewAPI/sub2api 的渠道；被过滤掉的候选（平台不符）
+            # 记入 mismatch_urls，对账阶段把本地已关联站点一并删除。
             import_candidates = [
                 item
                 for item in candidates
-                if platform_by_url.get(
-                    str(item.get("base_url") or ""), "unknown"
-                )
-                in ("newapi", "sub2api")
+                if _candidate_platform(item) in SYNCABLE_PLATFORMS
             ]
+            mismatch_urls = {
+                str(item.get("base_url") or "")
+                for item in candidates
+                if _candidate_platform(item) not in SYNCABLE_PLATFORMS
+            }
             excluded_candidates = len(candidates) - len(import_candidates)
             imported_channel_count = sum(
                 len(item.get("channel_ids") or []) for item in import_candidates
@@ -308,6 +421,15 @@ def _sync_admin_site_snapshot_in_connection(
                     f"跳过 {excluded_candidates} 个站点 / {excluded_channels} 个渠道",
                     flush=True,
                 )
+        elif scope == "selected":
+            # 勾选模式：只导入勾选渠道所属且平台可同步的候选；未勾选渠道的
+            # 本地站点与链接保持不动，不参与对账排除。
+            import_candidates = [
+                item
+                for item in candidates
+                if _holds_selected_channel(item)
+                and _candidate_platform(item) in SYNCABLE_PLATFORMS
+            ]
         for candidate in import_candidates:
             result = _import_discovered_site_item(
                 connection,
@@ -363,10 +485,19 @@ def _sync_admin_site_snapshot_in_connection(
         )
     )
     disabled = reenabled = deleted = 0
+    platform_removed_links = 0
+    platform_deleted = 0
     if platform == "newapi":
         disabled, reenabled, deleted = _apply_admin_site_channel_reconcile_in_connection(
             connection, admin_site_id, affected_site_ids, mode
         )
+        if mismatch_urls:
+            (
+                platform_removed_links,
+                platform_deleted,
+            ) = _delete_platform_mismatch_site_links_in_connection(
+                connection, admin_site_id, mismatch_urls
+            )
 
     with connection.cursor(DictCursor) as cursor:
         cursor.execute(
@@ -403,10 +534,12 @@ def _sync_admin_site_snapshot_in_connection(
         "admin_site_id": admin_site_id,
         "platform": platform,
         "status": "synced",
-        "sync_all": bool(sync_all),
+        "scope": scope,
         "imported": imported,
         "excluded_candidates": excluded_candidates,
         "excluded_channels": excluded_channels,
+        "platform_removed_links": platform_removed_links,
+        "platform_deleted": platform_deleted,
         "channels_count": len(channels),
         "groups_count": len(groups),
         "channels_changed": not previous
@@ -832,7 +965,8 @@ def _run_admin_key_refresh_batch(admin_site_id: int) -> None:
 def _sync_one_admin_site(
     admin: Dict[str, Any],
     mode: str,
-    sync_all: bool = True,
+    scope: str = "all",
+    selected_channel_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     admin_site_id = int(admin.get("id") or 0)
     try:
@@ -867,18 +1001,21 @@ def _sync_one_admin_site(
         with db_connection() as connection:
             try:
                 result = _sync_admin_site_snapshot_in_connection(
-                    connection, admin, channels, groups, mode, sync_all
+                    connection, admin, channels, groups, mode, scope,
+                    selected_channel_ids,
                 )
                 connection.commit()
                 print(
                     "[主站同步] "
                     f"admin_site_id={admin_site_id} "
+                    f"scope={scope} "
                     f"channels={result.get('channels_count', 0)} "
                     f"groups={result.get('groups_count', 0)} "
                     f"imported={result.get('imported', 0)} "
                     f"conflicts={result.get('conflict_count', 0)} "
                     f"disabled={result.get('disabled', 0)} "
-                    f"deleted={result.get('deleted', 0)}",
+                    f"deleted={result.get('deleted', 0)} "
+                    f"platform_deleted={result.get('platform_deleted', 0)}",
                     flush=True,
                 )
                 return result
@@ -909,7 +1046,10 @@ def _sync_one_admin_site(
 
 def _run_admin_site_sync(
     admin_site_id: Optional[int] = None,
+    scope: str = "all",
+    channel_ids: Optional[List[Any]] = None,
 ) -> List[Dict[str, Any]]:
+    scope, selected_channel_ids = _normalize_sync_scope(scope, channel_ids)
     try:
         if admin_site_id is None:
             admin_sites = db_query_all("SELECT * FROM admin_sites ORDER BY id")
@@ -933,18 +1073,19 @@ def _run_admin_site_sync(
             }
         ]
     mode = get_main_site_reconcile_mode()
-    sync_all = get_main_site_sync_all_channels()
     results: List[Dict[str, Any]] = []
     # 多主站并发同步，默认线程池大小为主站数量（上限8），避免串行等每个主站的HTTP
     valid_admins = [a for a in admin_sites if isinstance(a, dict)]
     max_workers = max(1, min(8, len(valid_admins)))
     if max_workers <= 1:
         for admin in valid_admins:
-            results.append(_sync_one_admin_site(admin, mode, sync_all))
+            results.append(_sync_one_admin_site(admin, mode, scope, selected_channel_ids))
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_map = {
-                pool.submit(_sync_one_admin_site, admin, mode, sync_all): int(
+                pool.submit(
+                    _sync_one_admin_site, admin, mode, scope, selected_channel_ids
+                ): int(
                     admin.get("id") or 0
                 )
                 for admin in valid_admins
@@ -967,6 +1108,7 @@ def _run_admin_site_sync(
         {
             "status": "reconcile",
             "mode": mode,
+            "scope": scope,
             "channels_changed": any(
                 bool(item.get("channels_changed"))
                 for item in results
@@ -999,7 +1141,13 @@ def _run_admin_site_sync(
 
 def auto_sync_admin_site_channels_to_sites(
     admin_site_id: Optional[int] = None,
+    scope: str = "all",
+    channel_ids: Optional[List[Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Synchronize one selected admin site, or all admin sites for API callers."""
-    return _run_admin_site_sync(admin_site_id)
+    """Synchronize one selected admin site, or all admin sites for API callers.
+
+    ``scope`` picks the per-run import range (all / recognized / selected);
+    ``channel_ids`` is required when scope is "selected".
+    """
+    return _run_admin_site_sync(admin_site_id, scope, channel_ids)
 

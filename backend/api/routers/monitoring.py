@@ -41,7 +41,6 @@ from backend.services.monitoring_service import (
     cache_newapi_perf_summary_payload,
     cache_newapi_pricing_payload,
     detect_site,
-    get_main_site_sync_all_channels,
     get_newapi_perf_summary_cache,
     get_newapi_pricing_cache,
     get_site_model_cache,
@@ -51,7 +50,10 @@ from backend.services.monitoring_service import (
     schedule_newapi_perf_summary_refresh,
     schedule_newapi_pricing_refresh,
 )
-from backend.services.sync_service import auto_sync_admin_site_channels_to_sites
+from backend.services.sync_service import (
+    SYNC_SCOPES,
+    auto_sync_admin_site_channels_to_sites,
+)
 
 
 router = APIRouter()
@@ -353,10 +355,44 @@ async def sync_sites(request: Request):
                 status_code=400,
             )
 
+    scope = str(body.get("scope") or "all").strip().lower() or "all"
+    if scope not in SYNC_SCOPES:
+        return JSONResponse(
+            {"success": False, "message": f"同步范围无效：{scope}"},
+            status_code=400,
+        )
+    raw_channel_ids = body.get("channel_ids")
+    channel_ids: list[int] = []
+    if isinstance(raw_channel_ids, list):
+        for raw in raw_channel_ids:
+            try:
+                channel_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if channel_id > 0:
+                channel_ids.append(channel_id)
+    if scope == "selected":
+        if admin_site_id is None:
+            return JSONResponse(
+                {"success": False, "message": "勾选渠道同步只支持单个主站"},
+                status_code=400,
+            )
+        if not channel_ids:
+            return JSONResponse(
+                {"success": False, "message": "请至少勾选一个渠道"},
+                status_code=400,
+            )
+
     # 1. 跑同步
-    results = await run_in_threadpool(
-        auto_sync_admin_site_channels_to_sites, admin_site_id,
-    )
+    try:
+        results = await run_in_threadpool(
+            auto_sync_admin_site_channels_to_sites, admin_site_id, scope, channel_ids,
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            {"success": False, "message": str(exc)},
+            status_code=400,
+        )
 
     # 2. 汇总同步结果（和原有逻辑一致）
     imported = sum(
@@ -421,12 +457,19 @@ async def sync_sites(request: Request):
         if isinstance(entry, dict)
     )
 
+    platform_deleted = sum(
+        int(entry.get("platform_deleted") or 0)
+        for entry in results
+        if isinstance(entry, dict)
+    )
+
     return JSONResponse(
         {
             "success": True,
             "data": results,
             "mode": reconcile.get("mode") or RECONCILE_MODE_DISABLE,
-            "sync_all": get_main_site_sync_all_channels(),
+            "scope": scope,
+            "platform_deleted": platform_deleted,
             "channels_changed": channels_changed,
             "groups_changed": groups_changed,
             "keys_refreshed": keys_refreshed,

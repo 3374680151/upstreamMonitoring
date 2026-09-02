@@ -43,7 +43,7 @@ DDL_STATEMENTS = [
         interval_minutes INT NOT NULL DEFAULT 3,
         focus_keywords TEXT,
         login_enabled TINYINT NOT NULL DEFAULT 0,
-        auth_mode VARCHAR(32) NOT NULL DEFAULT 'password',
+        auth_mode VARCHAR(32) NOT NULL DEFAULT 'browser',
         login_username VARCHAR(255),
         login_password TEXT,
         access_token TEXT,
@@ -312,7 +312,7 @@ SITES_COLUMN_ADDITIONS = {
     "focus_keywords": "TEXT",
     "login_enabled": "TINYINT NOT NULL DEFAULT 0",
     "auto_disabled": "TINYINT NOT NULL DEFAULT 0",
-    "auth_mode": "VARCHAR(32) NOT NULL DEFAULT 'password'",
+    "auth_mode": "VARCHAR(32) NOT NULL DEFAULT 'browser'",
     "login_username": "VARCHAR(255)",
     "login_password": "TEXT",
     "access_token": "TEXT",
@@ -386,6 +386,10 @@ NEWAPI_SYSTEM_TOKEN_FALLBACK_MIGRATION = (
 # v2：旧名在早期迭代（尚无「存量 retention_days 回填 0」逻辑）就已被部分环境
 # 执行并记录，导致存量主站带着列默认值 7 进入快照保留清理；改名让回填重放一次。
 ADMIN_SITE_SYNC_CONFIG_MIGRATION = "2026-08-29-admin-site-sync-config-retention-backfill"
+
+SITES_AUTH_MODE_DEFAULT_MIGRATION = "2026-09-03-sites-auth-mode-default-browser"
+
+TOKEN_MODE_TO_BROWSER_MIGRATION = "2026-09-03-sites-token-mode-to-browser"
 
 
 def migrate_sub2api_sites_to_browser_first(cursor: Any) -> None:
@@ -494,6 +498,63 @@ def run_admin_site_sync_config_migration_once(cursor: Any) -> bool:
     return True
 
 
+def run_sites_auth_mode_default_migration_once(cursor: Any) -> bool:
+    """把 sites.auth_mode 列默认值对齐产品默认 'browser'（一次性 ALTER）。
+
+    新库由 DDL 直接建为 'browser'；存量库的列默认值仍是早期版本的
+    'password'，与前端新建站点默认不一致。列默认值只在 INSERT 未显式
+    指定时才生效，属元数据修改（MySQL Instant DDL），无行数据变更。
+    """
+    cursor.execute(
+        "SELECT name FROM app_schema_migrations WHERE name = %s",
+        (SITES_AUTH_MODE_DEFAULT_MIGRATION,),
+    )
+    if cursor.fetchone():
+        return False
+    cursor.execute(
+        "ALTER TABLE sites MODIFY COLUMN auth_mode VARCHAR(32) NOT NULL DEFAULT 'browser'"
+    )
+    cursor.execute(
+        "INSERT INTO app_schema_migrations (name, applied_at) VALUES (%s, %s)",
+        (SITES_AUTH_MODE_DEFAULT_MIGRATION, utc_now_iso()),
+    )
+    return True
+
+
+def run_token_mode_to_browser_migration_once(cursor: Any) -> bool:
+    """把已废弃的「手动导入登录态（token）」存量行一次性归一到 browser。
+
+    前端编辑弹窗早已把 token 回填显示为 browser，但 DB 仍存 token，
+    形成「显示 browser、行为 token」的分裂。NewAPI 统一执行器在 browser
+    模式下的主路径就是「access_token + New-Api-User」直连，与 token 模式
+    用同一凭据，仅多 401 后的自愈链路，因此转换不改变检测行为。
+    已有 access_token 的行同时把 session_sync_status 置 ready（对齐
+    sub2api browser-first 迁移先例），避免可用登录态被标成「未同步」。
+    """
+    cursor.execute(
+        "SELECT name FROM app_schema_migrations WHERE name = %s",
+        (TOKEN_MODE_TO_BROWSER_MIGRATION,),
+    )
+    if cursor.fetchone():
+        return False
+    cursor.execute("UPDATE sites SET auth_mode = 'browser' WHERE auth_mode = 'token'")
+    cursor.execute(
+        """
+        UPDATE sites
+        SET session_sync_status = 'ready', session_sync_error = NULL
+        WHERE platform = 'newapi'
+          AND auth_mode = 'browser'
+          AND session_sync_status = 'not_requested'
+          AND COALESCE(access_token, '') <> ''
+        """
+    )
+    cursor.execute(
+        "INSERT INTO app_schema_migrations (name, applied_at) VALUES (%s, %s)",
+        (TOKEN_MODE_TO_BROWSER_MIGRATION, utc_now_iso()),
+    )
+    return True
+
+
 def init_db() -> None:
     with DB_LOCK:
         conn = connect_db()
@@ -522,6 +583,8 @@ def init_db() -> None:
                 run_sub2api_browser_first_migration_once(cur)
                 run_newapi_system_token_fallback_migration_once(cur)
                 run_admin_site_sync_config_migration_once(cur)
+                run_token_mode_to_browser_migration_once(cur)
+                run_sites_auth_mode_default_migration_once(cur)
 
                 # 说明：这里曾有一段把 newapi + browser 行强制归一化为 token
                 # 的启动期 UPDATE，那是 NewAPI 浏览器登录态同步落地前的过渡

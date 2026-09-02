@@ -1850,8 +1850,14 @@ def persist_newapi_site_browser_session(
     site_id: int,
     session: Dict[str, Any],
     auth_mode: str = BROWSER_AUTH_MODE,
-    preserve_login_credentials: bool = False,
+    preserve_login_credentials: bool = True,
 ) -> None:
+    """Persist a browser session for a NewAPI site.
+
+    Defaults to preserving login_username/login_password: wiping saved
+    credentials is destructive and must be an explicit choice, so callers
+    that intend to clear them have to pass False deliberately.
+    """
     try:
         expires_at = int(session.get("browser_access_expires_at") or 0)
     except (TypeError, ValueError):

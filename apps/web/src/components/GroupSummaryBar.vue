@@ -1,16 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { formatMs, formatRate, formatTps, successTone } from "@/lib/perf";
+import type { GroupSummary } from "@/lib/perf";
 import Badge from "./Badge.vue";
-
-interface GroupSummary {
-  modelCount: number;
-  monitoredCount: number;
-  successRate: number | null;
-  avgLatencyMs: number | null;
-  avgTps: number | null;
-  sampleCount: number | null;
-}
 
 interface Props {
   summary: GroupSummary;
@@ -22,7 +14,19 @@ const tone = computed(() => successTone(props.summary.successRate));
 </script>
 
 <template>
-  <div class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft pb-2 text-[11px] text-ink-muted">
+  <!-- 空分组兜底：不渲染一整行「暂无成功率 · 延迟 - · 模型 0/0」的无效数据。
+       NewAPI 空分组是正常状态（该分组无模型配置），用中性色；
+       sub2api 的「上游不允许监控」由调用方在上层渲染，不走这里。 -->
+  <div
+    v-if="summary.modelCount === 0"
+    class="mb-2 border-b border-line-soft pb-2 text-[11px] text-ink-soft"
+  >
+    暂无模型数据
+  </div>
+  <div
+    v-else
+    class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line-soft pb-2 text-[11px] text-ink-muted"
+  >
     <span class="font-semibold text-ink-strong">分组平均</span>
     <Badge :tone="tone">
       {{ summary.successRate == null ? "暂无成功率" : `成功率 ${formatRate(summary.successRate)}` }}

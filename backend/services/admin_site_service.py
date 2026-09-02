@@ -550,19 +550,3 @@ def update_admin_site_channel(
         return update_sub2api_admin_channel(site, channel_id, patch)
     return update_newapi_channel(site, channel_id, patch)
 
-
-# ---------------------------------------------------------------------------
-# Thin OO facade (retained for callers that prefer object-style access)
-# ---------------------------------------------------------------------------
-
-class AdminSiteService:
-    def list(self) -> list[dict[str, Any]]:
-        from backend.repositories.admin_sites import list_admin_sites_payload
-        return list_admin_sites_payload()
-
-    def get(self, admin_site_id: int):
-        from backend.repositories.admin_sites import get_admin_site_or_404
-        return get_admin_site_or_404(admin_site_id)
-
-    def test(self, payload: dict[str, Any]):
-        return test_admin_site_connection(payload)

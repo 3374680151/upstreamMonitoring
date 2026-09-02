@@ -63,13 +63,6 @@ function channelGroupNames(
   return allowedGroups ? names.filter((name) => allowedGroups.has(name)) : names;
 }
 
-function ratioText(item?: GroupItem): string {
-  if (!item) return "—";
-  const ratio = item.ratio;
-  if (ratio === undefined || ratio === null || ratio === "") return "—";
-  return typeof ratio === "number" ? `×${ratio}` : String(ratio);
-}
-
 function bindingStatusLabel(binding?: ChannelUpstreamBinding): string {
   const status = binding?.match_status || "unmatched";
   if (status === "refresh_error" || status === "error") return "刷新失败";
@@ -1300,7 +1293,7 @@ watch(
             </div>
             <div class="mt-1 flex items-center gap-2">
               <Badge :tone="groups[name] ? 'info' : 'neutral'">
-                倍率 {{ ratioText(groups[name]) }}
+                倍率 {{ ratioXText(groups[name]) }}
               </Badge>
               <Badge :tone="groups[name] ? 'success' : 'warning'" dot>
                 {{ groups[name] ? "上游已配置" : "仅渠道引用" }}

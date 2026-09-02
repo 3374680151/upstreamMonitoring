@@ -121,35 +121,49 @@ export async function startSessionBridgeRequest(
   request: SiteSessionSyncRequest,
   timeoutMs = 25000,
 ): Promise<BridgeResult> {
-  const correlation = correlationId();
   const backendCompleteUrl = new URL(
     `/api/session-sync/requests/${request.request_id}/complete`,
     window.location.origin,
   ).toString();
-  const result = await waitForBridgeMessage(
-    correlation,
-    "UPSTREAM_SESSION_BRIDGE_RESULT",
-    timeoutMs,
-    () => {
-      window.postMessage(
-        {
-          source: PAGE_SOURCE,
-          version: BRIDGE_VERSION,
-          type: "UPSTREAM_SESSION_BRIDGE_START",
-          correlation_id: correlation,
-          request: {
-            request_id: request.request_id,
-            secret: request.secret,
-            target_kind: request.target_kind,
-            platform: request.platform,
-            target_origin: request.target_origin,
-            backend_complete_url: backendCompleteUrl,
-          },
+  const send = (correlation: string) => {
+    window.postMessage(
+      {
+        source: PAGE_SOURCE,
+        version: BRIDGE_VERSION,
+        type: "UPSTREAM_SESSION_BRIDGE_START",
+        correlation_id: correlation,
+        request: {
+          request_id: request.request_id,
+          secret: request.secret,
+          target_kind: request.target_kind,
+          platform: request.platform,
+          target_origin: request.target_origin,
+          backend_complete_url: backendCompleteUrl,
         },
-        window.location.origin,
-      );
-    },
-  );
+      },
+      window.location.origin,
+    );
+  };
+  const attempt = (correlation: string) =>
+    waitForBridgeMessage(
+      correlation,
+      "UPSTREAM_SESSION_BRIDGE_RESULT",
+      timeoutMs,
+      () => send(correlation),
+    );
+  let result: Record<string, unknown>;
+  try {
+    result = await attempt(correlationId());
+  } catch {
+    // 与 probeSessionBridge 同理：MV3 service worker 可能在 probe 之后、
+    // START 处理之前被回收重启，超时未响应时换新 correlation 再试一次。
+    // 扩展的 START 处理无状态可重入，后端 complete 终态 CAS 兜底幂等。
+    try {
+      result = await attempt(correlationId());
+    } catch {
+      throw new Error("浏览器同步扩展未响应");
+    }
+  }
   return {
     ok: result.ok === true,
     status: String(result.status || "failed") as SessionSyncStatus,

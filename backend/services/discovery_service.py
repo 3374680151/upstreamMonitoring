@@ -569,10 +569,3 @@ def reconcile_site_discovery_links(
                 pass
             raise
 
-
-class DiscoveryService:
-    def import_sites(self, admin_site: dict[str, Any], payload: dict[str, Any]):
-        return import_discovered_sites(admin_site, payload)
-
-    def links(self, site_id: int):
-        return list_site_discovery_links(site_id)

@@ -365,28 +365,35 @@ def share_site_browser_session(site_id: int) -> Dict[str, Any]:
         (int(site_id),),
     )
     source = None
+    last_validate_error = ""
     for row in candidates:
         if registered_domain(str(row.get("base_url") or "")) != domain:
             continue
         expiry = str(row.get("token_expires_at") or "").strip()
         if expiry and expiry <= now_iso:
             continue
+        # 复用前先对目标站点自己的 base_url 校验 token 有效性；
+        # 单个候选校验不过继续试下一个（与 NewAPI 分支一致），不写入垃圾 token
+        ok, _validated, error = validate_sub2api_browser_session(
+            str(site.get("base_url") or ""),
+            str(row.get("access_token") or "").strip(),
+        )
+        if not ok:
+            last_validate_error = error or ""
+            continue
         source = row
         break
     if not source:
+        if last_validate_error:
+            return {
+                **empty,
+                "message": last_validate_error or "兄弟站点登录态对当前渠道无效",
+            }
         return empty
 
     access = str(source.get("access_token") or "").strip()
     refresh = str(source.get("refresh_token") or "").strip()
     expires = str(source.get("token_expires_at") or "").strip()
-
-    # 复用前先对目标站点自己的 base_url 校验 token 有效性，
-    # 校验不过就走正常扩展同步，不写入垃圾 token
-    ok, _validated, error = validate_sub2api_browser_session(
-        str(site.get("base_url") or ""), access
-    )
-    if not ok:
-        return {**empty, "message": error or "兄弟站点登录态对当前渠道无效"}
 
     persist_site_browser_session(
         int(site_id), access, refresh, expires
@@ -980,10 +987,3 @@ def mark_site_browser_session_expired(
     params.extend((request_id, origin))
     return db_execute_rowcount(sql, params) > 0
 
-
-class SessionSyncService:
-    def create_site(self, site_id: int):
-        return create_site_session_sync_request(site_id)
-
-    def complete(self, request_id: str, secret: str, payload: Any):
-        return complete_session_sync_request(request_id, secret, payload)

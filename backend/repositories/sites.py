@@ -304,13 +304,11 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
                 platform,
                 1 if enabled else 0,
                 interval,
+                # 认证增强开关是主控：login_enabled 只跟请求走（sub2api 是
+                # browser-first 平台除外），auth_mode 仅记录开启时用什么方式，
+                # 关闭时保留原值以便重新开启（审计 AUTH-001）。
                 1
-                if (
-                    login_enabled
-                    or platform == "sub2api"
-                    or auth_mode == BROWSER_AUTH_MODE
-                    or (platform == "newapi" and auth_mode == "password")
-                )
+                if (login_enabled or platform == "sub2api")
                 else 0,
                 auth_mode,
                 login_username
@@ -465,14 +463,12 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
         ):
             return False, "导入登录态时需要填写 auth_token"
         fields.append("login_enabled = ?")
+        # 认证增强开关是主控：login_enabled 只跟请求走（sub2api 是
+        # browser-first 平台除外），auth_mode 仅记录开启时用什么方式，
+        # 关闭时保留原值以便重新开启（审计 AUTH-001）。
         params.append(
             1
-            if (
-                login_enabled
-                or target_platform == "sub2api"
-                or auth_mode == BROWSER_AUTH_MODE
-                or (target_platform == "newapi" and auth_mode == "password")
-            )
+            if (login_enabled or target_platform == "sub2api")
             else 0
         )
         fields.append("auth_mode = ?")

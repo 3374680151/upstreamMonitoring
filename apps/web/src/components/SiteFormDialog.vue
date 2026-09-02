@@ -99,39 +99,26 @@ function set<K extends keyof SiteFormPayload>(key: K, value: SiteFormPayload[K])
 
 function setPlatform(platform: Platform) {
   syncResult.value = null;
-  form.value =
-    platform === "sub2api"
-      ? {
-          ...form.value,
-          platform,
-          login_enabled: true,
-          auth_mode: "browser",
-          login_username: "",
-          login_password: "",
-          access_token: "",
-          refresh_token: "",
-          token_expires_at: "",
-          access_user_id: "",
-        }
-      : {
-          ...form.value,
-          platform,
-          login_enabled: true,
-          auth_mode: "browser",
-          login_username: "",
-          login_password: "",
-          access_token: "",
-          refresh_token: "",
-          token_expires_at: "",
-          access_user_id: "",
-        };
+  form.value = {
+    ...form.value,
+    platform,
+    login_enabled: true,
+    auth_mode: "browser",
+    login_username: "",
+    login_password: "",
+    access_token: "",
+    refresh_token: "",
+    token_expires_at: "",
+    access_user_id: "",
+  };
 }
 
 function onToggleLoginEnabled(loginEnabled: boolean) {
+  // 只动开关，不改 auth_mode：认证方式是「开启时用什么」的记录，
+  // 关闭时保留原值，重新打开后无需重新配置（审计 AUTH-001）。
   form.value = {
     ...form.value,
     login_enabled: loginEnabled,
-    auth_mode: loginEnabled ? form.value.auth_mode : "token",
   };
 }
 
@@ -248,11 +235,9 @@ async function save() {
   try {
     const payload: SiteFormPayload = {
       ...form.value,
-      login_enabled:
-        isSub2api.value ||
-        form.value.login_enabled ||
-        newApiPasswordMode.value ||
-        browserMode.value,
+      // 开关是主控：不再从 auth_mode 反推 login_enabled——否则关闭认证
+      // 增强后保存会被 browser/password 模式悄悄改回开启（审计 AUTH-001）
+      login_enabled: isSub2api.value || form.value.login_enabled,
       auth_mode: form.value.auth_mode,
     };
     let targetSiteId = props.site?.id ?? savedSiteId.value;

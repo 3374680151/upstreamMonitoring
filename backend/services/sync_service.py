@@ -44,7 +44,6 @@ from backend.core.normalize import (
     normalize_base_url,
 )
 from backend.repositories.sites import (
-    find_monitor_site_for_channel,
     normalize_admin_sync_channels,
     normalize_admin_sync_groups,
 )
@@ -979,7 +978,9 @@ def _sync_one_admin_site(
 ) -> Dict[str, Any]:
     admin_site_id = int(admin.get("id") or 0)
     try:
-        # 单主站内并行拉取 channels / groups（两个独立HTTP，不等前一个再发下一个）
+        # 单主站内并行拉取 channels / groups（两个独立HTTP，不等前一个再发下一个）。
+        # HTTP 等待是真正的 I/O 并行，保留每主站一个 2 线程短生命周期池：
+        # 池数量受顶层并行度约束，创建开销相对请求耗时可以忽略（审计 SYNC-001）。
         def _fetch_channels_task() -> Tuple[Any, Any, Any, Any]:
             return fetch_admin_site_channels(admin, "")
         def _fetch_groups_task() -> Tuple[Any, Any, Any]:
@@ -993,15 +994,10 @@ def _sync_one_admin_site(
             raise RuntimeError(channel_error or "读取主站渠道失败")
         if not ok_gr:
             raise RuntimeError(group_error or "读取主站分组失败")
-        # 拿到原始数据后，channels/groups 的 normalize 也是CPU纯函数，也并行
-        def _norm_channels() -> Tuple[Any, Any]:
-            return normalize_admin_sync_channels(raw_channels)
-        def _norm_groups() -> Tuple[Any, Any]:
-            return normalize_admin_sync_groups(raw_groups)
-        with ThreadPoolExecutor(max_workers=2) as inner_pool:
-            (channels, channels_error), (groups, groups_error) = inner_pool.map(
-                lambda f: f(), [_norm_channels, _norm_groups]
-            )
+        # normalize 是纯 Python CPU 函数：GIL 下线程并行没有收益，串行即可
+        # （审计 SYNC-003；少一层每主站短生命周期线程池，降低嵌套线程数）
+        channels, channels_error = normalize_admin_sync_channels(raw_channels)
+        groups, groups_error = normalize_admin_sync_groups(raw_groups)
         if channels_error:
             raise RuntimeError(channels_error)
         if groups_error:

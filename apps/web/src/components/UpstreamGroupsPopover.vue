@@ -5,7 +5,9 @@ import { api } from "@/lib/api";
 import { fmtTime, groupPropertyText, ratioXText } from "@/lib/format";
 import {
   buildPerfMap,
-  modelInGroup,
+  compareGroupEntries,
+  summarizeNewApiGroup,
+  summarizeSub2ApiGroup,
   type PerfSummaryModel,
   type PricingResponse,
 } from "@/lib/perf";
@@ -48,6 +50,8 @@ const perfModels = shallowRef<PerfSummaryModel[]>([]);
 const models = shallowRef<Record<string, ModelHealth[]> | null>(null);
 const detailLoading = ref(false);
 const detailError = ref("");
+/** 当前数据归属的站点 id：加载完成后原子替换，切换站点时旧数据不闪现也不残留 */
+const dataSiteId = ref<number | null>(null);
 let loadedSiteId: number | null = null;
 
 let openTimer = 0;
@@ -63,23 +67,20 @@ interface CatalogRow {
   matched: boolean;
 }
 
-/** 目录行：保留倍率弹窗的全量分组排序，命中项只高亮、不改变目录顺序。 */
+/** 目录行：与倍率弹窗共用同一套分组排序（compareGroupEntries），命中项只高亮。 */
 const catalogRows = computed<CatalogRow[]>(() => {
   const loginGroups = props.site?.current_login_groups || {};
   const groups =
     props.site?.login_enabled && Object.keys(loginGroups).length
       ? loginGroups
       : props.site?.current_groups || {};
-  const entries = Object.entries(groups);
-  return entries
-    .map(([name, item]) => ({ name, item, matched: matchedNames.value.has(name) }))
-    .sort((a, b) => {
-      const ratioDiff =
-        (Number.isFinite(Number(a.item?.ratio)) ? Number(a.item.ratio) : Infinity) -
-        (Number.isFinite(Number(b.item?.ratio)) ? Number(b.item.ratio) : Infinity);
-      if (ratioDiff) return ratioDiff;
-      return a.name.localeCompare(b.name, "zh-CN");
-    });
+  return Object.entries(groups)
+    .sort(compareGroupEntries)
+    .map(([name, item]) => ({
+      name,
+      item,
+      matched: matchedNames.value.has(name),
+    }));
 });
 
 const perfMap = computed(() =>
@@ -92,53 +93,9 @@ function groupHasModels(name: string): boolean {
 }
 
 function groupSummary(name: string) {
-  const average = (values: Array<number | undefined>): number | null => {
-    const valid: number[] = values.flatMap((value) =>
-      Number.isFinite(Number(value)) ? [Number(value)] : [],
-    );
-    return valid.length
-      ? valid.reduce((sum, value) => sum + value, 0) / valid.length
-      : null;
-  };
-  if (props.site?.platform !== "newapi") {
-    // sub2api：与倍率弹窗 summarizeLegacyGroup 同源（模型健康缓存）
-    const list = models.value?.[name] || [];
-    return {
-      modelCount: list.length,
-      monitoredCount: list.filter(
-        (model) => model.status && model.status !== "configured",
-      ).length,
-      successRate: average(
-        list.map((model) => model.availability_7d ?? undefined),
-      ),
-      avgLatencyMs: average(
-        list.map(
-          (model) => model.latency_ms ?? model.ping_latency_ms ?? undefined,
-        ),
-      ),
-      avgTps: null,
-      sampleCount: null,
-    };
-  }
-  const catalogModels = (pricing.value?.data || []).filter((model) =>
-    modelInGroup(model, name),
-  );
-  const measured = catalogModels
-    .map((model) => perfMap.value.get(model.model_name))
-    .filter((model): model is PerfSummaryModel => Boolean(model));
-  const samples = measured
-    .map((model) => Number(model.request_count))
-    .filter((value) => Number.isFinite(value));
-  return {
-    modelCount: catalogModels.length,
-    monitoredCount: measured.length,
-    successRate: average(measured.map((model) => model.success_rate)),
-    avgLatencyMs: average(measured.map((model) => model.avg_latency_ms)),
-    avgTps: average(measured.map((model) => model.avg_tps)),
-    sampleCount: samples.length
-      ? samples.reduce((sum, value) => sum + value, 0)
-      : null,
-  };
+  return props.site?.platform === "newapi"
+    ? summarizeNewApiGroup(name, pricing.value, perfMap.value)
+    : summarizeSub2ApiGroup(name, models.value);
 }
 
 function clearTimers(): void {
@@ -208,11 +165,10 @@ async function loadDetails(): Promise<void> {
   if (!site || loadedSiteId === site.id || detailLoading.value) {
     return;
   }
+  // 原子替换：加载期间保留旧数据但通过 dataSiteId 门控不渲染，
+  // 全部就绪后才切换到新站点，避免「清空 → 闪屏 → 恢复」
   detailLoading.value = true;
   detailError.value = "";
-  pricing.value = null;
-  perfModels.value = [];
-  models.value = null;
   try {
     if (site.platform === "newapi") {
       const [pricingResult, perfResult] = await Promise.allSettled([
@@ -223,6 +179,7 @@ async function loadDetails(): Promise<void> {
       if (pricingResult.status === "fulfilled") {
         pricing.value = pricingResult.value;
         loadedSiteId = site.id;
+        dataSiteId.value = site.id;
       } else {
         detailError.value = "模型清单读取失败";
       }
@@ -237,6 +194,7 @@ async function loadDetails(): Promise<void> {
       if (props.site?.id !== site.id) return;
       models.value = resp.models_by_group || {};
       loadedSiteId = site.id;
+      dataSiteId.value = site.id;
     }
   } catch {
     detailError.value = "模型状态读取失败";
@@ -329,12 +287,12 @@ onBeforeUnmount(() => {
                 </td>
                 <td class="px-2 py-2">
                   <GroupSummaryBar
-                    v-if="pricing || groupHasModels(row.name)"
+                    v-if="dataSiteId === site.id && (pricing || groupHasModels(row.name))"
                     :summary="groupSummary(row.name)"
                     :collapsed="false"
                   />
                   <span v-else-if="detailLoading" class="text-[11px] text-ink-soft">正在读取模型清单…</span>
-                  <span v-else-if="models" class="text-[11px] font-semibold text-warning-fg">上游不允许监控</span>
+                  <span v-else-if="dataSiteId === site.id && models" class="text-[11px] font-semibold text-warning-fg">上游不允许监控</span>
                   <span v-else class="text-[11px] text-ink-soft">{{ detailError || "暂无模型汇总" }}</span>
                 </td>
                 <td class="px-2 py-2 text-[11px] leading-relaxed text-ink-muted">

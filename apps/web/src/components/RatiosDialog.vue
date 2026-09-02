@@ -5,7 +5,9 @@ import {
   DEFAULT_PERF_HOURS,
   PERF_HOUR_OPTIONS,
   buildPerfMap,
-  modelInGroup,
+  compareGroupEntries,
+  summarizeNewApiGroup,
+  summarizeSub2ApiGroup,
   type PerfSummaryModel,
   type PricingResponse,
 } from "@/lib/perf";
@@ -13,7 +15,7 @@ import {
   fmtTime,
   groupPropertyText,
   platformLabel,
-  ratioLabel,
+  ratioXText,
 } from "@/lib/format";
 import type { ModelHealth, Site } from "@/lib/types";
 import { Button, Modal, Select } from "./ui";
@@ -40,85 +42,11 @@ const expanded = ref(new Set<string>());
 const selectedGroup = ref("all");
 const collapsedGroups = ref(new Set<string>());
 
-interface GroupSummary {
-  modelCount: number;
-  monitoredCount: number;
-  successRate: number | null;
-  avgLatencyMs: number | null;
-  avgTps: number | null;
-  sampleCount: number | null;
-}
-
-function groupPriority(name: string): number {
-  return /gpt|claude|clade/i.test(name) ? 0 : 1;
-}
-
-function numericRatio(item: { ratio?: number | string } | null | undefined): number {
-  const value = Number(item?.ratio);
-  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
-}
-
 function siteGroupNames(site: Site): string[] {
   const publicGroups = site.current_groups || {};
   const loginGroups = site.current_login_groups || {};
   const hasAuth = Boolean(site.login_enabled && Object.keys(loginGroups).length);
   return Object.keys(hasAuth ? loginGroups : publicGroups);
-}
-
-function averageNumbers(values: Array<number | undefined>): number | null {
-  const valid = values
-    .map((value) => Number(value))
-    .filter((value) => Number.isFinite(value));
-  return valid.length
-    ? valid.reduce((sum, value) => sum + value, 0) / valid.length
-    : null;
-}
-
-function summarizeNewApiGroup(
-  groupName: string,
-  pricing: PricingResponse | null,
-  perfMap: Map<string, PerfSummaryModel>,
-): GroupSummary {
-  const list = (pricing?.data || []).filter((model) =>
-    modelInGroup(model, groupName),
-  );
-  const perfs = list
-    .map((model) => perfMap.get(model.model_name))
-    .filter((perf): perf is PerfSummaryModel => Boolean(perf));
-  const samples = perfs
-    .map((perf) => Number(perf.request_count))
-    .filter((value) => Number.isFinite(value));
-  return {
-    modelCount: list.length,
-    monitoredCount: perfs.length,
-    successRate: averageNumbers(perfs.map((perf) => perf.success_rate)),
-    avgLatencyMs: averageNumbers(perfs.map((perf) => perf.avg_latency_ms)),
-    avgTps: averageNumbers(perfs.map((perf) => perf.avg_tps)),
-    sampleCount: samples.length
-      ? samples.reduce((sum, value) => sum + value, 0)
-      : null,
-  };
-}
-
-function summarizeLegacyGroup(
-  groupName: string,
-  models: Record<string, ModelHealth[]> | null,
-): GroupSummary {
-  const list = models?.[groupName] || [];
-  return {
-    modelCount: list.length,
-    monitoredCount: list.filter(
-      (model) => model.status && model.status !== "configured",
-    ).length,
-    successRate: averageNumbers(
-      list.map((model) => model.availability_7d ?? undefined),
-    ),
-    avgLatencyMs: averageNumbers(
-      list.map((model) => model.latency_ms ?? model.ping_latency_ms ?? undefined),
-    ),
-    avgTps: null,
-    sampleCount: null,
-  };
 }
 
 // --- Watch 1: fetch data on open / site / perfHours change ---
@@ -198,6 +126,9 @@ watch(
   [() => props.open, () => props.site?.id],
   ([openVal]) => {
     if (!openVal) return;
+    // error 也在这里重置：不依赖两个 watch 的注册顺序，避免上一次
+    // 打开的错误信息残留（审计 UI-010/UI-011）
+    error.value = "";
     selectedGroup.value = "all";
     expanded.value = new Set();
     collapsedGroups.value = props.site
@@ -221,16 +152,9 @@ const groups = computed(() => {
   if (!props.site) return [] as Array<[string, any]>;
   const publicGroups = props.site.current_groups || {};
   const loginGroups = props.site.current_login_groups || {};
+  // 与 hover 浮层共用同一套排序（lib/perf.compareGroupEntries）
   return Object.entries(hasAuth.value ? loginGroups : publicGroups).sort(
-    ([a, aItem], [b, bItem]) => {
-      const aPriority = groupPriority(a);
-      const bPriority = groupPriority(b);
-      if (aPriority !== bPriority) return aPriority - bPriority;
-      const aRatio = numericRatio(aItem);
-      const bRatio = numericRatio(bItem);
-      if (aRatio !== bRatio) return aRatio - bRatio;
-      return a.localeCompare(b, "zh-CN");
-    },
+    compareGroupEntries,
   );
 });
 
@@ -279,7 +203,7 @@ const rows = computed(() =>
     collapsed: collapsedGroups.value.has(name),
     summary: isNewApi.value
       ? summarizeNewApiGroup(name, pricing.value, perfMap.value)
-      : summarizeLegacyGroup(name, models.value),
+      : summarizeSub2ApiGroup(name, models.value),
     // sub2api：模型健康缓存已加载且该分组无数据 → 上游不允许监控
     upstreamBlocked:
       !isNewApi.value &&
@@ -403,7 +327,7 @@ function errorText(reason: unknown): string {
                 </button>
               </td>
               <td class="py-3 pr-3 font-extrabold tabular-nums text-ink-strong">
-                {{ ratioLabel(row.item) }}
+                {{ ratioXText(row.item) }}
               </td>
               <td class="py-3 pr-3">
                 <span

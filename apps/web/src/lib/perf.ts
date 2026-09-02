@@ -1,5 +1,7 @@
 /** NewAPI pricing + perf-metrics helpers (mirror upstream frontend). */
 
+import type { GroupItem, ModelHealth } from "./types";
+
 export type PricingModel = {
   model_name: string;
   enable_groups?: string[];
@@ -191,4 +193,98 @@ export function effectiveRatio(
   const gr = Number(groupRatio?.[group]);
   if (!Number.isFinite(gr)) return mr;
   return mr * gr;
+}
+
+// ---------------------------------------------------------------------------
+// Shared group-catalog helpers (used by UpstreamGroupsPopover + RatiosDialog).
+// ---------------------------------------------------------------------------
+
+export type GroupSummary = {
+  modelCount: number;
+  monitoredCount: number;
+  successRate: number | null;
+  avgLatencyMs: number | null;
+  avgTps: number | null;
+  sampleCount: number | null;
+};
+
+/** Mean of finite numeric values; null when nothing is measurable. */
+export function averageNumbers(
+  values: Array<number | undefined>,
+): number | null {
+  const valid = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  return valid.length
+    ? valid.reduce((sum, value) => sum + value, 0) / valid.length
+    : null;
+}
+
+/**
+ * Catalog order shared by the hover popover and the ratios dialog:
+ * gpt/claude groups first, then ratio (non-finite last), then name.
+ */
+export function compareGroupEntries(
+  [aName, aItem]: [string, GroupItem],
+  [bName, bItem]: [string, GroupItem],
+): number {
+  const priority = (name: string) => (/gpt|claude|clade/i.test(name) ? 0 : 1);
+  const aPriority = priority(aName);
+  const bPriority = priority(bName);
+  if (aPriority !== bPriority) return aPriority - bPriority;
+  const ratioOf = (item: GroupItem | undefined) => {
+    const value = Number(item?.ratio);
+    return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+  };
+  const aRatio = ratioOf(aItem);
+  const bRatio = ratioOf(bItem);
+  if (aRatio !== bRatio) return aRatio - bRatio;
+  return aName.localeCompare(bName, "zh-CN");
+}
+
+export function summarizeNewApiGroup(
+  groupName: string,
+  pricing: PricingResponse | null,
+  perfMap: Map<string, PerfSummaryModel>,
+): GroupSummary {
+  const list = (pricing?.data || []).filter((model) =>
+    modelInGroup(model, groupName),
+  );
+  const perfs = list
+    .map((model) => perfMap.get(model.model_name))
+    .filter((perf): perf is PerfSummaryModel => Boolean(perf));
+  const samples = perfs
+    .map((perf) => Number(perf.request_count))
+    .filter((value) => Number.isFinite(value));
+  return {
+    modelCount: list.length,
+    monitoredCount: perfs.length,
+    successRate: averageNumbers(perfs.map((perf) => perf.success_rate)),
+    avgLatencyMs: averageNumbers(perfs.map((perf) => perf.avg_latency_ms)),
+    avgTps: averageNumbers(perfs.map((perf) => perf.avg_tps)),
+    sampleCount: samples.length
+      ? samples.reduce((sum, value) => sum + value, 0)
+      : null,
+  };
+}
+
+export function summarizeSub2ApiGroup(
+  groupName: string,
+  models: Record<string, ModelHealth[]> | null,
+): GroupSummary {
+  const list = models?.[groupName] || [];
+  return {
+    modelCount: list.length,
+    monitoredCount: list.filter(
+      (model) => model.status && model.status !== "configured",
+    ).length,
+    successRate: averageNumbers(
+      list.map((model) => model.availability_7d ?? undefined),
+    ),
+    avgLatencyMs: averageNumbers(
+      list.map((model) => model.latency_ms ?? model.ping_latency_ms ?? undefined),
+    ),
+    avgTps: null,
+    sampleCount: null,
+  };
 }

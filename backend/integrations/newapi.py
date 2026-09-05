@@ -1662,6 +1662,13 @@ def _newapi_site_fallback_request(
             return True, raw, None
     return False, {}, None
 
+# 无需登录态即可访问的公开端点:站点未配置任何凭据时直接匿名请求,
+# 失败也不标 expired——「登录态已过期」对从未登录过的站点是误导(P1-1)
+NEWAPI_PUBLIC_NO_AUTH_PATHS = frozenset(
+    {"/api/pricing", "/api/perf-metrics/summary", "/api/uptime/status"}
+)
+
+
 def newapi_browser_request(
     site: Dict[str, Any],
     method: str,
@@ -1704,6 +1711,29 @@ def newapi_browser_request(
             site.update(latest)
         site_id = int(site.get("id") or 0)
         user_id = str(site.get("access_user_id") or "").strip()
+
+        # 未配置任何登录态的站点:公开端点直接匿名请求,失败不标 expired,
+        # 也不落「登录态已过期」这类误导性文案(P1-1)
+        has_any_credential = bool(
+            (str(site.get("access_token") or "").strip() and user_id)
+            or str(site.get("browser_cookie") or "").strip()
+            or (
+                str(site.get("login_username") or "").strip()
+                and str(site.get("login_password") or "").strip()
+            )
+            or (str(site.get("system_access_token") or "").strip() and user_id)
+        )
+        if not has_any_credential and path in NEWAPI_PUBLIC_NO_AUTH_PATHS:
+            ok, raw, error = request_json(url, payload=payload, method=method)
+            if ok:
+                return True, raw, None
+            if detect_waf_challenge_payload(raw, error):
+                return False, raw, NEWAPI_WAF_BLOCKED_MESSAGE
+            return (
+                False,
+                raw if isinstance(raw, dict) else {},
+                error or "NewAPI 上游调用失败",
+            )
 
         def _token_attempt(
             token: str,

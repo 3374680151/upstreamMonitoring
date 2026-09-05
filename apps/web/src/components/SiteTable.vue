@@ -25,7 +25,7 @@ interface Props {
   sites: Site[];
   selectedId?: number | null;
   groupByPlatform?: boolean;
-  /** 总览精简模式：只保留 状态 / 登陆态 / 上次检测，无操作列 */
+  /** 总览精简模式：只保留 状态 / 登录态 / 上次检测，无操作列 */
   compact?: boolean;
 }
 const props = withDefaults(defineProps<Props>(), {
@@ -160,7 +160,14 @@ function sessionSyncTone(
   status?: SessionSyncStatus,
 ): "success" | "warning" | "danger" | "info" {
   if (status === "ready") return "success";
-  if (status === "pending" || status === "validating") return "info";
+  // not_requested = 未配置登录态，属中性信息，不渲染成红色「失效」(P1-1)
+  if (
+    status === "pending" ||
+    status === "validating" ||
+    status === "not_requested"
+  ) {
+    return "info";
+  }
   if (status === "no_session" || status === "permission_required") {
     return "warning";
   }
@@ -200,7 +207,7 @@ const sections = computed(() => {
         >
           <th class="whitespace-nowrap pb-2.5 pr-3">渠道</th>
           <th class="whitespace-nowrap pb-2.5 pr-3">状态</th>
-          <th v-if="compact" class="whitespace-nowrap pb-2.5 pr-3">登陆态</th>
+          <th v-if="compact" class="whitespace-nowrap pb-2.5 pr-3">登录态</th>
           <th v-else class="whitespace-nowrap pb-2.5 pr-3">认证 / 隐藏</th>
           <th v-if="!compact" class="whitespace-nowrap pb-2.5 pr-3">分组</th>
           <th class="whitespace-nowrap pb-2.5 pr-3">上次检测</th>

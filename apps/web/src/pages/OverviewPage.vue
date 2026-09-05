@@ -104,7 +104,7 @@ const recentChanges = computed(() => changes.value.slice(0, 50));
         <Panel
           class="flex h-full min-w-0 flex-col"
           title="渠道概览"
-          :subtitle="`${overviewSites.length} 个渠道 · 状态 / 登陆态`"
+          :subtitle="`${overviewSites.length} 个渠道 · 状态 / 登录态`"
         >
           <template #action>
             <label

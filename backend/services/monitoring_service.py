@@ -249,6 +249,9 @@ def collect_site_groups(site: Dict[str, Any]) -> Tuple[bool, Dict[str, Dict[str,
             not ok
             and str(site.get("auth_mode") or "").strip().lower()
             == BROWSER_AUTH_MODE
+            # 仅「曾同步成功」的站点才允许标失效:从未配置登录态的站点检测
+            # 失败只记 last_error,避免公开站点被永久标红(P1-1)
+            and str(site.get("session_sync_status") or "") == "ready"
             and (
                 bool(
                     isinstance(payload, dict)

@@ -33,6 +33,13 @@ class SPAStaticFiles(StaticFiles):
     """Serve Vite assets and fall back to index.html for client-side routes."""
 
     async def get_response(self, path: str, scope):  # type: ignore[no-untyped-def]
+        # Unmatched /api/* paths must not fall through to the SPA shell:
+        # API clients would get 200 + HTML instead of a JSON 404 (P1-3).
+        if str(scope.get("path") or "").startswith("/api/"):
+            return JSONResponse(
+                {"success": False, "message": "接口不存在", "code": "not_found"},
+                status_code=404,
+            )
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:

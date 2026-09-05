@@ -1157,8 +1157,9 @@ def update_newapi_channel(
     # status 不能经此接口更新（见 docstring 第 1 条）
     status_requested = merged.pop("status", None) if "status" in patch else None
     merged.pop("status", None)
-    # 上游不回明文密钥；空 key 别回传，避免把密钥清空
-    if not str(merged.get("key") or "").strip():
+    # 上游不回明文密钥；空 key 别回传，避免把密钥清空；掩码 key 同样剔除，
+    # 否则保存优先级等字段会把掩码串写回上游，渠道密钥直接写坏
+    if _channel_key_is_masked(merged.get("key")):
         merged.pop("key", None)
 
     other_fields = {k: v for k, v in patch.items() if k in allowed and k != "status"}

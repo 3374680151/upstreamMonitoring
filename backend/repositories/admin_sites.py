@@ -288,7 +288,7 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             sync_all_channels, reconcile_mode, retention_days,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,

@@ -507,14 +507,23 @@ async def create_site_route(request: Request):
             status_code=500,
         )
     if not ok:
+        if existed:
+            # 手动创建撞 sites.base_url 唯一键:409 让前端明确提示「已存在」,
+            # 不再静默复用已有站点丢弃新配置(P1-5)
+            return JSONResponse(
+                {
+                    "success": False,
+                    "code": "site_exists",
+                    "site_id": site_id,
+                    "message": error,
+                },
+                status_code=409,
+            )
         return JSONResponse(
             {"success": False, "message": error},
             status_code=400,
         )
-    response: dict[str, Any] = {"success": True, "id": site_id}
-    if existed:
-        response["existed"] = True
-    return response
+    return {"success": True, "id": site_id}
 
 
 @router.put("/sites/{site_id}")

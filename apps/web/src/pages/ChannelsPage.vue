@@ -223,12 +223,19 @@ const groupChannelCount = computed(() => {
 });
 
 // 分组视角的自定义排序：拖拽侧栏卡片调整顺序，localStorage 持久化；
+// 按主站隔离存储（旧版单全局 key 会跨主站互相覆盖，直接废弃，U-2）。
 // 顺序只约束当前仍存在的分组，新增分组按默认字母序追加，不丢项。
 const GROUP_ORDER_STORAGE_KEY = "upstream.group_view_order";
 
-function loadGroupOrder(): string[] {
+function groupOrderStorageKey(adminSiteId: number | null): string {
+  return adminSiteId ? `${GROUP_ORDER_STORAGE_KEY}:${adminSiteId}` : "";
+}
+
+function loadGroupOrder(adminSiteId: number | null): string[] {
+  const storageKey = groupOrderStorageKey(adminSiteId);
+  if (!storageKey) return [];
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(GROUP_ORDER_STORAGE_KEY) || "[]");
+    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey) || "[]");
     return Array.isArray(parsed)
       ? parsed.filter((item): item is string => typeof item === "string")
       : [];
@@ -239,14 +246,21 @@ function loadGroupOrder(): string[] {
 
 // 拖拽期间原卡片保留在原位（半透明），占位卡跟随指针指示落点。
 // 注意不能把拖拽源从列表移除——源元素离开 DOM 会直接取消原生拖拽。
-const customGroupOrder = ref<string[]>(loadGroupOrder());
+const customGroupOrder = ref<string[]>(loadGroupOrder(siteId.value));
 const dragGroupName = ref<string | null>(null);
 const dragInsertIndex = ref<number | null>(null);
 const dragPlaceholderHeight = ref(96);
 
+// 切换主站时加载该主站自己的分组顺序（U-2）
+watch(siteId, (next) => {
+  customGroupOrder.value = loadGroupOrder(next);
+});
+
 watch(customGroupOrder, (order) => {
+  const storageKey = groupOrderStorageKey(siteId.value);
+  if (!storageKey) return;
   try {
-    localStorage.setItem(GROUP_ORDER_STORAGE_KEY, JSON.stringify(order));
+    localStorage.setItem(storageKey, JSON.stringify(order));
   } catch {
     // localStorage 不可用（隐私模式等）时静默降级，顺序仅本次会话生效
   }

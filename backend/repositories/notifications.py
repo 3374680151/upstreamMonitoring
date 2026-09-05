@@ -7,6 +7,7 @@ working unchanged.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from backend.core.time import utc_now_iso
@@ -29,11 +30,26 @@ def get_notification_settings() -> Dict[str, Any]:
     return db_query_one("SELECT * FROM notification_settings WHERE id = 1") or {}
 
 
+def _mask_wecom_webhook(value: Any) -> str:
+    """Mask the WeCom webhook echo: keep only the last 8 chars of the ``key``
+    query param — the key is a push credential, equivalent to a password
+    (audit P1-2)."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    matched = re.search(r"([?&]key=)([^&]+)", text, flags=re.IGNORECASE)
+    if not matched:
+        return "****"
+    key_value = matched.group(2)
+    tail = key_value[-8:] if len(key_value) > 8 else "***"
+    return f"{text[: matched.start()]}{matched.group(1)}***{tail}"
+
+
 def notification_settings_payload() -> Dict[str, Any]:
     settings = get_notification_settings()
     return {
         "wecom_enabled": bool(settings.get("wecom_enabled")),
-        "wecom_webhook": settings.get("wecom_webhook") or "",
+        "wecom_webhook_masked": _mask_wecom_webhook(settings.get("wecom_webhook")),
         "wecom_has_webhook": bool(settings.get("wecom_webhook")),
         "wecom_last_error": settings.get("wecom_last_error"),
         "wecom_last_sent_at": settings.get("wecom_last_sent_at"),
@@ -54,7 +70,12 @@ def notification_settings_payload() -> Dict[str, Any]:
 def update_notification_settings(body: Dict[str, Any]) -> None:
     settings = get_notification_settings()
     wecom_enabled = bool(body.get("wecom_enabled", False))
-    wecom_webhook = str(body.get("wecom_webhook") or "").strip()
+    # Blank webhook keeps the stored one (same pattern as smtp_password): the
+    # masked GET payload can never be replayed verbatim by the client (P1-2).
+    wecom_webhook = (
+        str(body.get("wecom_webhook") or "").strip()
+        or str(settings.get("wecom_webhook") or "")
+    )
     email_enabled = bool(body.get("email_enabled", False))
     smtp_host = str(body.get("smtp_host") or "").strip()
     smtp_port = int(body.get("smtp_port") or 465)

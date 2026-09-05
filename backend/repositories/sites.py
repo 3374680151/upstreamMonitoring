@@ -245,9 +245,10 @@ def find_monitor_site_for_channel(base_url: str) -> Optional[Dict[str, Any]]:
 def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str], bool]:
     """Create a monitored upstream site.
 
-    Returns ``(ok, site_id, error_message, existed)``.  When a site with the
-    same ``base_url`` already exists the duplicate is returned as a no-op with
-    ``existed=True`` instead of surfacing the MySQL 1062 error.
+    Returns ``(ok, site_id, error_message, existed)``.  A duplicate ``base_url``
+    surfaces as a conflict (``ok=False, existed=True``; the router answers 409)
+    so manual creates never silently drop their config (P1-5).  Discovery
+    import keeps its own duplicate handling and never lands here.
     """
     name = str(body.get("name") or "").strip()
     base_url = normalize_base_url(str(body.get("base_url") or ""))
@@ -353,10 +354,10 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
         )
         return True, site_id, None, False
     except Exception as insert_err:
-        # MySQL 1062 (Duplicate entry) on sites.base_url UNIQUE: a row with the
-        # same base_url already exists.  Return that row's id instead of
-        # failing, so a "从主站同步" call that re-posts a known base_url just
-        # becomes a no-op rather than a hard error.
+        # MySQL 1062 (Duplicate entry) on sites.base_url UNIQUE: surface a
+        # conflict instead of silently replaying the existing row — manual
+        # creates must not have their new config dropped without a trace
+        # (P1-5).  Discovery import handles duplicates on its own upstream.
         err_text = str(insert_err).lower()
         if "1062" in err_text or "duplicate" in err_text:
             existing = db_query_one(
@@ -364,7 +365,12 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
                 (base_url,),
             )
             if existing and "id" in existing:
-                return True, int(existing["id"]), None, True
+                return (
+                    False,
+                    int(existing["id"]),
+                    "该地址已存在监控站点，请直接编辑现有站点",
+                    True,
+                )
         raise
 
 
@@ -399,8 +405,14 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
         fields.append("enabled = ?")
         params.append(1 if body["enabled"] else 0)
     if "interval_minutes" in body:
+        new_interval = max(MIN_INTERVAL_MINUTES, int(body["interval_minutes"]))
         fields.append("interval_minutes = ?")
-        params.append(max(MIN_INTERVAL_MINUTES, int(body["interval_minutes"])))
+        params.append(new_interval)
+        # 间隔变更即重排下一次检测,否则调度器要等旧 next_check_at 到期
+        # 之后才按新间隔跑(P2-4)
+        if new_interval != int(site.get("interval_minutes") or 0):
+            fields.append("next_check_at = ?")
+            params.append(_next_check_iso(new_interval))
     if "login_enabled" in body:
         login_enabled = bool(body["login_enabled"])
         login_username = str(body.get("login_username") or "").strip()

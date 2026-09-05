@@ -28,7 +28,9 @@ def is_public_api_path(path: str) -> bool:
         return True
     return bool(
         re.fullmatch(
-            r"/api/session-sync-requests/[A-Za-z0-9_-]{1,64}/complete",
+            # 与 session_sync 路由 /session-sync/requests/{request_id}/complete
+            # 保持同形,否则设置 CONSOLE_PASSWORD 后扩展回调永远 401
+            r"/api/session-sync/requests/[A-Za-z0-9_-]{1,64}/complete",
             str(path or ""),
         )
     )

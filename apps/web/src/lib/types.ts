@@ -177,7 +177,7 @@ export type Overview = {
 
 export type NotificationSettings = {
   wecom_enabled?: boolean;
-  wecom_webhook?: string;
+  wecom_webhook_masked?: string;
   wecom_has_webhook?: boolean;
   wecom_last_sent_at?: string | null;
   wecom_last_error?: string | null;

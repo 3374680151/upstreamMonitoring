@@ -66,6 +66,9 @@ const toast = useToast();
 const form = ref<NotificationForm>({ ...EMPTY_FORM });
 let formDirty = false;
 const wecomStatus = ref("未配置");
+// GET 契约只回 wecom_webhook_masked 掩码串(P1-2),明文不回显:
+// 输入框留空 = 服务端沿用旧值,已配置时 placeholder 提示更换方式
+const wecomHasWebhook = ref(false);
 const emailStatus = ref("未配置");
 const wecomError = ref(false);
 const emailError = ref(false);
@@ -99,7 +102,6 @@ watch(
       form.value = {
         ...EMPTY_FORM,
         wecom_enabled: !!settings.wecom_enabled,
-        wecom_webhook: settings.wecom_webhook || "",
         email_enabled: !!settings.email_enabled,
         smtp_host: settings.smtp_host || "",
         smtp_port: settings.smtp_port || 465,
@@ -109,10 +111,17 @@ watch(
         smtp_to: settings.smtp_to || "",
       };
     }
+    wecomHasWebhook.value = !!settings.wecom_has_webhook;
     const wecomParts = [
       settings.wecom_enabled ? "企业微信已启用" : "企业微信未启用",
     ];
-    if (settings.wecom_has_webhook) wecomParts.push("Webhook 已保存");
+    if (settings.wecom_has_webhook) {
+      wecomParts.push(
+        settings.wecom_webhook_masked
+          ? `Webhook 已保存(${settings.wecom_webhook_masked})`
+          : "Webhook 已保存",
+      );
+    }
     if (settings.wecom_last_sent_at) {
       wecomParts.push(`上次发送：${fmtTime(settings.wecom_last_sent_at)}`);
     }
@@ -247,7 +256,9 @@ async function testWecom() {
           <Input
             :model-value="form.wecom_webhook"
             @update:model-value="(v: string) => updateForm((f) => ({ ...f, wecom_webhook: v }))"
-            placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx"
+            :placeholder="wecomHasWebhook
+              ? '已配置，留空沿用；更换请粘贴新地址'
+              : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx'"
           />
         </Field>
         <div class="flex flex-wrap items-center justify-between gap-3">

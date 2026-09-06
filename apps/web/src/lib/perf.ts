@@ -162,6 +162,24 @@ export function formatMs(value?: number | null): string {
   return `${Math.round(n)}ms`;
 }
 
+/** 主站渠道最近请求首字延迟：level → 语义色（数值阈值由后端随响应下发） */
+export function ttftTone(
+  level?: string | null,
+): "success" | "warning" | "danger" | "neutral" {
+  if (level === "fast") return "success";
+  if (level === "normal") return "warning";
+  if (level === "slow") return "danger";
+  return "neutral";
+}
+
+/** 首字延迟展示：<1s 显示毫秒，其余显示 1 位小数秒 */
+export function formatTtft(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(Number(seconds))) return "-";
+  const n = Number(seconds);
+  if (n < 1) return `${Math.round(n * 1000)}ms`;
+  return `${n.toFixed(1)}s`;
+}
+
 export function formatRate(value?: number | null): string {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   return `${Number(value).toFixed(2)}%`;

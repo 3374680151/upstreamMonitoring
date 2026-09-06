@@ -130,6 +130,28 @@ ADMIN_KEY_REFRESH_BATCHES: Dict[int, Dict[str, Any]] = {}
 
 
 # ---------------------------------------------------------------------------
+# 主站渠道最近请求日志（主站监控页首字延迟色点）
+# ---------------------------------------------------------------------------
+# 读请求一律先回缓存（哪怕已过旧，SWR）；条目超过新鲜度窗口时由后台线程刷新，
+# key 为 "{site_id}:{channel_id}"。上游 /api/log/ 有频控：未命中缓存的拉取经
+# 限速门按主站 base 预约最小间隔，命中 429 后进入冷却。缓存条目只有日志派生的
+# 延迟数据，不含任何密钥。
+MAIN_CHANNEL_LOGS_FRESH_SECONDS = 60
+# 内存上界 300s（过期前条目仍在，可读旧值）；业务新鲜度按条目内 updated_monotonic 判定
+MAIN_CHANNEL_LOGS_CACHE_TTL_BOUND_SECONDS = 300
+MAIN_CHANNEL_LOGS_CACHE: TTLCache = TTLCache(
+    maxsize=1024, ttl=MAIN_CHANNEL_LOGS_CACHE_TTL_BOUND_SECONDS
+)
+MAIN_CHANNEL_LOGS_REFRESHING: set[str] = set()
+MAIN_CHANNEL_LOGS_CACHE_LOCK = threading.RLock()
+MAIN_CHANNEL_LOGS_REQUEST_LOCK = threading.RLock()
+MAIN_CHANNEL_LOGS_LAST_REQUEST_AT: Dict[str, float] = {}
+MAIN_CHANNEL_LOGS_RATE_LIMIT_UNTIL: Dict[str, float] = {}
+MAIN_CHANNEL_LOGS_MIN_INTERVAL_SECONDS = 0.25
+MAIN_CHANNEL_LOGS_RATE_LIMIT_COOLDOWN_SECONDS = 30.0
+
+
+# ---------------------------------------------------------------------------
 # 浏览器会话锁（管理站 / NewAPI 普通站 / sub2api 管理端）
 # ---------------------------------------------------------------------------
 # Refresh tokens rotate on every successful dashboard refresh. Serialize by

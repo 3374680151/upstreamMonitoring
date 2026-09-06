@@ -143,6 +143,11 @@ def get_admin_site_or_404(admin_site_id: int) -> Tuple[Optional[Dict[str, Any]],
     return site, None, 200
 
 
+def get_admin_site_by_id(admin_site_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch a raw admin-site row by id (no credential validation)."""
+    return db_query_one("SELECT * FROM admin_sites WHERE id = ?", (int(admin_site_id),))
+
+
 def get_cached_admin_channel_key(admin_site_id: int, channel_id: int) -> str:
     row = db_query_one(
         "SELECT channel_key FROM admin_channel_keys WHERE admin_site_id = ? AND channel_id = ?",

@@ -393,6 +393,58 @@ export type ChannelGroupsResponse = {
   message?: string;
 };
 
+/** 主站渠道最近请求首字延迟的阈值口径（后端按环境变量计算后随响应下发） */
+export type TtftThresholds = {
+  fast_seconds: number;
+  slow_seconds: number;
+  stale_seconds: number;
+  window_seconds: number;
+  [key: string]: unknown;
+};
+
+/** 单次请求的首字延迟点位（新→旧排序） */
+export type ChannelRecentRequestPoint = {
+  log_id?: number;
+  created_at?: string;
+  model_name?: string;
+  /** 流式取上游 other.frt；非流式无首字记录，回退总耗时（is_stream=false 识别） */
+  ttft_seconds?: number | null;
+  total_seconds?: number | null;
+  is_stream?: boolean;
+  age_seconds?: number;
+  /** 超过 stale_seconds（默认 15 分钟）的旧请求，色点显示空心圆环 */
+  stale?: boolean;
+  /** fast=绿（<fast_seconds）/ normal=橙 / slow=红（≥slow_seconds），后端算好 */
+  level?: "fast" | "normal" | "slow" | string;
+  [key: string]: unknown;
+};
+
+/** 单渠道最近请求数据 */
+export type ChannelRecentRequestEntry = {
+  channel_id: number;
+  /** active=窗口内有请求；idle=窗口内无请求（整组灰点）；error=拉取失败 */
+  state?: "active" | "idle" | "error" | string;
+  requests?: ChannelRecentRequestPoint[];
+  error?: string | null;
+  fetched_at?: string;
+  [key: string]: unknown;
+};
+
+/** GET /api/admin/sites/{id}/channels/recent-requests 响应 */
+export type ChannelRecentRequestsResponse = {
+  success: boolean;
+  data?: {
+    admin_site_id?: number;
+    platform?: string;
+    thresholds?: TtftThresholds;
+    channels?: Record<string, ChannelRecentRequestEntry>;
+    fetched_at?: string;
+    [key: string]: unknown;
+  };
+  message?: string;
+  code?: string;
+};
+
 /** 全量渠道 key / 倍率刷新批次进度（后端进程内存态，/api/admin/sites 轮询返回） */
 export type AdminKeyRefreshProgress = {
   status: "running" | "paused" | "done" | "failed" | string;

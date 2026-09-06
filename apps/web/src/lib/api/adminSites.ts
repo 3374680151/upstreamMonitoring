@@ -16,6 +16,7 @@ import type {
   ChannelDetailResponse,
   ChannelGroupsResponse,
   ChannelListResponse,
+  ChannelRecentRequestsResponse,
   ChannelUpstreamBinding,
   Platform,
 } from "../types";
@@ -72,6 +73,17 @@ export const adminSitesApi = {
   /** 分组名 → 倍率/描述（供密钥比对） */
   channelGroups: (adminSiteId: number) =>
     request<ChannelGroupsResponse>(`/api/admin/sites/${adminSiteId}/groups`),
+  /** 渠道最近请求首字延迟（后端 SWR 短缓存；refresh=true 强制穿透） */
+  channelRecentRequests: (
+    adminSiteId: number,
+    channelIds: number[],
+    refresh = false,
+  ) =>
+    request<ChannelRecentRequestsResponse>(
+      `/api/admin/sites/${adminSiteId}/channels/recent-requests?channel_ids=${encodeURIComponent(
+        channelIds.join(","),
+      )}${refresh ? "&refresh=1" : ""}`,
+    ),
   channelUpstreamBindings: (adminSiteId: number) =>
     request<{ success: boolean; data?: Record<string, ChannelUpstreamBinding>; message?: string }>(
       `/api/admin/sites/${adminSiteId}/channel-mappings`,

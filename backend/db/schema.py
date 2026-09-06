@@ -292,6 +292,71 @@ DDL_STATEMENTS = [
             REFERENCES admin_sites(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # 计费核对：一行 = 主站一条消费日志的三方对照结果（官方价 / 上游公示倍率期望 /
+    # 上游实扣 / 主站实收）。单价与公示倍率都做核对时点快照落行，历史判定不受
+    # 后续改价影响；upstream_* 字段是上游后台暗改倍率的证据链。
+    """
+    CREATE TABLE IF NOT EXISTS billing_request_checks (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        admin_site_id INT NOT NULL,
+        channel_id INT,
+        channel_name VARCHAR(255),
+        upstream_site_id INT,
+        upstream_site_name VARCHAR(255),
+        main_log_id BIGINT NOT NULL,
+        request_at VARCHAR(40) NOT NULL,
+        model_name VARCHAR(255) NOT NULL,
+        prompt_tokens INT NOT NULL DEFAULT 0,
+        completion_tokens INT NOT NULL DEFAULT 0,
+        cache_read_tokens INT,
+        cache_creation_tokens INT,
+        main_quota BIGINT NOT NULL DEFAULT 0,
+        main_usd DOUBLE,
+        main_model_ratio DOUBLE,
+        main_group_ratio DOUBLE,
+        main_completion_ratio DOUBLE,
+        official_usd DOUBLE,
+        official_input_usd_per_m DOUBLE,
+        official_cached_input_usd_per_m DOUBLE,
+        official_cache_write_usd_per_m DOUBLE,
+        official_output_usd_per_m DOUBLE,
+        upstream_expected_usd DOUBLE,
+        upstream_actual_usd DOUBLE,
+        upstream_log_id BIGINT,
+        upstream_model_ratio DOUBLE,
+        upstream_group_ratio DOUBLE,
+        upstream_completion_ratio DOUBLE,
+        published_model_ratio DOUBLE,
+        published_group_ratio DOUBLE,
+        published_completion_ratio DOUBLE,
+        match_status VARCHAR(32) NOT NULL DEFAULT 'no_binding',
+        status VARCHAR(32) NOT NULL DEFAULT 'unknown',
+        reason_codes_json LONGTEXT,
+        main_other_json LONGTEXT,
+        upstream_other_json LONGTEXT,
+        checked_at VARCHAR(40),
+        created_at VARCHAR(40) NOT NULL,
+        updated_at VARCHAR(40) NOT NULL,
+        UNIQUE KEY uq_billing_check (admin_site_id, main_log_id),
+        KEY idx_billing_check_status (status, request_at),
+        KEY idx_billing_check_site (admin_site_id, request_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    # 官方价格表：billing-audit 的「官方成本」基准。model_name 精确匹配，
+    # 未收录模型记 no_official_price 灰；内置种子只补缺，不覆盖手动修改。
+    """
+    CREATE TABLE IF NOT EXISTS official_model_prices (
+        model_name VARCHAR(255) PRIMARY KEY,
+        quota_type VARCHAR(16) NOT NULL DEFAULT 'per_token',
+        input_usd_per_m DOUBLE,
+        cached_input_usd_per_m DOUBLE,
+        cache_write_usd_per_m DOUBLE,
+        output_usd_per_m DOUBLE,
+        price_per_call_usd DOUBLE,
+        source VARCHAR(16) NOT NULL DEFAULT 'builtin',
+        updated_at VARCHAR(40) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
     """
     CREATE TABLE IF NOT EXISTS app_settings (
         name VARCHAR(128) PRIMARY KEY,
@@ -390,6 +455,8 @@ ADMIN_SITE_SYNC_CONFIG_MIGRATION = "2026-08-29-admin-site-sync-config-retention-
 SITES_AUTH_MODE_DEFAULT_MIGRATION = "2026-09-03-sites-auth-mode-default-browser"
 
 TOKEN_MODE_TO_BROWSER_MIGRATION = "2026-09-03-sites-token-mode-to-browser"
+
+BILLING_AUDIT_PRICE_SEED_MIGRATION = "2026-09-07-billing-audit-official-price-seed"
 
 
 def migrate_sub2api_sites_to_browser_first(cursor: Any) -> None:
@@ -555,6 +622,83 @@ def run_token_mode_to_browser_migration_once(cursor: Any) -> bool:
     return True
 
 
+def builtinOfficialModelPrices() -> list:
+    """内置种子价：常见模型公开官方价（USD / 1M tokens，2025-09 口径）。
+
+    种子数据放在 db 层随迁移走（依赖方向：schema 不反向 import 仓储）；
+    只作起步值，用户在 UI 改价即 source=manual，本迁移不会覆盖。
+    """
+
+    def perToken(inputPrice, cachedPrice, writePrice, outputPrice):
+        return {
+            "quota_type": "per_token",
+            "input_usd_per_m": inputPrice,
+            "cached_input_usd_per_m": cachedPrice,
+            "cache_write_usd_per_m": writePrice,
+            "output_usd_per_m": outputPrice,
+            "price_per_call_usd": None,
+        }
+
+    return [
+        {"model_name": "gpt-4o", **perToken(2.5, 1.25, None, 10.0)},
+        {"model_name": "gpt-4o-mini", **perToken(0.15, 0.075, None, 0.6)},
+        {"model_name": "gpt-4.1", **perToken(2.0, 0.5, None, 8.0)},
+        {"model_name": "gpt-4.1-mini", **perToken(0.4, 0.1, None, 1.6)},
+        {"model_name": "gpt-4.1-nano", **perToken(0.1, 0.025, None, 0.4)},
+        {"model_name": "o3", **perToken(2.0, 0.5, None, 8.0)},
+        {"model_name": "o4-mini", **perToken(1.1, 0.275, None, 4.4)},
+        {"model_name": "claude-opus-4-20250514", **perToken(15.0, 1.5, 18.75, 75.0)},
+        {"model_name": "claude-sonnet-4-20250514", **perToken(3.0, 0.3, 3.75, 15.0)},
+        {"model_name": "claude-3-7-sonnet-20250219", **perToken(3.0, 0.3, 3.75, 15.0)},
+        {"model_name": "claude-3-5-haiku-20241022", **perToken(0.8, 0.08, 1.0, 4.0)},
+        {"model_name": "claude-haiku-4-5-20251001", **perToken(1.0, 0.1, 1.25, 5.0)},
+        {"model_name": "deepseek-chat", **perToken(0.27, 0.07, None, 1.1)},
+        {"model_name": "deepseek-reasoner", **perToken(0.55, 0.14, None, 2.19)},
+        {"model_name": "gemini-2.5-pro", **perToken(1.25, 0.31, None, 10.0)},
+        {"model_name": "gemini-2.5-flash", **perToken(0.3, 0.075, None, 2.5)},
+    ]
+
+
+def run_billing_audit_price_seed_migration_once(cursor: Any) -> bool:
+    """官方价格表内置种子（一次性，只补缺）。
+
+    内置常用模型的公开官方价（USD / 1M tokens）作为起步值；用户在 UI 里
+    改价 / 删价都不受影响——迁移只执行一次，之后种子常量更新也不再回填。
+    """
+    cursor.execute(
+        "SELECT name FROM app_schema_migrations WHERE name = %s",
+        (BILLING_AUDIT_PRICE_SEED_MIGRATION,),
+    )
+    if cursor.fetchone():
+        return False
+    now = utc_now_iso()
+    for item in builtinOfficialModelPrices():
+        cursor.execute(
+            """
+            INSERT IGNORE INTO official_model_prices
+            (model_name, quota_type, input_usd_per_m, cached_input_usd_per_m,
+             cache_write_usd_per_m, output_usd_per_m, price_per_call_usd,
+             source, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'builtin', %s)
+            """,
+            (
+                item["model_name"],
+                item.get("quota_type") or "per_token",
+                item.get("input_usd_per_m"),
+                item.get("cached_input_usd_per_m"),
+                item.get("cache_write_usd_per_m"),
+                item.get("output_usd_per_m"),
+                item.get("price_per_call_usd"),
+                now,
+            ),
+        )
+    cursor.execute(
+        "INSERT INTO app_schema_migrations (name, applied_at) VALUES (%s, %s)",
+        (BILLING_AUDIT_PRICE_SEED_MIGRATION, utc_now_iso()),
+    )
+    return True
+
+
 def init_db() -> None:
     with DB_LOCK:
         conn = connect_db()
@@ -585,6 +729,7 @@ def init_db() -> None:
                 run_admin_site_sync_config_migration_once(cur)
                 run_token_mode_to_browser_migration_once(cur)
                 run_sites_auth_mode_default_migration_once(cur)
+                run_billing_audit_price_seed_migration_once(cur)
 
                 # 说明：这里曾有一段把 newapi + browser 行强制归一化为 token
                 # 的启动期 UPDATE，那是 NewAPI 浏览器登录态同步落地前的过渡

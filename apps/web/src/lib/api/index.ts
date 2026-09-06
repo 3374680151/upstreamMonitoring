@@ -7,6 +7,7 @@
  *   notificationsApi ← backend/api/routers/notifications.py
  *   sessionSyncApi   ← backend/api/routers/session_sync.py
  *   adminSitesApi    ← backend/api/routers/admin_sites.py
+ *   billingAuditApi  ← backend/api/routers/billing_audit.py
  *
  * 对外保持与原 `lib/api.ts` 完全一致的 `api` 对象与方法签名，
  * 页面与组件零改动即可消费。新增 `siteSnapshots` / `notificationLogs`
@@ -17,6 +18,7 @@ import { monitoringApi } from "./monitoring";
 import { notificationsApi } from "./notifications";
 import { sessionSyncApi } from "./sessionSync";
 import { adminSitesApi } from "./adminSites";
+import { billingAuditApi } from "./billingAudit";
 
 export { getConsoleToken, setConsoleToken } from "./client";
 
@@ -26,4 +28,5 @@ export const api = {
   ...notificationsApi,
   ...sessionSyncApi,
   ...adminSitesApi,
+  ...billingAuditApi,
 };

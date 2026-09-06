@@ -14,6 +14,7 @@ from backend.db.connection import db_execute, db_query_all
 from backend.services.monitoring_service import detect_site
 from backend.services.retention_service import pruneExpiredMonitoringData
 from backend.services.sync_service import run_due_admin_key_syncs
+from backend.workers.billing_audit_worker import billingAuditSchedulerTick
 
 
 def run_scheduler_tick(now: datetime | None = None) -> None:
@@ -104,6 +105,13 @@ class SchedulerWorker:
             hours=24,
             id="monitoring-retention-prune",
             next_run_time=datetime.now(tz=timezone.utc),
+        )
+        # 计费核对：每分钟 tick 一次，tick 内部按设置里的开关与间隔决定是否真正跑。
+        self._scheduler.add_job(
+            billingAuditSchedulerTick,
+            "interval",
+            minutes=1,
+            id="billing-audit-tick",
         )
         self._scheduler.start()
         self._started = True

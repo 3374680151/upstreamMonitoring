@@ -564,3 +564,108 @@ export type NotificationLog = {
   created_at?: string;
   [key: string]: unknown;
 };
+
+/** 计费核对状态：ok=绿（通过）/ mismatch=红（异常）/ unknown=灰（无法核对） */
+export type BillingCheckStatus = "ok" | "mismatch" | "unknown";
+
+/** 上游日志匹配状态：no_binding/no_token 表示渠道没绑上游或绑定无凭据 */
+export type BillingMatchStatus =
+  | "matched"
+  | "unmatched"
+  | "no_binding"
+  | "no_token"
+  | "no_log_api";
+
+/** 一条主站消费请求的三方对照结果（GET /api/billing-audit/requests）— 对应 billing_request_checks 表 */
+export type BillingRequestCheck = {
+  id: number;
+  admin_site_id: number;
+  channel_id: number | null;
+  channel_name: string | null;
+  upstream_site_id: number | null;
+  upstream_site_name: string | null;
+  main_log_id: number;
+  request_at: string;
+  model_name: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
+  main_quota: number;
+  main_usd: number | null;
+  main_model_ratio: number | null;
+  main_group_ratio: number | null;
+  main_completion_ratio: number | null;
+  official_usd: number | null;
+  official_input_usd_per_m: number | null;
+  official_cached_input_usd_per_m: number | null;
+  official_cache_write_usd_per_m: number | null;
+  official_output_usd_per_m: number | null;
+  upstream_expected_usd: number | null;
+  upstream_actual_usd: number | null;
+  upstream_log_id: number | null;
+  /** 上游日志 other 里自记的倍率——暗改倍率的直接证据 */
+  upstream_model_ratio: number | null;
+  upstream_group_ratio: number | null;
+  upstream_completion_ratio: number | null;
+  /** 核对时点我方监控到的上游公示倍率快照 */
+  published_model_ratio: number | null;
+  published_group_ratio: number | null;
+  published_completion_ratio: number | null;
+  match_status: BillingMatchStatus;
+  status: BillingCheckStatus;
+  reason_codes: string[];
+  checked_at: string | null;
+  /** 详情接口才返回：两侧日志 other 字段原始 JSON */
+  main_other_json?: Record<string, unknown> | null;
+  upstream_other_json?: Record<string, unknown> | null;
+};
+
+/** 计费核对总览 KPI（GET /api/billing-audit/overview） */
+export type BillingAuditOverview = {
+  total_count: number;
+  ok_count: number;
+  mismatch_count: number;
+  unknown_count: number;
+  main_usd_total: number;
+  upstream_usd_total: number;
+  official_usd_total: number;
+  margin_usd_total: number;
+  reason_breakdown: { code: string; count: number }[];
+  model_breakdown: { model_name: string; total_count: number; mismatch_count: number }[];
+};
+
+/** 计费核对运行设置（GET/PUT /api/billing-audit/settings） */
+export type BillingAuditSettings = {
+  enabled: boolean;
+  interval_minutes: number;
+  tolerance_percent: number;
+  match_window_seconds: number;
+  retention_days: number;
+  quota_per_unit: number;
+  push_on_red: boolean;
+};
+
+/** 官方价格行（GET/PUT /api/billing-audit/prices）— 对应 official_model_prices 表 */
+export type OfficialModelPrice = {
+  model_name: string;
+  quota_type: "per_token" | "per_call";
+  input_usd_per_m: number | null;
+  cached_input_usd_per_m: number | null;
+  cache_write_usd_per_m: number | null;
+  output_usd_per_m: number | null;
+  price_per_call_usd: number | null;
+  source: "builtin" | "manual";
+  updated_at: string;
+};
+
+/** 手动触发核对的每主站回显（POST /api/billing-audit/run） */
+export type BillingRunSiteSummary = {
+  admin_site_id: number;
+  name?: string | null;
+  inserted?: number;
+  checked?: number;
+  error?: string;
+  total_mismatch?: number;
+  total_unknown?: number;
+};

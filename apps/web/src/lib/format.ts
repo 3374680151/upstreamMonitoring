@@ -232,3 +232,68 @@ export function siteNameById(sites: Site[], siteId: number): string {
 export function truthy(value: unknown): boolean {
   return value === true || value === 1 || value === "1";
 }
+
+/** 小额美元（每请求费用常用 4–6 位小数）；报表大额金额仍用 usd() */
+export function usdPrecise(value?: number | null, decimals = 4): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+  return `$${Number(value).toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  })}`;
+}
+
+/** 计费核对状态文案（status 是红绿灰渲染依据） */
+export function billingStatusLabel(status?: string | null): string {
+  const labels: Record<string, string> = {
+    ok: "正常",
+    mismatch: "异常",
+    unknown: "无法核对",
+  };
+  return labels[String(status || "").toLowerCase()] || status || "-";
+}
+
+export function billingStatusTone(
+  status?: string | null,
+): "success" | "danger" | "neutral" {
+  if (status === "ok") return "success";
+  if (status === "mismatch") return "danger";
+  return "neutral";
+}
+
+/** 上游日志匹配状态文案（no_binding/no_token 提示补绑定） */
+export function billingMatchLabel(status?: string | null): string {
+  const labels: Record<string, string> = {
+    matched: "已匹配上游日志",
+    unmatched: "未匹配到上游日志",
+    no_binding: "渠道未绑定上游",
+    no_token: "绑定缺少上游登录态",
+    no_log_api: "上游平台不支持日志核对",
+  };
+  return labels[String(status || "").toLowerCase()] || status || "-";
+}
+
+/** 红因 / 灰因文案（reason_codes） */
+export function billingReasonLabel(code?: string | null): string {
+  const labels: Record<string, string> = {
+    upstream_ratio_drift: "上游疑似暗改倍率",
+    main_billing_inconsistent: "主站计费与倍率不符",
+    group_ratio_gap: "加价倍率关系不符",
+    negative_margin: "亏本请求",
+    no_official_price: "缺少官方价格",
+    no_upstream_log: "未匹配到上游日志",
+    no_binding: "渠道未绑定上游",
+    no_token: "绑定缺少上游登录态",
+    ratio_field_missing: "上游倍率字段缺失",
+  };
+  return labels[String(code || "").toLowerCase()] || code || "-";
+}
+
+/** 简单倍率文本（×1.25 风格），用于主站/上游倍率对比展示 */
+export function ratioValueText(value?: number | null): string {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return "—";
+  }
+  return `×${ratioNumberFormat.format(Number(value))}`;
+}

@@ -236,8 +236,8 @@ def _fetchAndCacheEntry(
     )
     entry = _buildEntry(channelId, ok, rows, error)
     if ok:
-        # 拉取失败不写缓存：瞬时故障（5xx/超时/限流）不能把已有好数据覆盖成
-        # error，也不能在 60s 内被当「新鲜」反复返回；与后台 SWR 路径同口径。
+        # A failed fetch must not overwrite a good cached entry with an error
+        # state, nor be replayed as "fresh" for 60s; matches the SWR path.
         _cacheLogsEntry(adminSiteId, channelId, entry)
     return entry
 

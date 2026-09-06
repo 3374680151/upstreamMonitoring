@@ -68,7 +68,10 @@ const containerTitle = computed(() => {
 const ariaLabel = computed(() => {
   if (props.entry?.state === "error") return "最近请求首字延迟：读取失败";
   const points = props.entry?.requests || [];
-  if (!points.length) return windowLabel();
+  if (!points.length) {
+    if (!props.entry) return "最近请求首字延迟：暂无数据";
+    return windowLabel();
+  }
   const counts = { fast: 0, normal: 0, slow: 0 };
   for (const point of points) {
     const level = String(point.level || "");

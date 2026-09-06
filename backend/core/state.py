@@ -137,7 +137,11 @@ ADMIN_KEY_REFRESH_BATCHES: Dict[int, Dict[str, Any]] = {}
 # 限速门按主站 base 预约最小间隔，命中 429 后进入冷却。缓存条目只有日志派生的
 # 延迟数据，不含任何密钥。
 MAIN_CHANNEL_LOGS_FRESH_SECONDS = 60
-MAIN_CHANNEL_LOGS_CACHE: TTLCache = TTLCache(maxsize=1024, ttl=MODEL_CACHE_BOUND_SECONDS)
+# 内存上界 300s（过期前条目仍在，可读旧值）；业务新鲜度按条目内 updated_monotonic 判定
+MAIN_CHANNEL_LOGS_CACHE_TTL_BOUND_SECONDS = 300
+MAIN_CHANNEL_LOGS_CACHE: TTLCache = TTLCache(
+    maxsize=1024, ttl=MAIN_CHANNEL_LOGS_CACHE_TTL_BOUND_SECONDS
+)
 MAIN_CHANNEL_LOGS_REFRESHING: set[str] = set()
 MAIN_CHANNEL_LOGS_CACHE_LOCK = threading.RLock()
 MAIN_CHANNEL_LOGS_REQUEST_LOCK = threading.RLock()

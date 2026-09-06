@@ -6,6 +6,7 @@
  * 窗口内无请求整组灰点，缺位补灰点。数值阈值由后端随响应下发，前端不写死。
  */
 import { computed } from "vue";
+import { fmtTime } from "@/lib/format";
 import { formatTtft, ttftTone } from "@/lib/perf";
 import type {
   ChannelRecentRequestEntry,
@@ -83,9 +84,7 @@ function pointTitle(point: ChannelRecentRequestPoint): string {
     point.is_stream === false ? "耗时（非流式，无首字记录）" : "首字延迟";
   const parts = [`${basis} ${formatTtft(point.ttft_seconds)}`];
   if (point.model_name) parts.push(String(point.model_name));
-  if (point.created_at) {
-    parts.push(String(point.created_at).slice(0, 16).replace("T", " "));
-  }
+  if (point.created_at) parts.push(fmtTime(String(point.created_at)));
   if (point.stale) {
     parts.push(`约 ${durationLabel(Number(point.age_seconds))}前的请求（非实时）`);
   }
@@ -97,7 +96,8 @@ function emptyTitle(): string {
     return props.entry.error || "读取请求日志失败";
   }
   if (props.loading && !props.entry) return "正在读取最近请求...";
-  if (!props.entry || props.entry.state === "idle") return windowLabel();
+  if (!props.entry) return "暂无数据";
+  if (props.entry.state === "idle") return windowLabel();
   return "窗口内没有更多请求";
 }
 

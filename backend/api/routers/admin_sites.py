@@ -332,15 +332,16 @@ async def channel_list(admin_site_id: int, keyword: str = ""):
 @router.get("/admin/sites/{admin_site_id}/channels/recent-requests")
 async def channel_recent_requests(
     admin_site_id: int,
-    channel_ids: str = Query(..., description="逗号分隔的渠道 ID，最多 100 个"),
+    channel_ids: str = Query("", description="逗号分隔的渠道 ID，最多 100 个"),
     refresh: int = 0,
 ):
     site, error, status = get_admin_site_or_404(admin_site_id)
     if error:
-        if status == 404:
-            error = dict(error)
-            error.setdefault("code", "admin_site_not_found")
-        return JSONResponse(error, status_code=status)
+        # 契约口径（Apifox 404 定义）：主站不存在与已配置但缺凭据统一按
+        # 404 admin_site_not_found 返回；缺凭据在仓库层内部是 400。
+        error = dict(error)
+        error.setdefault("code", "admin_site_not_found")
+        return JSONResponse(error, status_code=404)
     if _platform(site) == "sub2api":
         return JSONResponse(
             {

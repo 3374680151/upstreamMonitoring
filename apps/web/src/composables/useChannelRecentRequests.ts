@@ -14,6 +14,7 @@ export function useChannelRecentRequests() {
   const loading = ref(false);
   const error = ref("");
   let loadVersion = 0;
+  let loadedSiteId: number | null = null;
 
   async function load(
     adminSiteId: number,
@@ -21,6 +22,14 @@ export function useChannelRecentRequests() {
     refresh = false,
   ): Promise<boolean> {
     if (!adminSiteId || channelIds.length === 0) return false;
+    if (loadedSiteId !== adminSiteId) {
+      // 切主站先清空：不同主站的渠道 id 会重叠，不清理会把上一主站的色点
+      // 串到新主站表格（新数据受限速门影响可能数秒后才回来）。
+      loadedSiteId = adminSiteId;
+      entries.value = {};
+      thresholds.value = null;
+      error.value = "";
+    }
     const version = ++loadVersion;
     loading.value = true;
     try {
@@ -43,13 +52,5 @@ export function useChannelRecentRequests() {
     }
   }
 
-  function reset() {
-    loadVersion += 1;
-    entries.value = {};
-    thresholds.value = null;
-    error.value = "";
-    loading.value = false;
-  }
-
-  return { entries, thresholds, loading, error, load, reset };
+  return { entries, thresholds, loading, error, load };
 }

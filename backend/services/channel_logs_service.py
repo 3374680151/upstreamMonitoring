@@ -23,12 +23,14 @@ from backend.core import config
 from backend.core import state
 from backend.core.normalize import normalize_base_url
 from backend.core.time import APP_TIMEZONE, utc_now_iso
-from backend.db.connection import db_query_one
 from backend.integrations.newapi_channel_logs import (
     fetchNewapiChannelRecentLogs,
     parseLogRow,
 )
-from backend.repositories.admin_sites import admin_site_platform
+from backend.repositories.admin_sites import (
+    admin_site_platform,
+    get_admin_site_by_id,
+)
 
 FETCH_CONCURRENCY = 4
 
@@ -59,7 +61,7 @@ def fetchAdminSiteChannelRecentRequests(
         if forceRefresh:
             targets.append(channelId)
             continue
-        cached, age = _logsCacheEntry(adminSiteId, channelId)
+        cached, age = _serveCachedEntry(adminSiteId, channelId)
         if cached is None or age > state.MAIN_CHANNEL_LOGS_FRESH_SECONDS:
             if cached is not None:
                 # SWR: stale cache answers immediately, background refresh runs.
@@ -157,18 +159,52 @@ def _cacheLogsEntry(adminSiteId: int, channelId: int, entry: Dict[str, Any]) -> 
         }
 
 
-def _logsCacheEntry(adminSiteId: int, channelId: int) -> Tuple[Optional[Dict[str, Any]], float]:
+def _serveCachedEntry(
+    adminSiteId: int, channelId: int
+) -> Tuple[Optional[Dict[str, Any]], float]:
+    """Return a deep copy of the cached entry with timing re-derived.
+
+    Points were classified against fetch time; a cached entry served later
+    must age with real time (stale ring) and drop points that left the
+    window, otherwise a long SWR tail would keep stale dots looking fresh.
+    """
     with state.MAIN_CHANNEL_LOGS_CACHE_LOCK:
         entry = state.MAIN_CHANNEL_LOGS_CACHE.get(_logsCacheKey(adminSiteId, channelId))
         if not entry or not isinstance(entry.get("payload"), dict):
             return None, float("inf")
         age = time.monotonic() - float(entry.get("updated_monotonic") or 0)
-        return json.loads(json.dumps(entry["payload"], ensure_ascii=False)), age
+        payload = json.loads(json.dumps(entry["payload"], ensure_ascii=False))
+    _rederiveEntryTiming(payload)
+    return payload, age
+
+
+def _rederiveEntryTiming(entry: Dict[str, Any]) -> None:
+    """Re-derive age_seconds/stale/window per point against the current clock."""
+    if entry.get("state") != "active":
+        return
+    nowUnix = time.time()
+    windowSeconds = config.MAIN_CHANNEL_RECENT_WINDOW_SECONDS
+    staleSeconds = config.MAIN_CHANNEL_REQUEST_STALE_SECONDS
+    kept: List[Dict[str, Any]] = []
+    for point in entry.get("requests") or []:
+        try:
+            createdUnix = int(datetime.fromisoformat(str(point.get("created_at"))).timestamp())
+        except (TypeError, ValueError):
+            continue
+        ageSeconds = max(0, int(nowUnix - createdUnix))
+        if ageSeconds > windowSeconds:
+            continue  # left the display window while sitting in cache
+        point["age_seconds"] = ageSeconds
+        point["stale"] = ageSeconds > staleSeconds
+        kept.append(point)
+    entry["requests"] = kept
+    if not kept:
+        entry["state"] = "idle"
 
 
 def _logsRefreshWorker(adminSiteId: int, channelId: int) -> None:
     try:
-        site = db_query_one("SELECT * FROM admin_sites WHERE id = ?", (adminSiteId,))
+        site = get_admin_site_by_id(adminSiteId)
         if not site or admin_site_platform(site) != "newapi":
             return
         ok, rows, _error = _fetchLogsWithGate(
@@ -199,7 +235,10 @@ def _fetchAndCacheEntry(
         site, channelId, config.MAIN_CHANNEL_RECENT_REQUESTS
     )
     entry = _buildEntry(channelId, ok, rows, error)
-    _cacheLogsEntry(adminSiteId, channelId, entry)
+    if ok:
+        # 拉取失败不写缓存：瞬时故障（5xx/超时/限流）不能把已有好数据覆盖成
+        # error，也不能在 60s 内被当「新鲜」反复返回；与后台 SWR 路径同口径。
+        _cacheLogsEntry(adminSiteId, channelId, entry)
     return entry
 
 

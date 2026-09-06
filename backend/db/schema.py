@@ -622,6 +622,43 @@ def run_token_mode_to_browser_migration_once(cursor: Any) -> bool:
     return True
 
 
+def builtinOfficialModelPrices() -> list:
+    """内置种子价：常见模型公开官方价（USD / 1M tokens，2025-09 口径）。
+
+    种子数据放在 db 层随迁移走（依赖方向：schema 不反向 import 仓储）；
+    只作起步值，用户在 UI 改价即 source=manual，本迁移不会覆盖。
+    """
+
+    def perToken(inputPrice, cachedPrice, writePrice, outputPrice):
+        return {
+            "quota_type": "per_token",
+            "input_usd_per_m": inputPrice,
+            "cached_input_usd_per_m": cachedPrice,
+            "cache_write_usd_per_m": writePrice,
+            "output_usd_per_m": outputPrice,
+            "price_per_call_usd": None,
+        }
+
+    return [
+        {"model_name": "gpt-4o", **perToken(2.5, 1.25, None, 10.0)},
+        {"model_name": "gpt-4o-mini", **perToken(0.15, 0.075, None, 0.6)},
+        {"model_name": "gpt-4.1", **perToken(2.0, 0.5, None, 8.0)},
+        {"model_name": "gpt-4.1-mini", **perToken(0.4, 0.1, None, 1.6)},
+        {"model_name": "gpt-4.1-nano", **perToken(0.1, 0.025, None, 0.4)},
+        {"model_name": "o3", **perToken(2.0, 0.5, None, 8.0)},
+        {"model_name": "o4-mini", **perToken(1.1, 0.275, None, 4.4)},
+        {"model_name": "claude-opus-4-20250514", **perToken(15.0, 1.5, 18.75, 75.0)},
+        {"model_name": "claude-sonnet-4-20250514", **perToken(3.0, 0.3, 3.75, 15.0)},
+        {"model_name": "claude-3-7-sonnet-20250219", **perToken(3.0, 0.3, 3.75, 15.0)},
+        {"model_name": "claude-3-5-haiku-20241022", **perToken(0.8, 0.08, 1.0, 4.0)},
+        {"model_name": "claude-haiku-4-5-20251001", **perToken(1.0, 0.1, 1.25, 5.0)},
+        {"model_name": "deepseek-chat", **perToken(0.27, 0.07, None, 1.1)},
+        {"model_name": "deepseek-reasoner", **perToken(0.55, 0.14, None, 2.19)},
+        {"model_name": "gemini-2.5-pro", **perToken(1.25, 0.31, None, 10.0)},
+        {"model_name": "gemini-2.5-flash", **perToken(0.3, 0.075, None, 2.5)},
+    ]
+
+
 def run_billing_audit_price_seed_migration_once(cursor: Any) -> bool:
     """官方价格表内置种子（一次性，只补缺）。
 
@@ -634,8 +671,6 @@ def run_billing_audit_price_seed_migration_once(cursor: Any) -> bool:
     )
     if cursor.fetchone():
         return False
-    from backend.repositories.billing_audit import builtinOfficialModelPrices
-
     now = utc_now_iso()
     for item in builtinOfficialModelPrices():
         cursor.execute(

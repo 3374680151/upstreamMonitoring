@@ -34,7 +34,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 }
 SETTINGS_RANGES: Dict[str, Tuple[float, float]] = {
     "interval_minutes": (5, 1440),
-    "tolerance_percent": (0.0, 50.0),
+    # 容差下限 0.1%：0 容差会让浮点噪声整表判红，不提供这个档位。
+    "tolerance_percent": (0.1, 50.0),
     "match_window_seconds": (60, 3600),
     "retention_days": (0, 3650),
     "quota_per_unit": (1000, 100_000_000),
@@ -138,40 +139,6 @@ def setBillingMeta(name: str, value: str) -> None:
 # 官方价格表
 # ---------------------------------------------------------------------------
 
-def builtinOfficialModelPrices() -> List[Dict[str, Any]]:
-    """内置种子价：常见模型公开官方价（USD / 1M tokens，2025-09 口径）。
-
-    只作为起步值（缓存写入价目前仅 Anthropic 官方单列）；用户可在 UI 里
-    改价，改过即 source=manual，种子迁移不会覆盖。
-    """
-    per_token = lambda i, c, w, o: {
-        "quota_type": "per_token",
-        "input_usd_per_m": i,
-        "cached_input_usd_per_m": c,
-        "cache_write_usd_per_m": w,
-        "output_usd_per_m": o,
-        "price_per_call_usd": None,
-    }
-    return [
-        {"model_name": "gpt-4o", **per_token(2.5, 1.25, None, 10.0)},
-        {"model_name": "gpt-4o-mini", **per_token(0.15, 0.075, None, 0.6)},
-        {"model_name": "gpt-4.1", **per_token(2.0, 0.5, None, 8.0)},
-        {"model_name": "gpt-4.1-mini", **per_token(0.4, 0.1, None, 1.6)},
-        {"model_name": "gpt-4.1-nano", **per_token(0.1, 0.025, None, 0.4)},
-        {"model_name": "o3", **per_token(2.0, 0.5, None, 8.0)},
-        {"model_name": "o4-mini", **per_token(1.1, 0.275, None, 4.4)},
-        {"model_name": "claude-opus-4-20250514", **per_token(15.0, 1.5, 18.75, 75.0)},
-        {"model_name": "claude-sonnet-4-20250514", **per_token(3.0, 0.3, 3.75, 15.0)},
-        {"model_name": "claude-3-7-sonnet-20250219", **per_token(3.0, 0.3, 3.75, 15.0)},
-        {"model_name": "claude-3-5-haiku-20241022", **per_token(0.8, 0.08, 1.0, 4.0)},
-        {"model_name": "claude-haiku-4-5-20251001", **per_token(1.0, 0.1, 1.25, 5.0)},
-        {"model_name": "deepseek-chat", **per_token(0.27, 0.07, None, 1.1)},
-        {"model_name": "deepseek-reasoner", **per_token(0.55, 0.14, None, 2.19)},
-        {"model_name": "gemini-2.5-pro", **per_token(1.25, 0.31, None, 10.0)},
-        {"model_name": "gemini-2.5-flash", **per_token(0.3, 0.075, None, 2.5)},
-    ]
-
-
 def listOfficialModelPrices() -> List[Dict[str, Any]]:
     return db_query_all("SELECT * FROM official_model_prices ORDER BY model_name ASC")
 
@@ -198,7 +165,9 @@ def upsertOfficialModelPrice(body: Dict[str, Any]) -> Dict[str, Any]:
             parsed = float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{field} 不是有效数字") from exc
-        return parsed if parsed >= 0 else None
+        if parsed < 0:
+            raise ValueError(f"{field} 不能为负数")
+        return parsed
 
     now = utc_now_iso()
     db_execute(
@@ -267,7 +236,7 @@ def insertBillingCheck(row: Dict[str, Any]) -> bool:
     （或下一轮）补齐结果。返回是否真的插入了新行。
     """
     now = utc_now_iso()
-    inserted = db_execute(
+    inserted = db_execute_rowcount(
         """
         INSERT IGNORE INTO billing_request_checks (
             admin_site_id, channel_id, channel_name, upstream_site_id,
@@ -329,6 +298,18 @@ def countBillingChecksByStatus(adminSiteId: int, status: str) -> int:
         (int(adminSiteId), status),
     )
     return int((row or {}).get("total") or 0)
+
+
+def listUsedUpstreamLogIds(adminSiteId: int) -> set:
+    """已被历史核对占用的上游日志 id（一条上游日志只允许配一条主站记录）。"""
+    rows = db_query_all(
+        """
+        SELECT upstream_log_id FROM billing_request_checks
+        WHERE admin_site_id = ? AND upstream_log_id IS NOT NULL
+        """,
+        (int(adminSiteId),),
+    )
+    return {int(r["upstream_log_id"]) for r in rows}
 
 
 def getBillingMetaString(name: str) -> Optional[str]:

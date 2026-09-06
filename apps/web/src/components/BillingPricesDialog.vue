@@ -7,10 +7,13 @@
  */
 import { onMounted, reactive, ref } from "vue";
 import Badge from "@/components/Badge.vue";
-import { Button, Field, Input, Modal, Select } from "@/components/ui";
+import { Button, ConfirmDialog, Field, Input, Modal, Select } from "@/components/ui";
 import { api } from "@/lib/api";
 import { fmtTime } from "@/lib/format";
 import type { OfficialModelPrice } from "@/lib/types";
+import { useToast } from "@/composables/useToast";
+
+const toast = useToast();
 
 interface Props {
   open: boolean;
@@ -22,6 +25,8 @@ const prices = ref<OfficialModelPrice[]>([]);
 const loading = ref(false);
 const saving = ref(false);
 const editing = ref<string | null>(null);
+const deleteTarget = ref<OfficialModelPrice | null>(null);
+const deleting = ref(false);
 
 const form = reactive({
   model_name: "",
@@ -38,6 +43,8 @@ async function load(): Promise<void> {
   try {
     const res = await api.billingPrices();
     prices.value = res.data?.items || [];
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "价格表读取失败");
   } finally {
     loading.value = false;
   }
@@ -79,16 +86,30 @@ async function save(): Promise<void> {
       price_per_call_usd: form.price_per_call_usd === "" ? null : Number(form.price_per_call_usd),
     });
     resetForm();
+    toast.success("价格已保存");
     await load();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "价格保存失败");
   } finally {
     saving.value = false;
   }
 }
 
-async function remove(price: OfficialModelPrice): Promise<void> {
-  await api.deleteBillingPrice(price.model_name);
-  if (editing.value === price.model_name) resetForm();
-  await load();
+async function removeConfirmed(): Promise<void> {
+  const price = deleteTarget.value;
+  if (!price || deleting.value) return;
+  deleting.value = true;
+  try {
+    await api.deleteBillingPrice(price.model_name);
+    if (editing.value === price.model_name) resetForm();
+    toast.success("已删除");
+    await load();
+    deleteTarget.value = null;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "删除失败");
+  } finally {
+    deleting.value = false;
+  }
 }
 
 onMounted(load);
@@ -168,7 +189,7 @@ onMounted(load);
               <td class="px-2 py-1.5">
                 <div class="flex justify-end gap-1.5">
                   <Button variant="ghost" @click="startEdit(price)">编辑</Button>
-                  <Button variant="ghost" @click="remove(price)">删除</Button>
+                  <Button variant="ghost" @click="deleteTarget = price">删除</Button>
                 </div>
               </td>
             </tr>
@@ -176,5 +197,16 @@ onMounted(load);
         </table>
       </div>
     </div>
+    <ConfirmDialog
+      :open="deleteTarget !== null"
+      title="删除官方价格"
+      confirm-label="删除"
+      danger
+      :busy="deleting"
+      @confirm="removeConfirmed"
+      @cancel="deleteTarget = null"
+    >
+      确认删除「{{ deleteTarget?.model_name }}」的官方价格？删除后该模型的新核对会按「无法核对」灰显示，历史记录不受影响。
+    </ConfirmDialog>
   </Modal>
 </template>

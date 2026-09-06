@@ -201,7 +201,7 @@ main_usd             = 主站日志 quota / quota_per_unit
 | `upstream_usd_total` | number | 上游实扣合计（仅 matched 参与合计） |
 | `official_usd_total` | number | 官方成本合计（无官方价的记录不计入） |
 | `margin_usd_total` | number | `main_usd_total − upstream_usd_total`，负数即整体亏钱 |
-| `reason_breakdown` | array | `[{code, count}]` 红因分布——一眼看出主要是暗改还是亏本 |
+| `reason_breakdown` | array | `[{code, count}]` 红/灰原因分布——一眼看出主要是暗改、亏本还是缺价格/绑定 |
 | `model_breakdown` | array | `[{model_name, total_count, mismatch_count}]` 按模型聚合，排序按 mismatch 降序 |
 
 ### 6.2 `GET /api/billing-audit/requests` — 明细列表（分页）
@@ -331,6 +331,8 @@ PUT 请求体 = 上述除 `source` / `updated_at` 外的字段，按 `model_name
 - **按次计费模型**（model_price）走 `per_call` 分支；
 - **时钟偏移 / 主站重试**：时间窗可配（默认 300s），匹配不上归灰；
 - **上游改价与历史**：单价与公示倍率都做快照落行，历史判定不受后续改价影响；
+- **缓存 tokens 口径（已知限制）**：公式假设主站/上游日志的 `prompt_tokens` 不含缓存命中 tokens；部分 NewAPI 版本的 `prompt_tokens` 已含缓存子集，会把缓存双算导致 official_usd/期望成本偏大。验收时用一条真实缓存命中日志核对口径，必要时在适配器里做版本分支；
+- **跨轮上游日志去重**：同轮内用内存 `usedLogIds`，跨轮以库中已占用的 `upstream_log_id` 排除；主站重试产生的两条上游日志属合法双消费，不受影响；
 - **只读安全**：所有上游/主站调用均为 GET 日志读接口，不碰写接口；
 - **密钥纪律**：渠道 key 不落本功能表（复用 `admin_channel_keys`），UI 不展示明文凭据。
 

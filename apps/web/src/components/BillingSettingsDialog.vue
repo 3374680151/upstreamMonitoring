@@ -7,6 +7,9 @@ import { onMounted, reactive, ref } from "vue";
 import { Button, Field, Input, Modal, SwitchRow } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { BillingAuditSettings } from "@/lib/types";
+import { useToast } from "@/composables/useToast";
+
+const toast = useToast();
 
 interface Props {
   open: boolean;
@@ -27,9 +30,13 @@ const form = reactive<BillingAuditSettings>({
 });
 
 async function load(): Promise<void> {
-  const res = await api.billingSettings();
-  Object.assign(form, res.data || {});
-  loaded.value = true;
+  try {
+    const res = await api.billingSettings();
+    Object.assign(form, res.data || {});
+    loaded.value = true;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "设置读取失败");
+  }
 }
 
 async function save(): Promise<void> {
@@ -46,7 +53,10 @@ async function save(): Promise<void> {
       quota_per_unit: Number(form.quota_per_unit) || 500000,
     });
     Object.assign(form, res.data || {});
+    toast.success("设置已保存");
     emit("close");
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "设置保存失败");
   } finally {
     saving.value = false;
   }

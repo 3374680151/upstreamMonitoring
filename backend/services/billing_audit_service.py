@@ -57,6 +57,18 @@ _EPS = 1e-12
 # 判定纯函数
 # ---------------------------------------------------------------------------
 
+def _num(value: Any) -> Optional[float]:
+    """other 字段里的数值可能是字符串，统一容错转 float。"""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _relDiff(actual: float, expected: float) -> float:
     if abs(expected) <= _EPS:
         return 0.0 if abs(actual) <= _EPS else float("inf")
@@ -182,12 +194,13 @@ def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSecon
             return
         if STOP_EVENT.is_set():
             return
+        page = ctx.pagesFetched
         ctx.pagesFetched += 1
         ok, logs, _meta, error = fetchNewapiSelfConsumeLogs(
-            ctx.site, ctx.pagesFetched, UPSTREAM_LOG_PAGE_SIZE
+            ctx.site, page, UPSTREAM_LOG_PAGE_SIZE
         )
         if not ok:
-            print(f"[计费核对] 上游日志拉取失败 base={ctx.base} page={ctx.pagesFetched} err={error}", flush=True)
+            print(f"[计费核对] 上游日志拉取失败 base={ctx.base} page={page} err={error}", flush=True)
             ctx.exhausted = True
             return
         if not logs:
@@ -344,6 +357,9 @@ def _auditRow(
     ctx = ctxByBase.get(base)
     if ctx is None:
         ctx = _UpstreamContext(base, link.get("site_row"))
+        # 跨轮去重：历史行已占用的上游日志 id 一并排除，保证一条上游日志
+        # 只配一条主站记录（设计稿第 7 节）。
+        ctx.usedLogIds.update(billingRepo.listUsedUpstreamLogIds(int(row["admin_site_id"])))
         ctxByBase[base] = ctx
     if ctx.site is None or not site_auth_ready(ctx.site):
         _finalize(row, patch, "no_token", "unknown", ["no_token"])
@@ -361,6 +377,9 @@ def _auditRow(
         _finalize(row, patch, "unmatched", "unknown", ["no_upstream_log"])
         return
     _ensureUpstreamLogs(ctx, requestAt, windowSeconds)
+    if STOP_EVENT.is_set():
+        # 停机时不把「没拉完日志」定格成 unmatched，留待下一轮重判。
+        return
     logs = ctx.logs or []
     best: Optional[Tuple[float, Dict[str, Any]]] = None
     for log in logs:
@@ -409,10 +428,12 @@ def _auditRow(
     patch["published_completion_ratio"] = (modelPub or {}).get("completion_ratio")
     patch["published_group_ratio"] = groupRatio
 
-    # 官方价格 → 官方成本；价格表缺失按设计稿整行归灰。
+    # 官方价格 → 官方成本；价格缺失或单价不可用（如 per_call 缺按次价）按
+    # 设计稿整行归灰，绝不拿残缺单价硬算。
     if modelName not in priceCache:
         priceCache[modelName] = billingRepo.getOfficialModelPrice(modelName)
     priceRow = priceCache[modelName]
+    officialUsd: Optional[float] = None
     if priceRow:
         patch["official_input_usd_per_m"] = priceRow.get("input_usd_per_m")
         patch["official_cached_input_usd_per_m"] = priceRow.get("cached_input_usd_per_m")
@@ -420,6 +441,8 @@ def _auditRow(
         patch["official_output_usd_per_m"] = priceRow.get("output_usd_per_m")
         officialUsd = _officialCost(priceRow, row)
         patch["official_usd"] = officialUsd
+        if officialUsd is None:
+            gray = gray or "no_official_price"
     else:
         gray = gray or "no_official_price"
 
@@ -464,12 +487,12 @@ def _auditRow(
             mainOther = parsedOther
     except ValueError:
         mainOther = {}
-    mPrice = mainOther.get("model_price")
-    mainCacheRatio = mainOther.get("cache_ratio")
+    mPrice = _num(mainOther.get("model_price"))
+    mainCacheRatio = _num(mainOther.get("cache_ratio"))
     if mainQuota > 0 and gMain is not None:
         recalc: Optional[float] = None
-        if isinstance(mPrice, (int, float)) and mPrice > 0:
-            recalc = float(mPrice) * float(gMain) * quotaPerUnit
+        if mPrice is not None and mPrice > 0:
+            recalc = mPrice * float(gMain) * quotaPerUnit
         elif mMain is not None and mMain > 0 and cMain is not None:
             cacheRead = float(row.get("cache_read_tokens") or 0)
             cacheRatio = mainCacheRatio if isinstance(mainCacheRatio, (int, float)) else None
@@ -499,7 +522,9 @@ def _auditRow(
     if math.isfinite(upstreamUsd) and mainUsd < upstreamUsd - _EPS:
         red.append("negative_margin")
 
-    status = "mismatch" if red else ("unknown" if gray else "ok")
+    # 灰优先于红（设计稿 3.3 规则 0）：核不了的行绝不标红，红因仍留在
+    # reason_codes 里供详情查看。
+    status = "unknown" if gray else ("mismatch" if red else "ok")
     _finalize(row, patch, "matched", status, red + ([gray] if gray else []))
 
 
@@ -514,7 +539,7 @@ def _pullNewMainLogs(
     collected: List[Dict[str, Any]] = []
     error: Optional[str] = None
     firstRun = cursor <= 0
-    for page in range(1, MAIN_LOG_MAX_PAGES + 1):
+    for page in range(0, MAIN_LOG_MAX_PAGES):
         if STOP_EVENT.is_set():
             break
         ok, logs, _meta, pageError = fetchNewapiAdminConsumeLogs(
@@ -574,11 +599,15 @@ def _runForAdminSite(
                 siteInfoByBase[link["base"]] = (upstreamSiteId, upstreamSiteName)
             channelName = str(link.get("channel_name") or "") or None
         createdIso = log.get("created_iso")
-        requestAt = (
-            createdIso.astimezone(APP_TIMEZONE).isoformat(timespec="seconds")
-            if createdIso
-            else app_now().isoformat(timespec="seconds")
-        )
+        if createdIso is None:
+            # created_at 解析失败的日志没有可信时间，跳过以免污染时间窗匹配
+            # 与保留清理；打印上下文便于排查该主站的异常数据。
+            print(
+                f"[计费核对] 跳过无时间戳日志 admin_site={adminSiteId} log_id={logId}",
+                flush=True,
+            )
+            continue
+        requestAt = createdIso.astimezone(APP_TIMEZONE).isoformat(timespec="seconds")
         inserted = billingRepo.insertBillingCheck({
             "admin_site_id": adminSiteId,
             "channel_id": int(channelId) if channelId is not None else None,
@@ -624,12 +653,21 @@ def runBillingAuditOnce(adminSiteId: Optional[int] = None) -> Dict[str, Any]:
         return {"triggered": True, "executed": False, "busy": True, "sites": []}
     try:
         settings = billingRepo.getBillingAuditSettings()
+        allRows = list_admin_site_rows()
         if adminSiteId:
-            row = next((r for r in list_admin_site_rows() if int(r["id"]) == int(adminSiteId)), None)
-            targets = [row] if row else []
+            row = next((r for r in allRows if int(r["id"]) == int(adminSiteId)), None)
+            if row is None or str(row.get("platform") or "") != "newapi":
+                return {
+                    "triggered": True,
+                    "executed": False,
+                    "busy": False,
+                    "error": "主站不存在或不是 NewAPI 平台（P1 仅支持 NewAPI 主站）",
+                    "sites": [],
+                }
+            targets = [row]
         else:
             targets = [
-                r for r in list_admin_site_rows()
+                r for r in allRows
                 if str(r.get("platform") or "newapi") == "newapi"
             ]
         summaries: List[Dict[str, Any]] = []

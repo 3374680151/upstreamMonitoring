@@ -77,6 +77,8 @@ async function fetchAll(): Promise<void> {
     overview.value = overviewRes.data;
     items.value = listRes.data?.items || [];
     total.value = listRes.data?.total || 0;
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "计费核对数据读取失败");
   } finally {
     loading.value = false;
   }
@@ -99,8 +101,11 @@ async function runNow(): Promise<void> {
       }
     }
     await fetchAll();
-  } finally {
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : "触发核对失败");
     running.value = false;
+  } finally {
+    if (running.value) running.value = false;
   }
 }
 

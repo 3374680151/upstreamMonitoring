@@ -113,15 +113,29 @@ def normalizeConsumeLog(log: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _requireSuccess(payload: Any, fallbackError: str) -> Optional[str]:
+    """NewAPI 业务层失败（success=false，如令牌过期）不能当成空页静默吞掉。"""
+    if isinstance(payload, dict) and payload.get("success") is False:
+        return str(payload.get("message") or fallbackError)
+    return None
+
+
 def fetchNewapiAdminConsumeLogs(
     site: Dict[str, Any], page: int, pageSize: int
 ) -> Tuple[bool, List[Dict[str, Any]], Dict[str, Any], Optional[str]]:
-    """主站管理员消费日志（type=2），返回 (ok, logs, meta, error)。"""
+    """主站管理员消费日志（type=2），返回 (ok, logs, meta, error)。
+
+    翻页从 p=0 起与既有渠道翻页口径一致：新版 NewAPI 把 p=0 钳到第 1 页，
+    旧版 new-api/one-api 是 0 基——从 1 起在旧版上会永久跳过最新一页。
+    """
     base, headers = newapi_admin_target(site)
     query = f"p={int(page)}&page_size={int(pageSize)}&type={CONSUME_LOG_TYPE}"
     ok, payload, error = request_json(f"{base}/api/log/?{query}", headers=headers)
     if not ok:
         return False, [], {}, error or "读取主站日志失败"
+    businessError = _requireSuccess(payload, "主站返回 success=false")
+    if businessError:
+        return False, [], {}, businessError
     items, meta = _log_list_items(payload)
     return True, [normalizeConsumeLog(item) for item in items], meta, None
 
@@ -136,5 +150,8 @@ def fetchNewapiSelfConsumeLogs(
     )
     if not ok:
         return False, [], {}, error or "读取上游日志失败"
+    businessError = _requireSuccess(payload, "上游返回 success=false")
+    if businessError:
+        return False, [], {}, businessError
     items, meta = _log_list_items(payload)
     return True, [normalizeConsumeLog(item) for item in items], meta, None

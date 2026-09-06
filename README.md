@@ -90,6 +90,11 @@ MySQL 数据持久化在命名卷 `mysql-data`，升级容器时请保留。Comp
 | `CONSOLE_SESSION_TTL` | `604800`（7 天） | 登录会话有效期（秒，最小 300） |
 | `SCHEDULER_ENABLED` | `1` | 是否启动进程内定时检测线程 |
 | `ENABLE_API_DOCS` | `0` | 是否开放 `/docs` 和 `/openapi.json` |
+| `MAIN_CHANNEL_TTFT_FAST_SECONDS` | `8` | 主站监控渠道首字延迟绿色阈值（秒，低于该值绿色） |
+| `MAIN_CHANNEL_TTFT_SLOW_SECONDS` | `15` | 主站监控渠道首字延迟红色阈值（秒，达到该值红色，之间橙色） |
+| `MAIN_CHANNEL_RECENT_REQUESTS` | `10` | 每渠道展示的最近请求条数上限（1–50） |
+| `MAIN_CHANNEL_RECENT_WINDOW_SECONDS` | `3600` | 首字延迟取数窗口（秒，默认 1 小时） |
+| `MAIN_CHANNEL_REQUEST_STALE_SECONDS` | `900` | 窗口内请求标记「非实时」的时长阈值（秒，默认 15 分钟） |
 
 > ⚠️ MySQL 中含密码 / token / webhook 等密钥；数据库连接密码只放本地 `.env`（已 `.gitignore`），**请勿把 `.env` 或数据库导出提交到公开仓库**。
 

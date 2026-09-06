@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { Cloud, KeyRound, Percent, RefreshCw } from "lucide-vue-next";
+import { Activity, Cloud, KeyRound, Percent, RefreshCw } from "lucide-vue-next";
 import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
 import AdminTwoFaDialog from "@/components/AdminTwoFaDialog.vue";
 import Badge from "@/components/Badge.vue";
 import ChannelPriorityDialog from "@/components/ChannelPriorityDialog.vue";
+import ChannelRequestDots from "@/components/ChannelRequestDots.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
@@ -19,6 +20,7 @@ import { normalizedChannelStatus } from "@/lib/sub2apiChannel";
 import { explainUpstreamError } from "@/lib/upstreamError";
 import { errorText, useToast } from "@/composables/useToast";
 import { useAppActions } from "@/composables/useAppActions";
+import { useChannelRecentRequests } from "@/composables/useChannelRecentRequests";
 import { useConsoleData } from "@/composables/useConsoleData";
 import type {
   AdminSite,
@@ -133,6 +135,14 @@ const { handleSyncMainSites } = useAppActions();
 const toast = useToast();
 // 只读共享监控站点数据（App.vue 激活 + 15s 轮询），用于 hover 浮层展示上游分组目录
 const { sites: monitorSites } = useConsoleData();
+// 渠道最近请求首字延迟（后端 SWR 缓存；进页面/切主站随 load() 拉一次，不轮询）
+const {
+  entries: recentRequestEntries,
+  thresholds: recentRequestThresholds,
+  loading: recentRequestsLoading,
+  error: recentRequestsError,
+  load: loadRecentRequests,
+} = useChannelRecentRequests();
 
 // ---- state ----
 const adminSites = shallowRef<AdminSite[]>([]);
@@ -732,6 +742,13 @@ async function load(
     dataSiteId = targetSiteId;
     rowNote.value = {};
     actionError.value = "";
+    if (targetPlatform === "newapi") {
+      // 打点最近请求首字延迟：不阻塞主列表渲染，失败时该列保持灰点/—
+      void loadRecentRequests(
+        targetSiteId,
+        (channelResponse.data || []).map((channel) => channel.id),
+      );
+    }
     if (targetPlatform === "newapi" && options.refreshMatches) {
       const refreshPromise = refreshChannelMatches(
         targetSiteId,
@@ -756,6 +773,19 @@ async function load(
     return false;
   } finally {
     if (refreshVersion === loadVersion) loading.value = false;
+  }
+}
+
+/** 手动强制刷新最近请求首字延迟（refresh=1 穿透后端新鲜缓存） */
+async function refreshRecentRequests() {
+  if (siteId.value == null || isSub2Api.value) return;
+  const ok = await loadRecentRequests(
+    siteId.value,
+    channels.value.map((channel) => channel.id),
+    true,
+  );
+  if (!ok && recentRequestsError.value) {
+    toast.error(recentRequestsError.value);
   }
 }
 
@@ -1186,6 +1216,17 @@ watch(
             <Percent v-if="!ratioRefreshTriggering" :size="13" />
             刷新倍率
           </Button>
+          <Button
+            variant="secondary"
+            aria-label="刷新请求延迟"
+            title="强制重新拉取当前主站各渠道的最近请求首字延迟"
+            :disabled="siteId == null || isSub2Api || recentRequestsLoading"
+            :loading="recentRequestsLoading"
+            @click="refreshRecentRequests"
+          >
+            <Activity v-if="!recentRequestsLoading" :size="13" />
+            刷新请求
+          </Button>
           <span
             v-if="currentKeyRefresh"
             :class="[
@@ -1349,7 +1390,7 @@ watch(
             @refresh="refreshSub2ApiChannel"
           />
           <div v-else class="priceai-scrollbar max-h-[calc(100vh-18rem)] overflow-auto rounded-[var(--radius-sm)]">
-            <table class="w-full min-w-[1040px] table-fixed text-left text-sm">
+            <table class="w-full min-w-[1164px] table-fixed text-left text-sm">
               <colgroup>
                 <col class="w-[170px]" />
                 <col class="w-[112px]" />
@@ -1357,6 +1398,7 @@ watch(
                 <col class="w-[72px]" />
                 <col class="w-[72px]" />
                 <col class="w-[92px]" />
+                <col class="w-[124px]" />
                 <col class="w-[270px]" />
               </colgroup>
               <thead class="sticky top-0 z-10 bg-panel">
@@ -1367,6 +1409,12 @@ watch(
                   <th class="pb-2">权重</th>
                   <th class="pb-2">优先级</th>
                   <th class="pb-2">状态</th>
+                  <th
+                    class="pb-2"
+                    title="每渠道最近请求首字延迟色点（左=最新）：绿=快 / 橙=中 / 红=慢，空心圆环=旧请求（非实时），灰点=无请求；阈值可在 .env 调整"
+                  >
+                    最近请求首字
+                  </th>
                   <th class="pb-2">操作</th>
                 </tr>
               </thead>
@@ -1467,6 +1515,13 @@ watch(
                     <Badge :tone="row.meta.tone" dot>
                       {{ row.meta.label }}
                     </Badge>
+                  </td>
+                  <td class="max-w-0 py-3 pr-3">
+                    <ChannelRequestDots
+                      :entry="recentRequestEntries[String(row.channel.id)]"
+                      :thresholds="recentRequestThresholds"
+                      :loading="recentRequestsLoading"
+                    />
                   </td>
                   <td class="py-3 pr-3">
                     <div class="flex flex-nowrap items-center gap-1.5">

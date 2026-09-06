@@ -50,6 +50,7 @@ from backend.services.admin_site_service import (
     update_admin_site_channel,
     verify_admin_site_channel_key_access,
 )
+from backend.services.channel_logs_service import fetchAdminSiteChannelRecentRequests
 from backend.services.channel_match_service import (
     channel_upstream_binding_payload,
     get_channel_upstream_binding,
@@ -320,6 +321,67 @@ async def channel_list(admin_site_id: int, keyword: str = ""):
         else items
     )
     return JSONResponse({"success": True, "data": data, "meta": meta})
+
+
+# ---------------------------------------------------------------------------
+# Channel recent requests / TTFT (GET /admin/sites/{id}/channels/recent-requests)
+# 声明须先于 channels/{channel_id} 详情路由，否则 "recent-requests" 会被
+# 当作 {channel_id} 捕获（同 channels/batch 的处理方式）。
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/sites/{admin_site_id}/channels/recent-requests")
+async def channel_recent_requests(
+    admin_site_id: int,
+    channel_ids: str = Query(..., description="逗号分隔的渠道 ID，最多 100 个"),
+    refresh: int = 0,
+):
+    site, error, status = get_admin_site_or_404(admin_site_id)
+    if error:
+        if status == 404:
+            error = dict(error)
+            error.setdefault("code", "admin_site_not_found")
+        return JSONResponse(error, status_code=status)
+    if _platform(site) == "sub2api":
+        return JSONResponse(
+            {
+                "success": False,
+                "code": "platform_unsupported",
+                "message": "sub2api 主站不支持请求日志查询",
+            },
+            status_code=405,
+        )
+    channel_id_values = _parse_channel_ids(channel_ids)
+    if channel_id_values is None:
+        return JSONResponse(
+            {
+                "success": False,
+                "code": "invalid_request",
+                "message": "channel_ids 非法：需要逗号分隔的正整数渠道 ID，最多 100 个",
+            },
+            status_code=400,
+        )
+    data = await run_in_threadpool(
+        fetchAdminSiteChannelRecentRequests, site, channel_id_values, refresh == 1,
+    )
+    return JSONResponse({"success": True, "data": data})
+
+
+def _parse_channel_ids(raw: str) -> list[int] | None:
+    values: list[int] = []
+    for piece in (raw or "").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            value = int(piece)
+        except ValueError:
+            return None
+        if value <= 0:
+            return None
+        values.append(value)
+    if not values or len(values) > 100:
+        return None
+    return values
 
 
 # ---------------------------------------------------------------------------

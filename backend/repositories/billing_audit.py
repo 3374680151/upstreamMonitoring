@@ -43,9 +43,12 @@ SETTINGS_RANGES: Dict[str, Tuple[float, float]] = {
 BOOLEAN_SETTINGS = {"enabled", "push_on_red"}
 
 
-def _clamp(name: str, value: float) -> float:
+def _validateRange(name: str, value: float) -> float:
+    """越界报错（契约：PUT settings 越界值返回 422），不做静默钳位。"""
     low, high = SETTINGS_RANGES[name]
-    return max(low, min(high, value))
+    if not low <= value <= high:
+        raise ValueError(f"设置项 {name} 超出范围（{low:g}–{high:g}）")
+    return value
 
 
 def _readSettingsRows() -> Dict[str, str]:
@@ -64,8 +67,9 @@ def getBillingAuditSettings() -> Dict[str, Any]:
             result[name] = stored.strip().lower() in {"1", "true", "yes", "on"}
         else:
             try:
-                result[name] = _clamp(name, float(stored))
+                result[name] = _validateRange(name, float(stored))
             except ValueError:
+                # 存量脏值不炸读取，回默认值；下次保存会被范围校验拦住。
                 continue
     # 保留整型的设置项以整型返回，避免前端拿到 5.0 这类浮点展示。
     for int_name in ("interval_minutes", "match_window_seconds", "retention_days", "quota_per_unit"):
@@ -74,7 +78,7 @@ def getBillingAuditSettings() -> Dict[str, Any]:
 
 
 def updateBillingAuditSettings(body: Dict[str, Any]) -> Dict[str, Any]:
-    """整体保存设置：只接受已知键，数值按范围钳位，布尔按真假值归一。"""
+    """整体保存设置：只接受已知键，越界值抛 ValueError（router 转 422）。"""
     now = utc_now_iso()
     merged = getBillingAuditSettings()
     for name in DEFAULT_SETTINGS:
@@ -85,8 +89,10 @@ def updateBillingAuditSettings(body: Dict[str, Any]) -> Dict[str, Any]:
             merged[name] = bool(value)
         else:
             try:
-                merged[name] = _clamp(name, float(value))
+                merged[name] = _validateRange(name, float(value))
             except (TypeError, ValueError) as exc:
+                if isinstance(exc, ValueError) and "超出范围" in str(exc):
+                    raise
                 raise ValueError(f"设置项 {name} 的值无效") from exc
     for int_name in ("interval_minutes", "match_window_seconds", "retention_days", "quota_per_unit"):
         merged[int_name] = int(merged[int_name])

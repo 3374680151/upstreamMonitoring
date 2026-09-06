@@ -13,7 +13,14 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from backend.api.routers import admin_sites, auth, monitoring, notifications, session_sync
+from backend.api.routers import (
+    admin_sites,
+    auth,
+    billing_audit,
+    monitoring,
+    notifications,
+    session_sync,
+)
 from backend.core.config import SLOW_REQUEST_THRESHOLD_MS, WEB_DIST_DIR, get_settings
 from backend.core.errors import (
     DatabasePoolTimeoutError,
@@ -130,6 +137,7 @@ app.include_router(monitoring.router, prefix="/api", **protected)
 app.include_router(notifications.router, prefix="/api", **protected)
 app.include_router(session_sync.router, prefix="/api", **protected)
 app.include_router(admin_sites.router, prefix="/api", **protected)
+app.include_router(billing_audit.router, prefix="/api", **protected)
 
 
 if WEB_DIST_DIR.exists():

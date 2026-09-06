@@ -203,6 +203,23 @@ def site_groups_from_row(site: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         return {}
 
 
+def list_channel_discovery_links(admin_site_id: int) -> Dict[str, Dict[str, Any]]:
+    """渠道 → 发现来源站点 映射（site_discovery_links 是渠道绑上游的权威来源）。
+
+    billing-audit 用它把主站日志的 channel_id 解析到上游监控站点；返回以
+    channel_id 字符串为键，值为 site_id / upstream_base_url / channel_name。
+    """
+    rows = db_query_all(
+        """
+        SELECT channel_id, site_id, upstream_base_url, channel_name
+        FROM site_discovery_links
+        WHERE admin_site_id = ?
+        """,
+        (int(admin_site_id),),
+    )
+    return {str(row["channel_id"]): row for row in rows}
+
+
 def list_sites_payload(
     with_auto_sync: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:

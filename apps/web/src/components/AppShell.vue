@@ -11,6 +11,7 @@ import {
   Moon,
   PanelTop,
   Radar,
+  ReceiptText,
   Sun,
   WalletCards,
   X,
@@ -34,6 +35,7 @@ const nav = [
   { to: "/detail", label: "渠道详情", exact: false, icon: PanelTop },
   { to: "/changes", label: "变化记录", exact: false, icon: List },
   { to: "/balance", label: "余额", exact: false, icon: WalletCards },
+  { to: "/billing-audit", label: "计费核对", exact: false, icon: ReceiptText },
   { to: "/notifications", label: "消息推送", exact: false, icon: BellRing },
 ];
 

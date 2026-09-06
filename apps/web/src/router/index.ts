@@ -10,6 +10,7 @@ const router = createRouter({
     { path: '/changes', name: 'changes', component: () => import('@/pages/ChangesPage.vue') },
     { path: '/balance', name: 'balance', component: () => import('@/pages/BalancePage.vue') },
     { path: '/channels', name: 'channels', component: () => import('@/pages/ChannelsPage.vue') },
+    { path: '/billing-audit', name: 'billing-audit', component: () => import('@/pages/BillingAuditPage.vue') },
     { path: '/notifications', name: 'notifications', component: () => import('@/pages/NotificationsPage.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

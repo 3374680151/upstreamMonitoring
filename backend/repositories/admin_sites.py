@@ -188,6 +188,11 @@ def sync_admin_channel_key(
     clear_admin_channel_key(admin_site_id, channel_id)
 
 
+def list_admin_site_rows() -> List[Dict[str, Any]]:
+    """原始行（含 access_token），仅供服务端后台任务使用；不得出 API。"""
+    return db_query_all("SELECT * FROM admin_sites ORDER BY id ASC")
+
+
 def list_admin_sites_payload() -> List[Dict[str, Any]]:
     """List management sites for the UI. Token is never returned; only a flag."""
     rows = db_query_all("SELECT * FROM admin_sites ORDER BY id DESC")

@@ -22,7 +22,8 @@ from backend.db.connection import (
 
 SETTINGS_PREFIX = "billing_audit_"
 
-# 设计稿 5.3 节的默认值；updateBillingAuditSettings 里的钳位范围与此一致。
+# 设计稿 5.3 节的默认值；updateBillingAuditSettings 的校验范围与此一致
+# （越界抛 ValueError → 422，不静默钳位）。
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "enabled": False,
     "interval_minutes": 5,

@@ -553,7 +553,9 @@ def _pullNewMainLogs(
         pageMinId = min(int(log.get("id") or 0) for log in logs)
         for log in logs:
             logId = int(log.get("id") or 0)
-            if logId > cursor and (not firstRun or page == 1):
+            # 首轮只收第 0 页（最新一页），做有界回填；翻页自 p=0 起，
+            # 这里的「第一页」判断必须与起始页基准一致。
+            if logId > cursor and (not firstRun or page == 0):
                 collected.append(log)
         if firstRun or pageMinId <= cursor:
             break

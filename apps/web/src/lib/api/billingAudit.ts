@@ -84,7 +84,12 @@ export const billingAuditApi = {
   runBillingAudit: (adminSiteId?: number | null) =>
     request<{
       success: boolean;
-      data: { triggered: boolean; executed: boolean; sites?: BillingRunSiteSummary[] };
+      data: {
+        triggered: boolean;
+        executed: boolean;
+        error?: string;
+        sites?: BillingRunSiteSummary[];
+      };
     }>("/api/billing-audit/run", {
       method: "POST",
       body: JSON.stringify(adminSiteId ? { admin_site_id: adminSiteId } : {}),

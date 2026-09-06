@@ -91,7 +91,11 @@ async function runNow(): Promise<void> {
     const res = await api.runBillingAudit(adminSiteId.value);
     const sites = res.data?.sites || [];
     if (res.data?.executed === false) {
-      toast.info("已有核对在跑，本轮跳过（幂等）");
+      if (res.data?.error) {
+        toast.error(res.data.error);
+      } else {
+        toast.info("已有核对在跑，本轮跳过（幂等）");
+      }
     } else {
       const failed = sites.filter((site) => site.error);
       if (failed.length) {

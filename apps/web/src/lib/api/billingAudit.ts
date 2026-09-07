@@ -22,9 +22,14 @@ export type BillingChecksQuery = {
   page_size?: number;
   status?: "" | BillingRequestCheck["status"];
   admin_site_id?: number | null;
+  upstream_site_id?: number | null;
   model?: string;
   start_at?: string;
   end_at?: string;
+  /** 红/灰原因码过滤（overview / requests 均支持） */
+  reason_code?: string;
+  /** 时间分桶粒度（分钟），仅 overview；默认 5 = 一轮核对一桶 */
+  bucket_minutes?: number;
 };
 
 function toQuery(query: BillingChecksQuery): string {

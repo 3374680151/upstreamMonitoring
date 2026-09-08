@@ -31,3 +31,10 @@ recover_full.sql
 .superpowers/
 apps/web/tsconfig.tsbuildinfo
 apps/web/tsconfig.node.tsbuildinfo
+# ZCode 会话计划产物
+.zcode/
+# 计费核对走查截图（本地归档，不入库）
+docs/billing-audit/screenshots/
+# 审计草稿（未定稿，仅本地保留）
+docs/audit/deploy-walkthrough-issues-待修复.md
+docs/audit/init-experience-方案.md

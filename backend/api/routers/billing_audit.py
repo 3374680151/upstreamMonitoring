@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from starlette.concurrency import run_in_threadpool
 
 from backend.api.schemas.billing_audit import (
@@ -18,6 +18,7 @@ from backend.api.schemas.billing_audit import (
     BillingAuditSettingsUpdateRequest,
     OfficialModelPriceUpsertRequest,
 )
+from backend.services import billing_audit_overview_service as overviewService
 from backend.services import billing_audit_service as service
 
 router = APIRouter()
@@ -38,11 +39,17 @@ async def billingAuditOverview(
     model: Optional[str] = None,
     start_at: Optional[str] = None,
     end_at: Optional[str] = None,
+    bucket_minutes: int = Query(5, ge=1, le=1440),
+    reason_code: Optional[str] = None,
 ):
-    data = await run_in_threadpool(
-        service.billingAuditOverviewPayload,
-        admin_site_id, upstream_site_id, channel_id, model, start_at, end_at,
-    )
+    try:
+        data = await run_in_threadpool(
+            overviewService.billingAuditOverviewPayload,
+            admin_site_id, upstream_site_id, channel_id, model, start_at, end_at,
+            bucket_minutes, reason_code,
+        )
+    except ValueError as exc:
+        raise _validationError(str(exc))
     return {"success": True, "data": data}
 
 
@@ -57,12 +64,13 @@ async def billingAuditRequests(
     model: Optional[str] = None,
     start_at: Optional[str] = None,
     end_at: Optional[str] = None,
+    reason_code: Optional[str] = None,
 ):
     try:
         data = await run_in_threadpool(
             service.billingChecksListPayload,
             page, page_size, status, admin_site_id, upstream_site_id,
-            channel_id, model, start_at, end_at,
+            channel_id, model, start_at, end_at, reason_code,
         )
     except ValueError as exc:
         raise _validationError(str(exc))

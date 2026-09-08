@@ -4,7 +4,7 @@
  * 红绿灰：status 直接映射 Badge 色调；灰行把不可核对原因放进悬停提示。
  */
 import Badge from "@/components/Badge.vue";
-import EmptyState from "@/components/ui/EmptyState.vue";
+import { EmptyState } from "@/components/ui";
 import type { BillingRequestCheck } from "@/lib/types";
 import {
   billingMatchLabel,
@@ -12,6 +12,7 @@ import {
   billingStatusLabel,
   billingStatusTone,
   fmtTime,
+  ratioValueText,
   usdPrecise,
 } from "@/lib/format";
 
@@ -40,6 +41,21 @@ function reasonTitle(check: BillingRequestCheck): string {
   if (!check.reason_codes.length) return billingMatchLabel(check.match_status);
   return check.reason_codes.map((code) => billingReasonLabel(code)).join("；");
 }
+
+/** 倍率对照列：一眼看到 上游实际 / 公示 的模型倍率，悬停展开全部三组证据 */
+function ratioEvidenceTitle(check: BillingRequestCheck): string {
+  const pairs = [
+    `模型 ${ratioValueText(check.upstream_model_ratio)} / ${ratioValueText(check.published_model_ratio)}`,
+    `分组 ${ratioValueText(check.upstream_group_ratio)} / ${ratioValueText(check.published_group_ratio)}`,
+    `补全 ${ratioValueText(check.upstream_completion_ratio)} / ${ratioValueText(check.published_completion_ratio)}`,
+    `主站 模型 ${ratioValueText(check.main_model_ratio)} · 分组 ${ratioValueText(check.main_group_ratio)}`,
+  ];
+  return `上游实际 / 公示：\n${pairs.join("\n")}`;
+}
+
+function hasRatioDrift(check: BillingRequestCheck): boolean {
+  return check.reason_codes.includes("upstream_ratio_drift");
+}
 </script>
 
 <template>
@@ -51,6 +67,7 @@ function reasonTitle(check: BillingRequestCheck): string {
           <th class="px-2.5 py-2 font-medium">模型</th>
           <th class="px-2.5 py-2 font-medium">上游</th>
           <th class="px-2.5 py-2 font-medium">Tokens</th>
+          <th class="px-2.5 py-2 font-medium">倍率对照</th>
           <th class="px-2.5 py-2 text-right font-medium">官方成本</th>
           <th class="px-2.5 py-2 text-right font-medium">上游实扣</th>
           <th class="px-2.5 py-2 text-right font-medium">主站实收</th>
@@ -75,6 +92,13 @@ function reasonTitle(check: BillingRequestCheck): string {
           </td>
           <td class="whitespace-nowrap px-2.5 py-2 text-ink tabular">
             {{ tokenText(check) }}
+          </td>
+          <td
+            class="whitespace-nowrap px-2.5 py-2 tabular"
+            :class="hasRatioDrift(check) ? 'font-medium text-danger-fg' : 'text-ink-muted'"
+            :title="ratioEvidenceTitle(check)"
+          >
+            {{ ratioValueText(check.upstream_model_ratio) }} / {{ ratioValueText(check.published_model_ratio) }}
           </td>
           <td class="whitespace-nowrap px-2.5 py-2 text-right text-ink tabular">
             {{ usdPrecise(check.official_usd) }}

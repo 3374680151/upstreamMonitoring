@@ -8,7 +8,6 @@ service 层不直接拼 SQL。
 
 from __future__ import annotations
 
-import json
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +18,7 @@ from backend.db.connection import (
     db_query_all,
     db_query_one,
 )
+from backend.repositories.billing_audit_overview import applyReasonCodeCondition
 
 SETTINGS_PREFIX = "billing_audit_"
 
@@ -369,6 +369,7 @@ def listBillingChecksPayload(
     model: Optional[str],
     startAt: Optional[str],
     endAt: Optional[str],
+    reasonCode: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], int]:
     conditions: List[str] = []
     params: List[Any] = []
@@ -393,6 +394,7 @@ def listBillingChecksPayload(
     if endAt:
         conditions.append("request_at <= ?")
         params.append(endAt)
+    conditions, params = applyReasonCodeCondition(conditions, params, reasonCode)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     total_row = db_query_one(
         f"SELECT COUNT(*) AS total FROM billing_request_checks {where}", tuple(params)
@@ -415,108 +417,6 @@ def getBillingCheckById(checkId: int) -> Optional[Dict[str, Any]]:
         f"SELECT {BILLING_CHECK_COLUMNS} FROM billing_request_checks WHERE id = ?",
         (int(checkId),),
     )
-
-
-def overviewBillingChecks(
-    adminSiteId: Optional[int],
-    upstreamSiteId: Optional[int],
-    channelId: Optional[int],
-    model: Optional[str],
-    startAt: Optional[str],
-    endAt: Optional[str],
-) -> Dict[str, Any]:
-    conditions: List[str] = []
-    params: List[Any] = []
-    if adminSiteId:
-        conditions.append("admin_site_id = ?")
-        params.append(int(adminSiteId))
-    if upstreamSiteId:
-        conditions.append("upstream_site_id = ?")
-        params.append(int(upstreamSiteId))
-    if channelId:
-        conditions.append("channel_id = ?")
-        params.append(int(channelId))
-    if model:
-        conditions.append("model_name = ?")
-        params.append(model)
-    if startAt:
-        conditions.append("request_at >= ?")
-        params.append(startAt)
-    if endAt:
-        conditions.append("request_at <= ?")
-        params.append(endAt)
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    row = db_query_one(
-        f"""
-        SELECT
-          COUNT(*) AS total_count,
-          SUM(status = 'ok') AS ok_count,
-          SUM(status = 'mismatch') AS mismatch_count,
-          SUM(status = 'unknown') AS unknown_count,
-          COALESCE(SUM(main_usd), 0) AS main_usd_total,
-          COALESCE(SUM(upstream_actual_usd), 0) AS upstream_usd_total,
-          COALESCE(SUM(official_usd), 0) AS official_usd_total
-        FROM billing_request_checks {where}
-        """,
-        tuple(params),
-    ) or {}
-    models = db_query_all(
-        f"""
-        SELECT model_name, COUNT(*) AS total_count,
-               SUM(status = 'mismatch') AS mismatch_count
-        FROM billing_request_checks {where}
-        GROUP BY model_name
-        ORDER BY mismatch_count DESC, total_count DESC
-        LIMIT 20
-        """,
-        tuple(params),
-    )
-    # 原因码是 JSON 数组列，分布统计在 Python 里做；只取时间范围内的红/灰行，
-    # 上限 20000 行防止全表扫内存。
-    reasonConditions = conditions + ["reason_codes_json IS NOT NULL"]
-    reason_rows = db_query_all(
-        f"""
-        SELECT reason_codes_json FROM billing_request_checks
-        WHERE {' AND '.join(reasonConditions)}
-        ORDER BY id DESC
-        LIMIT 20000
-        """,
-        tuple(params),
-    )
-    reasons: Dict[str, int] = {}
-    for reason_row in reason_rows:
-        try:
-            codes = json.loads(reason_row.get("reason_codes_json") or "[]")
-        except ValueError:
-            continue
-        for code in codes if isinstance(codes, list) else []:
-            reasons[str(code)] = reasons.get(str(code), 0) + 1
-
-    def usdTotal(key: str) -> float:
-        return round(float(row.get(key) or 0.0), 8)
-
-    return {
-        "total_count": int(row.get("total_count") or 0),
-        "ok_count": int(row.get("ok_count") or 0),
-        "mismatch_count": int(row.get("mismatch_count") or 0),
-        "unknown_count": int(row.get("unknown_count") or 0),
-        "main_usd_total": usdTotal("main_usd_total"),
-        "upstream_usd_total": usdTotal("upstream_usd_total"),
-        "official_usd_total": usdTotal("official_usd_total"),
-        "margin_usd_total": round(usdTotal("main_usd_total") - usdTotal("upstream_usd_total"), 8),
-        "reason_breakdown": [
-            {"code": code, "count": count}
-            for code, count in sorted(reasons.items(), key=lambda kv: -kv[1])
-        ],
-        "model_breakdown": [
-            {
-                "model_name": m.get("model_name"),
-                "total_count": int(m.get("total_count") or 0),
-                "mismatch_count": int(m.get("mismatch_count") or 0),
-            }
-            for m in models
-        ],
-    }
 
 
 def pruneBillingChecks(retentionDays: int) -> int:

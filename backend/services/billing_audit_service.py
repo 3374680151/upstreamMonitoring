@@ -727,7 +727,7 @@ def serializeBillingCheck(row: Dict[str, Any], includeRaw: bool = False) -> Dict
     return payload
 
 
-def _normalizeTimeBound(value: Optional[str]) -> Optional[str]:
+def normalizeTimeBound(value: Optional[str]) -> Optional[str]:
     """把前端传来的时间过滤边界归一成与 request_at 一致的 app 时区 ISO 串。"""
     if not value:
         return None
@@ -742,20 +742,6 @@ def _normalizeTimeBound(value: Optional[str]) -> Optional[str]:
     return dt.astimezone(APP_TIMEZONE).isoformat(timespec="seconds")
 
 
-def billingAuditOverviewPayload(
-    adminSiteId: Optional[int],
-    upstreamSiteId: Optional[int],
-    channelId: Optional[int],
-    model: Optional[str],
-    startAt: Optional[str],
-    endAt: Optional[str],
-) -> Dict[str, Any]:
-    return billingRepo.overviewBillingChecks(
-        adminSiteId, upstreamSiteId, channelId, model,
-        _normalizeTimeBound(startAt), _normalizeTimeBound(endAt),
-    )
-
-
 def billingChecksListPayload(
     page: int,
     pageSize: int,
@@ -766,6 +752,7 @@ def billingChecksListPayload(
     model: Optional[str],
     startAt: Optional[str],
     endAt: Optional[str],
+    reasonCode: Optional[str] = None,
 ) -> Dict[str, Any]:
     safePage = max(1, int(page or 1))
     safeSize = min(MAX_LIST_PAGE_SIZE, max(1, int(pageSize or 20)))
@@ -773,7 +760,8 @@ def billingChecksListPayload(
         raise ValueError("status 只支持 ok / mismatch / unknown")
     rows, total = billingRepo.listBillingChecksPayload(
         safePage, safeSize, status, adminSiteId, upstreamSiteId, channelId, model,
-        _normalizeTimeBound(startAt), _normalizeTimeBound(endAt),
+        normalizeTimeBound(startAt), normalizeTimeBound(endAt),
+        reasonCode=reasonCode,
     )
     return {
         "total": total,

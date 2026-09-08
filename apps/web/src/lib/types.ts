@@ -633,6 +633,32 @@ export type BillingAuditOverview = {
   margin_usd_total: number;
   reason_breakdown: { code: string; count: number }[];
   model_breakdown: { model_name: string; total_count: number; mismatch_count: number }[];
+  /** 按时间分桶的核对结果（只含非空桶，升序） */
+  time_buckets: BillingTimeBucket[];
+  /** 按上游站点聚合（mismatch 降序，最多 20 条） */
+  upstream_breakdown: BillingUpstreamBreakdown[];
+};
+
+/** 趋势带的一个时间桶（桶宽 = bucket_minutes 分钟，epoch 对齐） */
+export type BillingTimeBucket = {
+  bucket_start_at: string;
+  total_count: number;
+  ok_count: number;
+  mismatch_count: number;
+  unknown_count: number;
+  margin_usd: number;
+};
+
+/** 渠道汇总的一行：某个上游站点的核对结果聚合 */
+export type BillingUpstreamBreakdown = {
+  upstream_site_id: number | null;
+  upstream_site_name: string | null;
+  total_count: number;
+  ok_count: number;
+  mismatch_count: number;
+  unknown_count: number;
+  margin_usd: number;
+  top_reason_code: string | null;
 };
 
 /** 计费核对运行设置（GET/PUT /api/billing-audit/settings） */

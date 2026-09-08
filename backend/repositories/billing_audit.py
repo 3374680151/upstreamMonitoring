@@ -217,6 +217,48 @@ def deleteOfficialModelPrice(modelName: str) -> bool:
     return deleted > 0
 
 
+def upsertOfficialModelPriceSynced(
+    modelName: str,
+    quotaType: str,
+    fields: Dict[str, Optional[float]],
+    now: str,
+) -> None:
+    """定时同步来源（source='sub2api'）的官方价写入。
+
+    ``source='manual'`` 的行整行保持原值（含 updated_at/source），避免每日
+    定时同步冲掉人工校准的价格；builtin 行允许被同步结果覆盖为 sub2api 价。
+    """
+    if quotaType not in {"per_token", "per_call"}:
+        raise ValueError("quota_type 只支持 per_token / per_call")
+    db_execute(
+        """
+        INSERT INTO official_model_prices
+        (model_name, quota_type, input_usd_per_m, cached_input_usd_per_m,
+         cache_write_usd_per_m, output_usd_per_m, price_per_call_usd,
+         source, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'sub2api', ?)
+        ON DUPLICATE KEY UPDATE
+          quota_type = IF(source = 'manual', quota_type, VALUES(quota_type)),
+          input_usd_per_m = IF(source = 'manual', input_usd_per_m, VALUES(input_usd_per_m)),
+          cached_input_usd_per_m = IF(source = 'manual', cached_input_usd_per_m, VALUES(cached_input_usd_per_m)),
+          cache_write_usd_per_m = IF(source = 'manual', cache_write_usd_per_m, VALUES(cache_write_usd_per_m)),
+          output_usd_per_m = IF(source = 'manual', output_usd_per_m, VALUES(output_usd_per_m)),
+          price_per_call_usd = IF(source = 'manual', price_per_call_usd, VALUES(price_per_call_usd)),
+          updated_at = IF(source = 'manual', updated_at, VALUES(updated_at))
+        """,
+        (
+            modelName,
+            quotaType,
+            fields.get("input_usd_per_m"),
+            fields.get("cached_input_usd_per_m"),
+            fields.get("cache_write_usd_per_m"),
+            fields.get("output_usd_per_m"),
+            fields.get("price_per_call_usd"),
+            now,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 核对记录
 # ---------------------------------------------------------------------------
@@ -288,6 +330,29 @@ def listPendingBillingChecks(adminSiteId: int, limit: int) -> List[Dict[str, Any
         LIMIT ?
         """,
         (int(adminSiteId), int(limit)),
+    )
+
+
+def listRejudgeBillingChecks(
+    adminSiteId: int, olderThan: str, limit: int
+) -> List[Dict[str, Any]]:
+    """挑出可翻面的灰行做重判（P2）。
+
+    只重判「终态前灰」且成因可被后续配置修复的行：no_binding / no_token /
+    no_log_api——用户建好绑定、补上登录态或（P2）sub2api 适配上线后，
+    下一轮即可重新核对。matched 灰（no_official_price）不在其列：重判要
+    重跑匹配，上游日志超出翻页窗口时会把已有匹配退化成 unmatched。
+    """
+    return db_query_all(
+        f"""
+        SELECT {BILLING_CHECK_COLUMNS} FROM billing_request_checks
+        WHERE admin_site_id = ? AND status = 'unknown'
+          AND checked_at IS NOT NULL AND checked_at <= ?
+          AND match_status IN ('no_binding', 'no_token', 'no_log_api')
+        ORDER BY checked_at ASC, id ASC
+        LIMIT ?
+        """,
+        (int(adminSiteId), olderThan, int(limit)),
     )
 
 

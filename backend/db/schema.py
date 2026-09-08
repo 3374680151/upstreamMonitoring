@@ -397,6 +397,8 @@ SITES_COLUMN_ADDITIONS = {
     "browser_access_expires_at": "BIGINT",
     "system_access_token": "TEXT",
     "system_token_fallback_enabled": "TINYINT NOT NULL DEFAULT 0",
+    # 计费核对 P2：quota→美元基准按站点覆盖（NULL = 用全局 billing_audit_quota_per_unit）
+    "quota_per_unit": "INT NULL",
 }
 NOTIFICATION_COLUMN_ADDITIONS = {
     "email_enabled": "TINYINT NOT NULL DEFAULT 0",
@@ -439,6 +441,8 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
     "sync_all_channels": "TINYINT NOT NULL DEFAULT 1",
     "reconcile_mode": "VARCHAR(32) NOT NULL DEFAULT 'disable'",
     "retention_days": "INT NOT NULL DEFAULT 7",
+    # 计费核对 P2：quota→美元基准按主站覆盖（NULL = 用全局 billing_audit_quota_per_unit）
+    "quota_per_unit": "INT NULL",
 }
 
 

@@ -79,6 +79,8 @@ export type Site = {
   /** 兜底系统访问令牌（服务端生成，仅回传脱敏布尔） */
   has_system_access_token?: boolean;
   system_token_fallback_enabled?: boolean | number;
+  /** 站点级 quota→美元基准覆盖（计费核对）；null = 用全局设置 */
+  quota_per_unit?: number | null;
 };
 
 export type ChannelDiscoveryCandidate = {
@@ -488,6 +490,8 @@ export type AdminSite = {
   reconcile_mode?: "disable" | "delete";
   /** 快照/变化保留天数；0 = 永久保留（仅对该主站同步导入的监控站点生效） */
   retention_days?: number;
+  /** 主站级 quota→美元基准覆盖（计费核对）；null = 用全局设置 */
+  quota_per_unit?: number | null;
   /** 全量 key 刷新批次进度；无批次时后端不返回该字段 */
   key_refresh?: AdminKeyRefreshProgress;
   /** 全量倍率刷新批次进度；无批次时后端不返回该字段 */
@@ -515,6 +519,8 @@ export type AdminSiteFormPayload = {
   reconcile_mode: "disable" | "delete";
   /** 快照/变化保留天数；0 = 永久保留 */
   retention_days: number;
+  /** 主站级 quota→美元基准覆盖；null = 不覆盖（跟随全局设置） */
+  quota_per_unit: number | null;
 };
 
 export type AdminSiteListResponse = {
@@ -536,6 +542,8 @@ export type SiteFormPayload = {
   access_user_id: string;
   enabled: boolean;
   system_token_fallback_enabled: boolean;
+  /** 站点级 quota→美元基准覆盖；null = 不覆盖（跟随全局设置） */
+  quota_per_unit: number | null;
 };
 
 /** 站点历史快照（GET /api/sites/{id}/snapshots）— 对应 snapshots 表透传 */
@@ -681,7 +689,7 @@ export type OfficialModelPrice = {
   cache_write_usd_per_m: number | null;
   output_usd_per_m: number | null;
   price_per_call_usd: number | null;
-  source: "builtin" | "manual";
+  source: "builtin" | "manual" | "sub2api";
   updated_at: string;
 };
 

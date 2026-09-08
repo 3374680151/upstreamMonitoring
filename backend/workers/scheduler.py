@@ -14,7 +14,10 @@ from backend.db.connection import db_execute, db_query_all
 from backend.services.monitoring_service import detect_site
 from backend.services.retention_service import pruneExpiredMonitoringData
 from backend.services.sync_service import run_due_admin_key_syncs
-from backend.workers.billing_audit_worker import billingAuditSchedulerTick
+from backend.workers.billing_audit_worker import (
+    billingAuditSchedulerTick,
+    officialPriceSyncTick,
+)
 
 
 def run_scheduler_tick(now: datetime | None = None) -> None:
@@ -112,6 +115,13 @@ class SchedulerWorker:
             "interval",
             minutes=1,
             id="billing-audit-tick",
+        )
+        # 官方价同步：每天从 sub2api 主站快照回放一次 model_pricing（manual 行不覆盖）。
+        self._scheduler.add_job(
+            officialPriceSyncTick,
+            "interval",
+            hours=24,
+            id="billing-official-price-sync",
         )
         self._scheduler.start()
         self._started = True

@@ -27,6 +27,7 @@ const empty: AdminSiteFormPayload = {
   sync_all_channels: true,
   reconcile_mode: "disable",
   retention_days: 7,
+  quota_per_unit: null,
 };
 
 function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
@@ -43,6 +44,10 @@ function normalizedPayload(form: AdminSiteFormPayload): AdminSiteFormPayload {
     sync_all_channels: form.sync_all_channels,
     reconcile_mode: form.reconcile_mode,
     retention_days: Math.max(0, Math.min(3650, Number(form.retention_days) || 0)),
+    quota_per_unit:
+      form.quota_per_unit === null || Number.isNaN(Number(form.quota_per_unit))
+        ? null
+        : Number(form.quota_per_unit),
   };
 }
 
@@ -74,6 +79,7 @@ watch(
           sync_all_channels: props.site.sync_all_channels !== false,
           reconcile_mode: props.site.reconcile_mode === "delete" ? "delete" : "disable",
           retention_days: Math.max(0, Math.min(3650, Number(props.site.retention_days ?? 7) || 0)),
+          quota_per_unit: props.site.quota_per_unit ?? null,
         }
       : { ...empty };
   },
@@ -141,6 +147,11 @@ const reconcileModeModel = computed<string>({
 const retentionDaysModel = computed<string>({
   get: () => String(form.value.retention_days),
   set: (v: string) => set("retention_days", Number(v)),
+});
+
+const quotaPerUnitModel = computed<string>({
+  get: () => (form.value.quota_per_unit === null ? "" : String(form.value.quota_per_unit)),
+  set: (v: string) => set("quota_per_unit", v === "" ? null : Number(v)),
 });
 
 function validateCredentials(payload: AdminSiteFormPayload): string {
@@ -313,6 +324,9 @@ async function save() {
               <option value="365">保留 365 天</option>
               <option value="0">永久保留</option>
             </Select>
+          </Field>
+          <Field label="Quota 兑美元基准" help="计费核对把主站额度折算成美元的基准；留空跟随全局设置">
+            <Input v-model="quotaPerUnitModel" type="number" min="1000" max="100000000" step="1" placeholder="默认 500000" />
           </Field>
         </div>
         <p class="text-[12px] leading-relaxed text-ink-muted">

@@ -86,6 +86,7 @@ function toBrowserSwitchPayload(site: {
   interval_minutes: number;
   enabled: boolean | number;
   system_token_fallback_enabled?: boolean | number;
+  quota_per_unit?: number | null;
 }): SiteFormPayload {
   return {
     name: site.name,
@@ -102,6 +103,8 @@ function toBrowserSwitchPayload(site: {
     access_user_id: "",
     enabled: truthy(site.enabled),
     system_token_fallback_enabled: truthy(site.system_token_fallback_enabled),
+    // 浏览器模式切换不动计费基准覆盖：沿用站点已保存的值
+    quota_per_unit: site.quota_per_unit ?? null,
   };
 }
 

@@ -16,6 +16,7 @@ from backend.core.normalize import (
     _sync_safe_value,
     format_change_value,
     normalize_base_url,
+    parse_quota_per_unit_override,
     platform_label,
     ratio_direction,
     ratio_number,
@@ -82,6 +83,20 @@ def get_site_or_404(site_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Di
     if not site:
         return None, {"success": False, "message": "site not found"}, 404
     return site, None, 200
+
+
+def site_quota_per_unit(site: Optional[Dict[str, Any]]) -> Optional[int]:
+    """站点级 quota→美元基准覆盖（计费核对 P2）；未配置返回 None 用全局默认。"""
+    if not site:
+        return None
+    value = site.get("quota_per_unit")
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if 1000 <= parsed <= 100_000_000 else None
 
 
 def site_auth_ready(site: Dict[str, Any]) -> bool:
@@ -184,6 +199,8 @@ def site_summary(
         "last_check_at": site["last_check_at"],
         "next_check_at": site["next_check_at"],
         "consecutive_failures": site["consecutive_failures"],
+        # 计费核对 quota→美元基准的站点级覆盖；null = 用全局设置
+        "quota_per_unit": site.get("quota_per_unit"),
         "current_groups": groups,
         "current_groups_count": len(groups) if isinstance(groups, dict) else 0,
         "current_login_groups": login_groups,
@@ -308,13 +325,16 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
         return False, None, "sub2api 需要填写普通用户邮箱和密码", False
     if platform == "sub2api" and auth_mode == "token" and not access_token:
         return False, None, "导入登录态时需要填写 auth_token", False
+    quotaPerUnit, quota_error = parse_quota_per_unit_override(body.get("quota_per_unit"))
+    if quota_error:
+        return False, None, quota_error, False
     now = utc_now_iso()
     try:
         site_id = db_execute(
             """
             INSERT INTO sites
-            (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, system_token_fallback_enabled, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
+            (name, base_url, platform, enabled, interval_minutes, login_enabled, auth_mode, login_username, login_password, access_token, access_user_id, refresh_token, token_expires_at, system_token_fallback_enabled, quota_per_unit, status, last_error, last_check_at, next_check_at, consecutive_failures, current_groups_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unknown', NULL, NULL, ?, 0, NULL, ?, ?)
             """,
             (
                 name,
@@ -364,6 +384,7 @@ def create_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Optional[str
                 and auth_mode in {"token", BROWSER_AUTH_MODE}
                 else "",
                 1 if system_token_fallback else 0,
+                quotaPerUnit,
                 _next_check_iso(interval),
                 now,
                 now,
@@ -430,6 +451,14 @@ def update_site(site_id: int, body: Dict[str, Any]) -> Tuple[bool, Optional[str]
         if new_interval != int(site.get("interval_minutes") or 0):
             fields.append("next_check_at = ?")
             params.append(_next_check_iso(new_interval))
+    if "quota_per_unit" in body:
+        quota_override, quota_error = parse_quota_per_unit_override(
+            body.get("quota_per_unit")
+        )
+        if quota_error:
+            return False, quota_error
+        fields.append("quota_per_unit = ?")
+        params.append(quota_override)
     if "login_enabled" in body:
         login_enabled = bool(body["login_enabled"])
         login_username = str(body.get("login_username") or "").strip()

@@ -1,8 +1,8 @@
 # 计费核对（billing-audit）设计方案
 
-> 状态：**P1（三方对照）与 P2（dashboard 聚合）均已实现并合入 master**；接口契约以 Apifox 云端为准
+> 状态：**P1（三方对照）、P2（dashboard 聚合 + sub2api 上游核对 / 红色告警 / 倍率基准覆盖 / 官方价同步）均已实现**；P2 后半批实现与操作记录见 [p2-实现记录.md](./p2-实现记录.md)（分支 `billing-audit-p2`，待验证合入）
 > 日期：2026-09-07（P2 增量 2026-09-08，操作记录见 [dashboard-实现记录.md](./dashboard-实现记录.md)）
-> Apifox：项目 `8772928` 已推送本文第 6 节接口至云端目录 **「计费核对 → billing-audit」**（P2 增量：overview 的 `bucket_minutes`/`reason_code`/`time_buckets`/`upstream_breakdown` 与 requests 的 `reason_code`）
+> Apifox：项目 `8772928` 已推送本文第 6 节接口至云端目录 **「计费核对 → billing-audit」**（P2 增量：overview 的 `bucket_minutes`/`reason_code`/`time_buckets`/`upstream_breakdown` 与 requests 的 `reason_code`；2026-09-09 再增 sites/admin-sites 的 `quota_per_unit` 与 prices `source='sub2api'`）
 > 契约权威：接口契约以 **Apifox 云端**为唯一事实来源；本文是实现设计稿，若字段与 Apifox 冲突，以 Apifox 为准
 
 ---

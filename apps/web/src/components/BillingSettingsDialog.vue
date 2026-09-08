@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 计费核对设置弹窗 — GET/PUT /api/billing-audit/settings。
- * 保存动作自包含；push_on_red 为 P2 预留，界面标注「即将支持」。
+ * push_on_red 开启后，每轮核对新增红色异常会按推送配置发邮件/企微。
  */
 import { onMounted, reactive, ref } from "vue";
 import { Button, Field, Input, Modal, SwitchRow } from "@/components/ui";
@@ -96,7 +96,7 @@ onMounted(load);
         </Field>
       </div>
       <SwitchRow
-        label="出现红记录时推送提醒（即将支持）"
+        label="出现红记录时推送提醒"
         :checked="form.push_on_red"
         @update:checked="form.push_on_red = $event"
       />

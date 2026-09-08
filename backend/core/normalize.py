@@ -372,3 +372,22 @@ def ratio_direction(change: Dict[str, Any]) -> str:
 
 def platform_label(site: Dict[str, Any]) -> str:
     return "sub2api" if (site.get("platform") or "newapi") == "sub2api" else "NewAPI"
+
+
+# quota→美元基准覆盖的允许范围，与全局设置 ``billing_audit_quota_per_unit``
+# 的范围口径一致（repositories/billing_audit.py SETTINGS_RANGES）。
+QUOTA_PER_UNIT_MIN = 1000
+QUOTA_PER_UNIT_MAX = 100_000_000
+
+
+def parse_quota_per_unit_override(value: Any) -> Tuple[Optional[int], Optional[str]]:
+    """站点/主站级 quota→美元基准覆盖的入参校验：None/空 = 不覆盖；越界报错。"""
+    if value is None or value == "":
+        return None, None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None, "Quota 兑美元基准无效"
+    if not QUOTA_PER_UNIT_MIN <= parsed <= QUOTA_PER_UNIT_MAX:
+        return None, "Quota 兑美元基准超出范围（1000–100000000）"
+    return parsed, None

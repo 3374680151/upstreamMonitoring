@@ -7,3 +7,4 @@ class AdminSiteRequest(CompatibilityModel):
     name: str = ""
     platform: str = "newapi"
     base_url: str = ""
+    quota_per_unit: int | None = None

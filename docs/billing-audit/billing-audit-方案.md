@@ -1,8 +1,8 @@
 # 计费核对（billing-audit）设计方案
 
-> 状态：**设计稿，待确认**——尚未写任何实现代码
-> 日期：2026-09-07
-> Apifox：项目 `8772928` 已推送本文第 6 节接口至云端目录 **「计费核对 → billing-audit」**（7 条路径 / 9 个方法端点，已导出验证落地）
+> 状态：**P1（三方对照）与 P2（dashboard 聚合）均已实现并合入 master**；接口契约以 Apifox 云端为准
+> 日期：2026-09-07（P2 增量 2026-09-08，操作记录见 [dashboard-实现记录.md](./dashboard-实现记录.md)）
+> Apifox：项目 `8772928` 已推送本文第 6 节接口至云端目录 **「计费核对 → billing-audit」**（P2 增量：overview 的 `bucket_minutes`/`reason_code`/`time_buckets`/`upstream_breakdown` 与 requests 的 `reason_code`）
 > 契约权威：接口契约以 **Apifox 云端**为唯一事实来源；本文是实现设计稿，若字段与 Apifox 冲突，以 Apifox 为准
 
 ---

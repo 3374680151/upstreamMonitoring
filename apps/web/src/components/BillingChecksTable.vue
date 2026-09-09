@@ -54,7 +54,7 @@ function profitText(check: BillingRequestCheck): string {
   return p === null ? "—" : `${p < 0 ? "-" : ""}$${Math.abs(p).toFixed(5)}`;
 }
 
-/** 状态胶囊（设计稿第 9 节）：暗改倍率 / 亏本 有独立文案，其余异常归「异常」 */
+/** 状态胶囊（设计稿）：正常 / 暗改倍率 / 亏本 / 无法核对 四态 */
 function statusBadge(check: BillingRequestCheck): {
   tone: "success" | "danger" | "neutral";
   label: string;
@@ -67,7 +67,6 @@ function statusBadge(check: BillingRequestCheck): {
     if (check.reason_codes.includes("negative_margin")) {
       return { tone: "danger", label: "亏本" };
     }
-    return { tone: "danger", label: "异常" };
   }
   return { tone: "neutral", label: "无法核对" };
 }

@@ -91,8 +91,7 @@ def overviewBillingChecks(
           SUM(status = 'mismatch') AS mismatch_count,
           SUM(status = 'unknown') AS unknown_count,
           COALESCE(SUM(main_usd), 0) AS main_usd_total,
-          COALESCE(SUM(upstream_actual_usd), 0) AS upstream_usd_total,
-          COALESCE(SUM(official_usd), 0) AS official_usd_total
+          COALESCE(SUM(upstream_actual_usd), 0) AS upstream_usd_total
         FROM billing_request_checks {where}
         """,
         tuple(params),
@@ -187,7 +186,6 @@ def overviewBillingChecks(
         "unknown_count": int(row.get("unknown_count") or 0),
         "main_usd_total": usdTotal("main_usd_total"),
         "upstream_usd_total": usdTotal("upstream_usd_total"),
-        "official_usd_total": usdTotal("official_usd_total"),
         "margin_usd_total": round(usdTotal("main_usd_total") - usdTotal("upstream_usd_total"), 8),
         "reason_breakdown": [
             {"code": code, "count": count}

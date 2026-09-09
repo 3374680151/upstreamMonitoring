@@ -604,11 +604,6 @@ export type BillingRequestCheck = {
   main_model_ratio: number | null;
   main_group_ratio: number | null;
   main_completion_ratio: number | null;
-  official_usd: number | null;
-  official_input_usd_per_m: number | null;
-  official_cached_input_usd_per_m: number | null;
-  official_cache_write_usd_per_m: number | null;
-  official_output_usd_per_m: number | null;
   upstream_expected_usd: number | null;
   upstream_actual_usd: number | null;
   /** v7：按上游显示价卡算出的列价成本（分组倍率乘之前的钱） */
@@ -654,7 +649,6 @@ export type BillingAuditOverview = {
   unknown_count: number;
   main_usd_total: number;
   upstream_usd_total: number;
-  official_usd_total: number;
   margin_usd_total: number;
   reason_breakdown: { code: string; count: number }[];
   model_breakdown: { model_name: string; total_count: number; mismatch_count: number }[];

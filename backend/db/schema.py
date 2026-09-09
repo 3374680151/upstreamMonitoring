@@ -315,11 +315,6 @@ DDL_STATEMENTS = [
         main_model_ratio DOUBLE,
         main_group_ratio DOUBLE,
         main_completion_ratio DOUBLE,
-        official_usd DOUBLE,
-        official_input_usd_per_m DOUBLE,
-        official_cached_input_usd_per_m DOUBLE,
-        official_cache_write_usd_per_m DOUBLE,
-        official_output_usd_per_m DOUBLE,
         upstream_expected_usd DOUBLE,
         upstream_actual_usd DOUBLE,
         # v7 设计稿：上游自家价卡算出的列价成本（分组倍率乘之前的钱）

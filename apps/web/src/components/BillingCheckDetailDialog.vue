@@ -52,7 +52,6 @@ const statusBadge = computed(() => {
     if (check?.reason_codes.includes("negative_margin")) {
       return { tone: "danger" as const, label: "亏本" };
     }
-    return { tone: "danger" as const, label: "异常" };
   }
   return { tone: "neutral" as const, label: "无法核对" };
 });

@@ -18,6 +18,7 @@ import type {
   BillingRequestCheck,
   BillingTimeBucket,
   BillingUpstreamBreakdown as BillingUpstreamBreakdownRow,
+  Site,
 } from "@/lib/types";
 import { billingReasonLabel, usdPrecise } from "@/lib/format";
 import { useToast } from "@/composables/useToast";
@@ -25,6 +26,7 @@ import { useToast } from "@/composables/useToast";
 const toast = useToast();
 
 const adminSites = ref<AdminSite[]>([]);
+const sites = ref<Site[]>([]);
 const overview = ref<BillingAuditOverview | null>(null);
 const items = ref<BillingRequestCheck[]>([]);
 const total = ref(0);
@@ -108,11 +110,16 @@ const bucketMinutes = computed(() => {
   return byRange[range.value] ?? 5;
 });
 
-/** 活跃的聚合过滤芯片（模型 / 上游 / 原因），空数组则不渲染 */
+/** 活跃的聚合过滤芯片（渠道 / 模型 / 上游 / 原因），空数组则不渲染 */
+const siteNameById = computed(() => new Map(sites.value.map((site) => [site.id, site.name])));
 const activeFilters = computed(() => {
   const chips: { key: string; label: string; clear: () => void }[] = [];
   if (upstreamSiteId.value !== null) {
-    chips.push({ key: "upstream", label: "上游已筛选", clear: () => (upstreamSiteId.value = null) });
+    chips.push({
+      key: "upstream",
+      label: `渠道：${siteNameById.value.get(upstreamSiteId.value) ?? `#${upstreamSiteId.value}`}`,
+      clear: () => (upstreamSiteId.value = null),
+    });
   }
   if (modelFilter.value) {
     chips.push({
@@ -258,12 +265,13 @@ function changePage(delta: number): void {
 
 onMounted(async () => {
   fetchAll();
-  try {
-    const res = await api.adminSites();
-    adminSites.value = res.data || [];
-  } catch {
-    adminSites.value = [];
-  }
+  const [sitesRes, adminSitesRes] = await Promise.allSettled([
+    api.sites(),
+    api.adminSites(),
+  ]);
+  sites.value = sitesRes.status === "fulfilled" ? sitesRes.value.data || [] : [];
+  adminSites.value =
+    adminSitesRes.status === "fulfilled" ? adminSitesRes.value.data || [] : [];
 });
 </script>
 
@@ -363,6 +371,12 @@ onMounted(async () => {
       <template #action>
         <div class="flex flex-wrap gap-2">
           <Input v-model="keyword" class="w-44" type="search" placeholder="搜模型 / 渠道 / 上游" />
+          <Select v-model="upstreamSiteId" class="w-44" title="按监控渠道（上游站点）筛选核对记录">
+            <option :value="null">全部渠道</option>
+            <option v-for="site in sites" :key="site.id" :value="site.id">
+              {{ site.name }}
+            </option>
+          </Select>
           <Select v-model="adminSiteId" class="w-40">
             <option :value="null">全部主站</option>
             <option v-for="site in adminSites" :key="site.id" :value="site.id">

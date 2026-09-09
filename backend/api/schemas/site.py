@@ -17,6 +17,7 @@ class SiteCreateRequest(CompatibilityModel):
     interval_minutes: int = 3
     login_enabled: bool = False
     auth_mode: str = "password"
+    quota_per_unit: int | None = None
 
 
 class SiteUpdateRequest(CompatibilityModel):
@@ -27,6 +28,7 @@ class SiteUpdateRequest(CompatibilityModel):
     interval_minutes: int | None = None
     login_enabled: bool | None = None
     auth_mode: str | None = None
+    quota_per_unit: int | None = None
 
 
 class DiscoveryImportRequest(CompatibilityModel):

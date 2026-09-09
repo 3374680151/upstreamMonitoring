@@ -181,8 +181,8 @@ onMounted(load);
               <td class="px-2 py-1.5 text-right text-ink tabular">{{ price.cache_write_usd_per_m ?? "—" }}</td>
               <td class="px-2 py-1.5 text-right text-ink tabular">{{ price.output_usd_per_m ?? "—" }}</td>
               <td class="px-2 py-1.5">
-                <Badge :tone="price.source === 'manual' ? 'info' : 'neutral'">
-                  {{ price.source === "manual" ? "手动" : "内置" }}
+                <Badge :tone="price.source === 'manual' ? 'info' : price.source === 'sub2api' ? 'success' : 'neutral'">
+                  {{ price.source === "manual" ? "手动" : price.source === "sub2api" ? "sub2api 同步" : "内置" }}
                 </Badge>
               </td>
               <td class="whitespace-nowrap px-2 py-1.5 text-ink-muted tabular">{{ fmtTime(price.updated_at) }}</td>

@@ -217,6 +217,48 @@ def deleteOfficialModelPrice(modelName: str) -> bool:
     return deleted > 0
 
 
+def upsertOfficialModelPriceSynced(
+    modelName: str,
+    quotaType: str,
+    fields: Dict[str, Optional[float]],
+    now: str,
+) -> None:
+    """定时同步来源（source='sub2api'）的官方价写入。
+
+    ``source='manual'`` 的行整行保持原值（含 updated_at/source），避免每日
+    定时同步冲掉人工校准的价格；builtin 行允许被同步结果覆盖为 sub2api 价。
+    """
+    if quotaType not in {"per_token", "per_call"}:
+        raise ValueError("quota_type 只支持 per_token / per_call")
+    db_execute(
+        """
+        INSERT INTO official_model_prices
+        (model_name, quota_type, input_usd_per_m, cached_input_usd_per_m,
+         cache_write_usd_per_m, output_usd_per_m, price_per_call_usd,
+         source, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'sub2api', ?)
+        ON DUPLICATE KEY UPDATE
+          quota_type = IF(source = 'manual', quota_type, VALUES(quota_type)),
+          input_usd_per_m = IF(source = 'manual', input_usd_per_m, VALUES(input_usd_per_m)),
+          cached_input_usd_per_m = IF(source = 'manual', cached_input_usd_per_m, VALUES(cached_input_usd_per_m)),
+          cache_write_usd_per_m = IF(source = 'manual', cache_write_usd_per_m, VALUES(cache_write_usd_per_m)),
+          output_usd_per_m = IF(source = 'manual', output_usd_per_m, VALUES(output_usd_per_m)),
+          price_per_call_usd = IF(source = 'manual', price_per_call_usd, VALUES(price_per_call_usd)),
+          updated_at = IF(source = 'manual', updated_at, VALUES(updated_at))
+        """,
+        (
+            modelName,
+            quotaType,
+            fields.get("input_usd_per_m"),
+            fields.get("cached_input_usd_per_m"),
+            fields.get("cache_write_usd_per_m"),
+            fields.get("output_usd_per_m"),
+            fields.get("price_per_call_usd"),
+            now,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 核对记录
 # ---------------------------------------------------------------------------
@@ -228,7 +270,8 @@ BILLING_CHECK_COLUMNS = (
     "main_usd, main_model_ratio, main_group_ratio, main_completion_ratio, "
     "official_usd, official_input_usd_per_m, official_cached_input_usd_per_m, "
     "official_cache_write_usd_per_m, official_output_usd_per_m, "
-    "upstream_expected_usd, upstream_actual_usd, upstream_log_id, "
+    "upstream_expected_usd, upstream_actual_usd, upstream_list_cost_usd, "
+    "upstream_derived_group_ratio, upstream_log_id, "
     "upstream_model_ratio, upstream_group_ratio, upstream_completion_ratio, "
     "published_model_ratio, published_group_ratio, published_completion_ratio, "
     "match_status, status, reason_codes_json, main_other_json, "
@@ -291,6 +334,39 @@ def listPendingBillingChecks(adminSiteId: int, limit: int) -> List[Dict[str, Any
     )
 
 
+def listRejudgeBillingChecks(
+    adminSiteId: int,
+    olderThan: str,
+    limit: int,
+    unmatchedRequestAtFloor: str = "",
+) -> List[Dict[str, Any]]:
+    """挑出可翻面的灰行做重判（P2）。
+
+    ① no_binding / no_token / no_log_api——用户建好绑定、补上登录态或
+    sub2api 适配上线后，按 1h 冷却重审；② unmatched（no_upstream_log）——
+    上游日志拉取瞬时失败、或上游重建库/行号漂移导致的历史误判，同样 1h
+    冷却，但只重审 request_at 在 ``unmatchedRequestAtFloor`` 之后的行：
+    上游日志保留期通常不超过几天，更老的行永远翻不动，重判只是空转。
+    matched 灰（no_official_price）不在其列：重判要重跑匹配，上游日志超出
+    翻页窗口时会把已有匹配退化成 unmatched。
+    """
+    return db_query_all(
+        f"""
+        SELECT {BILLING_CHECK_COLUMNS} FROM billing_request_checks
+        WHERE admin_site_id = ? AND status = 'unknown'
+          AND checked_at IS NOT NULL AND checked_at <= ?
+          AND (
+            match_status IN ('no_binding', 'no_token', 'no_log_api')
+            OR (match_status = 'unmatched'
+                AND request_at >= ?)
+          )
+        ORDER BY checked_at ASC, id ASC
+        LIMIT ?
+        """,
+        (int(adminSiteId), olderThan, unmatchedRequestAtFloor, int(limit)),
+    )
+
+
 def countPendingBillingChecks(adminSiteId: int) -> int:
     row = db_query_one(
         "SELECT COUNT(*) AS total FROM billing_request_checks WHERE admin_site_id = ? AND checked_at IS NULL",
@@ -307,16 +383,23 @@ def countBillingChecksByStatus(adminSiteId: int, status: str) -> int:
     return int((row or {}).get("total") or 0)
 
 
-def listUsedUpstreamLogIds(adminSiteId: int) -> set:
-    """已被历史核对占用的上游日志 id（一条上游日志只允许配一条主站记录）。"""
-    rows = db_query_all(
+def listUsedUpstreamLogEntries(adminSiteId: int) -> List[Dict[str, Any]]:
+    """已被历史核对占用的上游日志条目（一条上游日志只配一条主站记录）。
+
+    返回 (upstream_site_id, upstream_log_id, upstream_log_created_at,
+    request_at)：NewAPI 上游重建库后日志 id 会从 1 重新计数（gopay
+    2026-09 实测），裸 id 不再唯一——占用判定必须带上游站点作用域 + 时间
+    （新行记 upstream_log_created_at；历史行没有该列，退回用主站
+    request_at 近似比较）。时间窗匹配才是最终裁判，这里只是省请求的粗筛。
+    """
+    return db_query_all(
         """
-        SELECT upstream_log_id FROM billing_request_checks
+        SELECT upstream_site_id, upstream_log_id, upstream_log_created_at, request_at
+        FROM billing_request_checks
         WHERE admin_site_id = ? AND upstream_log_id IS NOT NULL
         """,
         (int(adminSiteId),),
     )
-    return {int(r["upstream_log_id"]) for r in rows}
 
 
 def getBillingMetaString(name: str) -> Optional[str]:
@@ -336,6 +419,8 @@ def updateBillingCheckResult(rowId: int, patch: Dict[str, Any]) -> None:
         "official_usd", "official_input_usd_per_m", "official_cached_input_usd_per_m",
         "official_cache_write_usd_per_m", "official_output_usd_per_m",
         "upstream_expected_usd", "upstream_actual_usd", "upstream_log_id",
+        "upstream_list_cost_usd", "upstream_derived_group_ratio",
+        "upstream_log_created_at",
         "upstream_model_ratio", "upstream_group_ratio", "upstream_completion_ratio",
         "published_model_ratio", "published_group_ratio", "published_completion_ratio",
         "match_status", "status", "reason_codes_json",

@@ -1,17 +1,22 @@
 """Billing-audit orchestration: pull, match, and judge request charges.
 
-对应设计稿 ``docs/billing-audit/billing-audit-方案.md``。每轮：按主站增量
-拉 ``/api/log/?type=2``（游标存 app_settings）→ 落 ``billing_request_checks``
-→ 逐行经 ``channel_upstream_bindings`` 找上游站点 → 拉上游
-``/api/log/self`` 按 模型+tokens+时间窗 匹配 → 官方价 / 上游公示倍率 /
-上游实扣 / 主站实收 四方判定 → 红绿灰。全程只读远端，不写任何上游数据。
+对应设计稿 ``docs/billing-audit/倍率真实性验证-设计.md``（v7）。每轮：按
+主站增量拉 ``/api/log/?type=2``（游标存 app_settings）→ 落
+``billing_request_checks`` → 逐行经 ``channel_upstream_bindings`` 找上游
+站点 → 拉上游日志按 模型+tokens+时间窗 匹配 → 判定。全程只读远端，
+不写任何上游数据。
 
-判定口径（与设计稿 3.3 一致）：
-* 灰（unknown）优先于红——上游倍率证据缺失（ratio_field_missing）、无官方价
-  （no_official_price）、绑不到上游（no_binding/no_token）、匹配不到上游日志
-  （no_upstream_log）时整行归灰，绝不误报红；已判出的红因仍写进 reason_codes。
-* 主站侧次要判定（main_billing_inconsistent / group_ratio_gap）缺字段时只
-  跳过该判定，不影响整行颜色。
+判定口径（v7，以「上游自己显示的」为基准）：
+* 列价成本 = 按上游显示价卡把四类 tokens 折成美元（NewAPI：tokens加权 ×
+  显示模型倍率 ÷ quota_per_unit；sub2api：日志 total_cost 自带）；
+* 验证一（分组倍率暗改）：真实分组倍率 = 实扣 ÷ 列价成本，> 显示分组倍率
+  + 绝对容带 → 红「暗改倍率」；≤ 显示 → 绿（便宜是多挣）；
+* 亏本兜底：收了 < 花了 → 红；
+* 灰（unknown）优先于红：显示价卡/倍率拿不到（ratio_field_missing）、
+  绑不到上游（no_binding/no_token/no_log_api）、匹配不到上游日志
+  （no_upstream_log）时整行归灰，绝不误报红。
+* 官方价（LiteLLM / official_model_prices）只作参考金额落库展示，
+  不再参与判定。
 """
 
 from __future__ import annotations
@@ -29,15 +34,35 @@ from backend.integrations.newapi_logs import (
     fetchNewapiAdminConsumeLogs,
     fetchNewapiSelfConsumeLogs,
 )
+from backend.integrations.sub2api_logs import (
+    USAGE_PAGE_SIZE as SUB2API_USAGE_PAGE_SIZE,
+    fetchSub2apiUsageLogsWithAuth,
+)
 from backend.repositories import billing_audit as billingRepo
-from backend.repositories.admin_sites import list_admin_site_rows
+from backend.repositories.admin_sites import (
+    admin_site_quota_per_unit,
+    list_admin_site_rows,
+)
+from backend.repositories.changes import insertChangeRecord, listRecentRatioChanges
 from backend.repositories.sites import (
     find_monitor_site_for_channel,
     get_site_or_404,
     list_channel_discovery_links,
     site_auth_ready,
     site_groups_from_row,
+    site_quota_per_unit,
 )
+from backend.services.billing_audit_rules import (
+    EPS,
+    newapiListCostUsd,
+    judgeRatioDrift,
+    safeNumber,
+)
+from backend.services.billing_audit_sub2api import (
+    judgeSub2apiUpstream,
+    sub2apiPublishedGroupRatios,
+)
+from backend.services.billing_audit_notify import maybePushRedAlert
 from backend.services.channel_match_service import list_channel_upstream_bindings
 from backend.services.monitoring_service import (
     cache_newapi_pricing_payload,
@@ -48,60 +73,17 @@ MAIN_LOG_PAGE_SIZE = 100
 MAIN_LOG_MAX_PAGES = 10
 UPSTREAM_LOG_PAGE_SIZE = 100
 UPSTREAM_LOG_MAX_PAGES = 10
+SUB2API_USAGE_MAX_PAGES = 6
 PENDING_LIMIT_PER_RUN = 300
 MAX_LIST_PAGE_SIZE = 100
-_EPS = 1e-12
 
 
 # ---------------------------------------------------------------------------
-# 判定纯函数
+# 判定纯函数（共享部分在 billing_audit_rules，NewAPI 倍率口径在下方）
 # ---------------------------------------------------------------------------
-
-def _num(value: Any) -> Optional[float]:
-    """other 字段里的数值可能是字符串，统一容错转 float。"""
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _relDiff(actual: float, expected: float) -> float:
-    if abs(expected) <= _EPS:
-        return 0.0 if abs(actual) <= _EPS else float("inf")
-    return abs(actual - expected) / abs(expected)
-
-
-def _officialCost(priceRow: Dict[str, Any], tokens: Dict[str, Any]) -> Optional[float]:
-    """官方成本；per_token 缺单价的分量按输入价兜底（缓存写入价缺省视为 0 档按输入价）。"""
-    inputPrice = priceRow.get("input_usd_per_m")
-    if str(priceRow.get("quota_type") or "per_token") == "per_call":
-        callPrice = priceRow.get("price_per_call_usd")
-        return float(callPrice) if isinstance(callPrice, (int, float)) else None
-    if not isinstance(inputPrice, (int, float)):
-        return None
-    fallback = float(inputPrice)
-
-    def component(field: str) -> float:
-        value = priceRow.get(field)
-        return float(value) if isinstance(value, (int, float)) else fallback
-
-    cacheRead = float(tokens.get("cache_read_tokens") or 0)
-    cacheWrite = float(tokens.get("cache_creation_tokens") or 0)
-    cost = (
-        float(tokens.get("prompt_tokens") or 0) * fallback
-        + cacheRead * component("cached_input_usd_per_m")
-        + cacheWrite * component("cache_write_usd_per_m")
-        + float(tokens.get("completion_tokens") or 0) * component("output_usd_per_m")
-    ) / 1_000_000.0
-    return round(cost, 10)
-
 
 def _parsePricing(payload: Any) -> Dict[str, Any]:
-    """从 /api/pricing 返回体提取 模型倍率 / 补全倍率 / 分组倍率 / 按次价。"""
+    """从 /api/pricing 返回体提取 模型倍率 / 补全倍率 / 缓存折扣 / 分组倍率 / 按次价。"""
     body = payload
     if isinstance(body, dict) and isinstance(body.get("data"), dict):
         body = body.get("data")
@@ -118,7 +100,7 @@ def _parsePricing(payload: Any) -> Dict[str, Any]:
             if not name:
                 continue
             entry: Dict[str, float] = {}
-            for src in ("model_ratio", "completion_ratio", "model_price", "quota_type"):
+            for src in ("model_ratio", "completion_ratio", "cache_ratio", "model_price", "quota_type"):
                 value = item.get(src)
                 if isinstance(value, (int, float)):
                     entry[src] = float(value)
@@ -135,31 +117,100 @@ def _parsePricing(payload: Any) -> Dict[str, Any]:
     return {"models": models, "group_ratios": groupRatios}
 
 
-def _expectedUpstreamUsd(
-    row: Dict[str, Any],
-    modelPub: Optional[Dict[str, float]],
-    groupRatio: Optional[float],
-    quotaPerUnit: float,
-) -> Optional[float]:
-    """按上游公示倍率快照反推这条请求「应该」扣多少美元；缺倍率返回 None。
+# ---------------------------------------------------------------------------
+# 验证二：上游价卡变化监控（v7 设计稿）
+# ---------------------------------------------------------------------------
 
-    缓存命中按 cache_ratio（未知取 1）计入，缓存写入按普通输入计——两个
-    口径只影响灰度兜底分支的金额对比，倍率证据优先时不用到它。
+# 价卡快照存 app_settings（TEXT 上限 64KB）；超限站点放弃监控，宁可漏盯
+# 也不让快照写入失败拖垮核对轮。
+PRICE_CARD_SNAPSHOT_MAX_BYTES = 50_000
+PRICE_CARD_RATIO_FIELDS = ("model_ratio", "completion_ratio", "cache_ratio", "model_price")
+
+
+def _priceCardFingerprint(pricing: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+    """把 /api/pricing 解析结果压成 {模型: {倍率字段: 值}} 的紧凑指纹。"""
+    card: Dict[str, Dict[str, float]] = {}
+    for name, entry in (pricing.get("models") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        picked = {
+            field: float(entry[field])
+            for field in PRICE_CARD_RATIO_FIELDS
+            if isinstance(entry.get(field), (int, float))
+        }
+        if picked:
+            card[str(name)] = picked
+    return card
+
+
+def _priceCardChanges(
+    oldCard: Dict[str, Dict[str, float]], newCard: Dict[str, Dict[str, float]]
+) -> List[Dict[str, Any]]:
+    """对比两份价卡指纹，只挑「同模型、倍率字段值变化」的差异（v7 验证二）。"""
+    changes: List[Dict[str, Any]] = []
+    for name in sorted(set(oldCard) & set(newCard)):
+        oldEntry, newEntry = oldCard[name], newCard[name]
+        diffs: List[str] = []
+        for field in PRICE_CARD_RATIO_FIELDS:
+            oldValue = oldEntry.get(field)
+            newValue = newEntry.get(field)
+            if oldValue is None and newValue is None:
+                continue
+            if oldValue != newValue:
+                diffs.append(f"{field} {oldValue} → {newValue}")
+        if diffs:
+            changes.append({
+                "change_type": "model_ratio_changed",
+                "group_name": name,
+                "old_value": oldEntry,
+                "new_value": newEntry,
+                "change_percent": None,
+                "message": f"价卡变化 {name}：{'；'.join(diffs)}",
+            })
+    return changes
+
+
+def _watchUpstreamPriceCard(ctx: "_UpstreamContext", pricing: Dict[str, Any]) -> None:
+    """本轮价卡 vs 上一轮快照：变了写 changes 表（暗改价格线索），存新快照。
+
+    快照按上游站点存 app_settings（``price_card_{site_id}``）；首轮只落快照
+    不报变化。分组的 ratio_changed 由监控模块 diff 覆盖，这里只盯模型价卡。
     """
-    if not modelPub or "model_ratio" not in modelPub or groupRatio is None:
-        return None
-    if float(modelPub.get("quota_type") or 0) == 1:
-        callPrice = modelPub.get("model_price")
-        return round(float(callPrice) * groupRatio / quotaPerUnit, 10) if callPrice else None
-    completionRatio = float(modelPub.get("completion_ratio") or 1.0)
-    cacheRatio = float(row.get("_cache_ratio_hint") or 1.0)
-    weighted = (
-        float(row.get("prompt_tokens") or 0)
-        + float(row.get("cache_creation_tokens") or 0)
-        + float(row.get("cache_read_tokens") or 0) * cacheRatio
-        + float(row.get("completion_tokens") or 0) * completionRatio
-    )
-    return round(weighted * float(modelPub["model_ratio"]) * groupRatio / quotaPerUnit, 10)
+    site = ctx.site or {}
+    siteId = int(site.get("id") or 0)
+    if siteId <= 0:
+        return
+    metaKey = f"price_card_{siteId}"
+    newCard = _priceCardFingerprint(pricing)
+    if not newCard:
+        return
+    snapshotJson = json.dumps(newCard, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    if len(snapshotJson.encode("utf-8")) > PRICE_CARD_SNAPSHOT_MAX_BYTES:
+        return
+    oldRaw = billingRepo.getBillingMetaString(metaKey)
+    if oldRaw:
+        try:
+            oldCard = json.loads(oldRaw)
+        except ValueError:
+            oldCard = None
+        if isinstance(oldCard, dict):
+            for change in _priceCardChanges(oldCard, newCard):
+                insertChangeRecord(
+                    siteId,
+                    change["change_type"],
+                    change["group_name"],
+                    change["old_value"],
+                    change["new_value"],
+                    change["change_percent"],
+                    change["message"],
+                    utc_now_iso(),
+                )
+                print(
+                    f"[计费核对] 上游价卡变化 site={siteId} model={change['group_name']} "
+                    f"detail={change['message']}",
+                    flush=True,
+                )
+    billingRepo.setBillingMeta(metaKey, snapshotJson)
 
 
 # ---------------------------------------------------------------------------
@@ -177,28 +228,98 @@ class _UpstreamContext:
         self.pricing: Optional[Dict[str, Any]] = None
         self.pricingLoaded = False
         self.usedLogIds: set = set()
+        # 上一页首条日志的锚（id+created_at）：部分 NewAPI 版本把 p=0/1 都钳到
+        # 第 1 页，连续两页内容相同就跳过这次重复，不污染已拉窗口。
+        self.lastPageFirstKey: Optional[Tuple[Any, Any]] = None
+
+
+def _upstreamPlatform(ctx: _UpstreamContext) -> str:
+    return str((ctx.site or {}).get("platform") or "newapi").strip().lower()
+
+
+def _buildUsedUpstreamLogMap(
+    entries: List[Dict[str, Any]],
+) -> Dict[int, Dict[int, List[str]]]:
+    """历史占用条目 → ``{upstream_site_id: {upstream_log_id: [参考时间 ISO]}}``。
+
+    时间参考优先取日志自身的 upstream_log_created_at；历史行没有该列时退回
+    主站 request_at（匹配窗内两者相差秒级，足够区分「同一条」与「同 id 新日志」）。
+    """
+    usedBySiteLog: Dict[int, Dict[int, List[str]]] = {}
+    for entry in entries:
+        siteId = int(entry.get("upstream_site_id") or 0)
+        logId = int(entry.get("upstream_log_id") or 0)
+        if siteId <= 0 or logId <= 0:
+            continue
+        reference = str(
+            entry.get("upstream_log_created_at") or entry.get("request_at") or ""
+        )
+        usedBySiteLog.setdefault(siteId, {}).setdefault(logId, []).append(reference)
+    return usedBySiteLog
+
+
+def _upstreamLogAlreadyUsed(
+    usedBySiteLog: Dict[int, Dict[int, List[str]]],
+    upstreamSiteId: Optional[int],
+    logId: Any,
+    logCreatedIso: Any,
+    windowSeconds: int,
+) -> bool:
+    """该上游日志是否已被历史行消费：id 命中且参考时间落在日志时间 ±窗口内。
+
+    只比 id 会误杀重建库后重新计数的新日志（时间差以天计）；不比时间则同
+    id 新日志无法翻案。时间解析失败的参考条目按命中处理（保守，宁可漏配
+    不重复配）。
+    """
+    siteId = int(upstreamSiteId or 0)
+    try:
+        numericId = int(logId or 0)
+    except (TypeError, ValueError):
+        return False
+    references = usedBySiteLog.get(siteId, {}).get(numericId)
+    if not references:
+        return False
+    if logCreatedIso is None:
+        return True
+    for reference in references:
+        referenceAt = parse_iso_dt(reference) if reference else None
+        if referenceAt is None:
+            return True
+        delta = abs((logCreatedIso - referenceAt).total_seconds())
+        if delta <= windowSeconds:
+            return True
+    return False
 
 
 def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSeconds: int) -> None:
     """保证已拉日志窗口覆盖 neededFrom - window（覆盖不到就尽力拉到页数上限）。
 
-    上游 /api/log/self 按时间倒序返回，翻页直到覆盖目标时间或到页数上限；
-    同一轮内多个请求共享已拉的日志，避免逐行重复请求上游。
+    NewAPI 上游走 /api/log/self、sub2api 上游走 /api/v1/usage，两者都按时间
+    倒序返回，翻页直到覆盖目标时间或到页数上限；同一轮内多个请求共享已拉的
+    日志，避免逐行重复请求上游。
     """
+    isSub2api = _upstreamPlatform(ctx) == "sub2api"
+    maxPages = SUB2API_USAGE_MAX_PAGES if isSub2api else UPSTREAM_LOG_MAX_PAGES
+    pageSize = SUB2API_USAGE_PAGE_SIZE if isSub2api else UPSTREAM_LOG_PAGE_SIZE
     target = neededFrom - timedelta(seconds=windowSeconds)
     while True:
         if ctx.logs is None:
             ctx.logs = []
         covered = ctx.oldest is not None and ctx.oldest <= target
-        if covered or ctx.exhausted or ctx.pagesFetched >= UPSTREAM_LOG_MAX_PAGES:
+        if covered or ctx.exhausted or ctx.pagesFetched >= maxPages:
             return
         if STOP_EVENT.is_set():
             return
         page = ctx.pagesFetched
         ctx.pagesFetched += 1
-        ok, logs, _meta, error = fetchNewapiSelfConsumeLogs(
-            ctx.site, page, UPSTREAM_LOG_PAGE_SIZE
-        )
+        if isSub2api:
+            ok, logs, _meta, error = fetchSub2apiUsageLogsWithAuth(
+                ctx.site, page, pageSize
+            )
+        else:
+            ok, logs, _meta, error = fetchNewapiSelfConsumeLogs(
+                ctx.site, page, pageSize
+            )
         if not ok:
             print(f"[计费核对] 上游日志拉取失败 base={ctx.base} page={page} err={error}", flush=True)
             ctx.exhausted = True
@@ -206,6 +327,12 @@ def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSecon
         if not logs:
             ctx.exhausted = True
             return
+        # 钳位去重：p=0/1 同页（新版 NewAPI 把 p<1 钳到第 1 页，实测主站与
+        # zc-api rc.25 上游皆如此）。重复页跳过入窗，不重复占翻页预算外的覆盖。
+        firstKey = (logs[0].get("id"), logs[0].get("created_at"))
+        if firstKey == ctx.lastPageFirstKey:
+            continue
+        ctx.lastPageFirstKey = firstKey
         for log in logs:
             ctx.logs.append(log)
             created = log.get("created_iso")
@@ -214,13 +341,20 @@ def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSecon
 
 
 def _ensurePricing(ctx: _UpstreamContext) -> Optional[Dict[str, Any]]:
-    """上游公示价格：优先复用监控模块的 pricing 缓存，未命中时直拉一次。"""
+    """上游公示价格：NewAPI 优先复用监控模块的 pricing 缓存（未命中直拉一次）；
+    sub2api 无 /api/pricing，公示倍率直接取监控快照（groups/rates 口径）。"""
     if ctx.pricingLoaded:
         return ctx.pricing
     ctx.pricingLoaded = True
     payload: Any = None
     site = ctx.site or {}
     siteId = int(site.get("id") or 0)
+    if _upstreamPlatform(ctx) == "sub2api":
+        ctx.pricing = {
+            "models": {},
+            "group_ratios": sub2apiPublishedGroupRatios(site),
+        }
+        return ctx.pricing
     if siteId > 0:
         cached, _age = get_newapi_pricing_cache(siteId)
         if cached:
@@ -336,8 +470,8 @@ def _auditRow(
     channelLinks: Dict[str, Dict[str, Any]],
     ctxByBase: Dict[str, _UpstreamContext],
     settings: Dict[str, Any],
-    priceCache: Dict[str, Optional[Dict[str, Any]]],
-) -> None:
+    usedBySiteLog: Optional[Dict[int, Dict[int, List[str]]]] = None,
+) -> Dict[str, Any]:
     tol = float(settings["tolerance_percent"]) / 100.0
     quotaPerUnit = float(settings["quota_per_unit"] or 500000)
     windowSeconds = int(settings["match_window_seconds"] or 300)
@@ -352,22 +486,20 @@ def _auditRow(
     link = channelLinks.get(str(row.get("channel_id"))) if row.get("channel_id") is not None else None
     if not link:
         _finalize(row, patch, "no_binding", "unknown", ["no_binding"])
-        return
+        return {"id": int(row["id"]), "status": "unknown", "reason_codes": ["no_binding"]}
     base = str(link["base"])
     ctx = ctxByBase.get(base)
     if ctx is None:
         ctx = _UpstreamContext(base, link.get("site_row"))
-        # 跨轮去重：历史行已占用的上游日志 id 一并排除，保证一条上游日志
-        # 只配一条主站记录（设计稿第 7 节）。
-        ctx.usedLogIds.update(billingRepo.listUsedUpstreamLogIds(int(row["admin_site_id"])))
         ctxByBase[base] = ctx
     if ctx.site is None or not site_auth_ready(ctx.site):
         _finalize(row, patch, "no_token", "unknown", ["no_token"])
-        return
-    if str(ctx.site.get("platform") or "newapi") != "newapi":
-        # P1 只支持 NewAPI 上游的日志核对（设计稿第 12 节分期口径）。
+        return {"id": int(row["id"]), "status": "unknown", "reason_codes": ["no_token"]}
+    upstreamPlatform = str(ctx.site.get("platform") or "newapi").strip().lower()
+    if upstreamPlatform not in {"newapi", "sub2api"}:
+        # 上游平台没有可核对的日志接口（设计稿 4.2：no_log_api）。
         _finalize(row, patch, "no_log_api", "unknown", ["no_log_api"])
-        return
+        return {"id": int(row["id"]), "status": "unknown", "reason_codes": ["no_log_api"]}
     # 审计期回填站点归属：老行插入时可能还没有发现来源映射。
     patch["upstream_site_id"] = int(ctx.site.get("id") or 0) or None
     patch["upstream_site_name"] = str(ctx.site.get("name") or "") or None
@@ -375,16 +507,24 @@ def _auditRow(
     requestAt = parse_iso_dt(str(row.get("request_at") or ""))
     if requestAt is None:
         _finalize(row, patch, "unmatched", "unknown", ["no_upstream_log"])
-        return
+        return {"id": int(row["id"]), "status": "unknown", "reason_codes": ["no_upstream_log"]}
     _ensureUpstreamLogs(ctx, requestAt, windowSeconds)
     if STOP_EVENT.is_set():
         # 停机时不把「没拉完日志」定格成 unmatched，留待下一轮重判。
-        return
+        return {"id": int(row["id"]), "status": "pending", "reason_codes": []}
     logs = ctx.logs or []
     best: Optional[Tuple[float, Dict[str, Any]]] = None
+    upstreamSiteId = int(ctx.site.get("id") or 0) or None
     for log in logs:
         logId = log.get("id")
         if logId is None or logId in ctx.usedLogIds:
+            continue
+        # 本轮内同一条上游日志只配一条主站记录；跨轮判重带站点+时间
+        # （上游重建库后 id 重新计数，裸 id 会误杀新日志）。
+        if _upstreamLogAlreadyUsed(
+            usedBySiteLog or {}, upstreamSiteId, logId,
+            log.get("created_iso"), windowSeconds,
+        ):
             continue
         if str(log.get("model_name") or "") != str(row.get("model_name") or ""):
             continue
@@ -407,125 +547,112 @@ def _auditRow(
             best = (delta, log)
     if best is None:
         _finalize(row, patch, "unmatched", "unknown", ["no_upstream_log"])
-        return
+        return {"id": int(row["id"]), "status": "unknown", "reason_codes": ["no_upstream_log"]}
 
     upLog = best[1]
     ctx.usedLogIds.add(upLog.get("id"))
-    upQuota = float(upLog.get("quota") or 0)
-    upstreamUsd = upQuota / quotaPerUnit
     patch["upstream_log_id"] = upLog.get("id")
-    patch["upstream_actual_usd"] = round(upstreamUsd, 10)
-    patch["upstream_model_ratio"] = upLog.get("model_ratio")
-    patch["upstream_group_ratio"] = upLog.get("group_ratio")
-    patch["upstream_completion_ratio"] = upLog.get("completion_ratio")
-    row["_cache_ratio_hint"] = upLog.get("cache_ratio")
+    # 记下上游日志自身时间，供后续轮次跨轮判重（见 BILLING_CHECK_COLUMN_ADDITIONS）。
+    if upLog.get("created_iso") is not None:
+        patch["upstream_log_created_at"] = (
+            upLog["created_iso"].astimezone(APP_TIMEZONE).isoformat(timespec="seconds")
+        )
+    patch["upstream_other_json"] = _compactJson(upLog.get("other"))
 
-    pricing = _ensurePricing(ctx)
-    modelName = str(row.get("model_name") or "")
-    modelPub = ((pricing or {}).get("models") or {}).get(modelName.casefold())
-    groupName, groupRatio = _resolveGroupRatio(upLog, link, pricing)
-    patch["published_model_ratio"] = (modelPub or {}).get("model_ratio")
-    patch["published_completion_ratio"] = (modelPub or {}).get("completion_ratio")
-    patch["published_group_ratio"] = groupRatio
-
-    # 官方价格 → 官方成本；价格缺失或单价不可用（如 per_call 缺按次价）按
-    # 设计稿整行归灰，绝不拿残缺单价硬算。
-    if modelName not in priceCache:
-        priceCache[modelName] = billingRepo.getOfficialModelPrice(modelName)
-    priceRow = priceCache[modelName]
-    officialUsd: Optional[float] = None
-    if priceRow:
-        patch["official_input_usd_per_m"] = priceRow.get("input_usd_per_m")
-        patch["official_cached_input_usd_per_m"] = priceRow.get("cached_input_usd_per_m")
-        patch["official_cache_write_usd_per_m"] = priceRow.get("cache_write_usd_per_m")
-        patch["official_output_usd_per_m"] = priceRow.get("output_usd_per_m")
-        officialUsd = _officialCost(priceRow, row)
-        patch["official_usd"] = officialUsd
-        if officialUsd is None:
-            gray = gray or "no_official_price"
+    if upstreamPlatform == "sub2api":
+        # sub2api 上游（v7）：列价成本 = 日志 total_cost（上游自家价卡），
+        # 真实分组倍率 = 实扣 ÷ 列价成本，与显示倍率判暗改（judgeRatioDrift）。
+        upstreamUsd = float(upLog.get("usd") or 0.0)
+        row["_cache_ratio_hint"] = None
+        upPatch, upRed, upGray = judgeSub2apiUpstream(
+            row, upLog, link.get("matched_groups") or [],
+            (_ensurePricing(ctx) or {}).get("group_ratios") or {}, tol,
+        )
+        patch.update(upPatch)
+        gray = upGray
+        red.extend(upRed)
     else:
-        gray = gray or "no_official_price"
+        upQuota = float(upLog.get("quota") or 0)
+        # quota→美元基准按上游站点覆盖（NULL 回退全局/主站有效值）。
+        upstreamQuotaPerUnit = site_quota_per_unit(ctx.site) or quotaPerUnit
+        upstreamUsd = upQuota / upstreamQuotaPerUnit
+        patch["upstream_actual_usd"] = round(upstreamUsd, 10)
+        patch["upstream_model_ratio"] = upLog.get("model_ratio")
+        patch["upstream_group_ratio"] = upLog.get("group_ratio")
+        patch["upstream_completion_ratio"] = upLog.get("completion_ratio")
+        row["_cache_ratio_hint"] = upLog.get("cache_ratio")
 
-    # 判定 1：上游暗改倍率。上游日志自记倍率与公示快照逐项对比（优先证据），
-    # 自记倍率缺失时退回金额对比（期望成本按公示倍率反推）。
-    expectedUsd = _expectedUpstreamUsd(row, modelPub, groupRatio, quotaPerUnit)
-    if expectedUsd is not None:
-        patch["upstream_expected_usd"] = expectedUsd
-    driftRunnable = False
-    if (modelPub or {}).get("model_ratio") is not None and upLog.get("model_ratio") is not None:
-        driftRunnable = True
-        pairs = [
-            (upLog.get("model_ratio"), (modelPub or {}).get("model_ratio")),
-            (upLog.get("completion_ratio"), (modelPub or {}).get("completion_ratio")),
-            (upLog.get("group_ratio"), groupRatio),
-        ]
-        for actual, expected in pairs:
-            if actual is None or expected is None:
-                continue
-            if _relDiff(float(actual), float(expected)) > tol:
-                red.append("upstream_ratio_drift")
-                break
-    elif expectedUsd is not None:
-        driftRunnable = True
-        if _relDiff(upstreamUsd, expectedUsd) > tol:
-            red.append("upstream_ratio_drift")
-    if not driftRunnable and gray is None:
-        gray = "ratio_field_missing"
-
-    # 判定 2：主站计费自洽（主站日志 other 自记倍率重算 vs 实扣 quota）。
-    # 只覆盖经典计费：model_ratio>0 走按量公式，model_price>0 走按次公式；
-    # tiered_expr 等分层计费无法复算，静默跳过（主站侧次要判定，不整行归灰）。
-    mMain, gMain, cMain = (
-        row.get("main_model_ratio"),
-        row.get("main_group_ratio"),
-        row.get("main_completion_ratio"),
-    )
-    mainOther: Dict[str, Any] = {}
-    try:
-        parsedOther = json.loads(row.get("main_other_json") or "{}")
-        if isinstance(parsedOther, dict):
-            mainOther = parsedOther
-    except ValueError:
-        mainOther = {}
-    mPrice = _num(mainOther.get("model_price"))
-    mainCacheRatio = _num(mainOther.get("cache_ratio"))
-    if mainQuota > 0 and gMain is not None:
-        recalc: Optional[float] = None
-        if mPrice is not None and mPrice > 0:
-            recalc = mPrice * float(gMain) * quotaPerUnit
-        elif mMain is not None and mMain > 0 and cMain is not None:
-            cacheRead = float(row.get("cache_read_tokens") or 0)
-            cacheRatio = mainCacheRatio if isinstance(mainCacheRatio, (int, float)) else None
-            if cacheRead <= 0 or cacheRatio is not None:
-                recalc = (
-                    (
-                        float(row.get("prompt_tokens") or 0)
-                        + float(row.get("cache_creation_tokens") or 0)
-                        + cacheRead * float(cacheRatio if cacheRatio is not None else 1.0)
-                        + float(row.get("completion_tokens") or 0) * float(cMain)
-                    )
-                    * float(mMain)
-                    * float(gMain)
+        pricing = _ensurePricing(ctx)
+        # 验证二（价卡变化监控）：有公示价卡时与上一轮快照对比，变化写
+        # changes 表；失败不影响本行判定。
+        if pricing and (pricing.get("models") or {}):
+            try:
+                _watchUpstreamPriceCard(ctx, pricing)
+            except Exception as watch_exc:  # noqa: BLE001 - 监控旁路，不拦判定
+                print(
+                    f"[计费核对] 价卡监控异常 base={base} err={watch_exc}",
+                    flush=True,
                 )
-        if recalc is not None and _relDiff(mainQuota, recalc) > tol:
-            red.append("main_billing_inconsistent")
+        modelName = str(row.get("model_name") or "")
+        modelPub = ((pricing or {}).get("models") or {}).get(modelName.casefold())
+        groupName, groupRatio = _resolveGroupRatio(upLog, link, pricing)
+        patch["published_model_ratio"] = (modelPub or {}).get("model_ratio")
+        patch["published_completion_ratio"] = (modelPub or {}).get("completion_ratio")
+        # 显示分组倍率（v7 数据源表）：公示快照优先；拿不到才退回日志自记
+        # （设计稿边界情况）。日志记的是上游实际扣的数，当基准会漏掉暗改。
+        logGroupRatio = safeNumber(upLog.get("group_ratio"))
+        patch["published_group_ratio"] = (
+            groupRatio if groupRatio is not None else logGroupRatio
+        )
 
-    # 判定 3：主站/上游实际费用比 vs 分组倍率之比。
-    gUp = upLog.get("group_ratio")
-    if gMain is not None and gUp is not None and mainUsd > 0 and upstreamUsd > 0:
-        expectedMarkup = float(gMain) / float(gUp)
-        actualMarkup = mainUsd / upstreamUsd
-        if _relDiff(actualMarkup, expectedMarkup) > tol:
-            red.append("group_ratio_gap")
+        # 列价成本（v7）：按上游显示价卡 × 实际 token 构成，缓存读从输入扣除
+        # 按缓存折扣计，避免双算。价卡缺该模型 → 灰「缺显示倍率」。
+        listCost = newapiListCostUsd(
+            {
+                "prompt_tokens": row.get("prompt_tokens"),
+                "completion_tokens": row.get("completion_tokens"),
+                "cache_read_tokens": row.get("cache_read_tokens"),
+                "cache_creation_tokens": row.get("cache_creation_tokens"),
+            },
+            modelPub,
+            row.get("_cache_ratio_hint"),
+            upstreamQuotaPerUnit,
+        )
+        if listCost is not None:
+            patch["upstream_list_cost_usd"] = listCost
+            derivedGroupRatio = upstreamUsd / listCost if listCost > EPS else None
+            if derivedGroupRatio is not None:
+                patch["upstream_derived_group_ratio"] = round(derivedGroupRatio, 10)
+            driftRed, driftRunnable = judgeRatioDrift(
+                upstreamUsd, listCost, patch["published_group_ratio"], tol,
+                # quota 整数化舍入 ±0.5，微小请求会把真实倍率推高 1%+，
+                # 判定用「实扣 vs 应扣」金额口径，余量按半个 quota 折美元。
+                roundingAllowanceUsd=0.5 / upstreamQuotaPerUnit,
+            )
+            if driftRed:
+                red.append(driftRed)
+            if not driftRunnable and gray is None:
+                gray = "ratio_field_missing"
+        elif gray is None:
+            gray = "ratio_field_missing"
 
-    # 判定 4：亏本请求。
-    if math.isfinite(upstreamUsd) and mainUsd < upstreamUsd - _EPS:
+    # 亏本兜底：收了 < 花了 → 红（v7 设计稿唯一保留的主站侧判定）。
+    if math.isfinite(upstreamUsd) and mainUsd < upstreamUsd - EPS:
         red.append("negative_margin")
 
     # 灰优先于红（设计稿 3.3 规则 0）：核不了的行绝不标红，红因仍留在
     # reason_codes 里供详情查看。
     status = "unknown" if gray else ("mismatch" if red else "ok")
-    _finalize(row, patch, "matched", status, red + ([gray] if gray else []))
+    reasons = red + ([gray] if gray else [])
+    _finalize(row, patch, "matched", status, reasons)
+    return {
+        "id": int(row["id"]),
+        "status": status,
+        "reason_codes": reasons,
+        "model_name": str(row.get("model_name") or ""),
+        "main_usd": row.get("main_usd"),
+        "upstream_actual_usd": patch.get("upstream_actual_usd"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +698,13 @@ def _runForAdminSite(
         "name": adminSite.get("name"),
         "inserted": 0,
         "checked": 0,
+        "mismatched": 0,
     }
+    # quota→美元基准按主站覆盖（NULL 回退全局设置）；行级 main_usd 用它换算。
+    effectiveSettings = dict(settings)
+    mainOverride = admin_site_quota_per_unit(adminSite)
+    if mainOverride:
+        effectiveSettings["quota_per_unit"] = mainOverride
     cursor = billingRepo.getBillingCursor(adminSiteId)
     newLogs, error = _pullNewMainLogs(adminSite, cursor)
     if error:
@@ -636,13 +769,34 @@ def _runForAdminSite(
         billingRepo.setBillingCursor(adminSiteId, max(maxId, cursor))
 
     pending = billingRepo.listPendingBillingChecks(adminSiteId, PENDING_LIMIT_PER_RUN)
+    # 灰行重判（P2）：no_binding / no_token / no_log_api 的成因被修复后
+    # （建绑定、补登录态、sub2api 适配上线），按 checked_at 限速翻面重审；
+    # unmatched（no_upstream_log）同样 1h 冷却——上游日志拉取瞬时失败、
+    # 或上游重建库/行号漂移的历史误判都靠重判翻案，只审近 7 天的行。
+    rejudgeCutoff = (app_now() - timedelta(hours=1)).isoformat(timespec="seconds")
+    unmatchedFloor = (app_now() - timedelta(days=7)).isoformat(timespec="seconds")
+    rejudge = billingRepo.listRejudgeBillingChecks(
+        adminSiteId, rejudgeCutoff, PENDING_LIMIT_PER_RUN,
+        unmatchedRequestAtFloor=unmatchedFloor,
+    )
+    seenIds = {int(row["id"]) for row in pending}
+    pending = pending + [row for row in rejudge if int(row["id"]) not in seenIds]
     ctxByBase: Dict[str, _UpstreamContext] = {}
-    priceCache: Dict[str, Optional[Dict[str, Any]]] = {}
+    # 跨轮占用池（按上游站点分组的 {log_id: [参考时间]}）每主站加载一次：
+    # 上游重建库后日志 id 会重新计数（gopay 2026-09 实测），判重必须带时间。
+    usedBySiteLog = _buildUsedUpstreamLogMap(
+        billingRepo.listUsedUpstreamLogEntries(adminSiteId)
+    )
     for row in pending:
         if STOP_EVENT.is_set():
             break
-        _auditRow(row, channelLinks, ctxByBase, settings, priceCache)
+        result = _auditRow(
+            row, channelLinks, ctxByBase, effectiveSettings, usedBySiteLog
+        )
         summary["checked"] += 1
+        if result.get("status") == "mismatch":
+            summary["mismatched"] += 1
+            summary.setdefault("mismatch_rows", []).append(result)
     # 汇总用当前全量口径（而非仅本轮），手动触发的回显里直观展示现状。
     summary["total_mismatch"] = billingRepo.countBillingChecksByStatus(adminSiteId, "mismatch")
     summary["total_unknown"] = billingRepo.countBillingChecksByStatus(adminSiteId, "unknown")
@@ -677,7 +831,18 @@ def runBillingAuditOnce(adminSiteId: Optional[int] = None) -> Dict[str, Any]:
             if STOP_EVENT.is_set():
                 break
             try:
-                summaries.append(_runForAdminSite(adminSite, settings))
+                summary = _runForAdminSite(adminSite, settings)
+                # push_on_red（P2 生效）：本轮新判红行走邮件/企微摘要推送；
+                # mismatch_rows 只在进程内用，不进 API 契约。
+                redRows = summary.pop("mismatch_rows", [])
+                try:
+                    maybePushRedAlert(adminSite, settings, redRows)
+                except Exception as push_exc:  # noqa: BLE001 - 推送失败不影响核对结果
+                    print(
+                        f"[计费核对] 红色告警推送失败 id={adminSite.get('id')} err={push_exc}",
+                        flush=True,
+                    )
+                summaries.append(summary)
             except Exception as exc:  # noqa: BLE001 - 单主站失败不影响其他主站
                 print(
                     f"[计费核对] 主站核对异常 id={adminSite.get('id')} name={adminSite.get('name')} "
@@ -711,7 +876,8 @@ def serializeBillingCheck(row: Dict[str, Any], includeRaw: bool = False) -> Dict
         "main_group_ratio", "main_completion_ratio", "official_usd",
         "official_input_usd_per_m", "official_cached_input_usd_per_m",
         "official_cache_write_usd_per_m", "official_output_usd_per_m",
-        "upstream_expected_usd", "upstream_actual_usd", "upstream_log_id",
+        "upstream_expected_usd", "upstream_actual_usd", "upstream_list_cost_usd",
+        "upstream_derived_group_ratio", "upstream_log_id",
         "upstream_model_ratio", "upstream_group_ratio", "upstream_completion_ratio",
         "published_model_ratio", "published_group_ratio", "published_completion_ratio",
         "match_status", "status", "checked_at",
@@ -775,7 +941,13 @@ def billingCheckDetailPayload(checkId: int) -> Optional[Dict[str, Any]]:
     row = billingRepo.getBillingCheckById(int(checkId))
     if not row:
         return None
-    return serializeBillingCheck(row, includeRaw=True)
+    payload = serializeBillingCheck(row, includeRaw=True)
+    # v7 详情弹窗「上游价卡快照变化」：该上游最近几次倍率/价卡变化记录。
+    upstreamSiteId = row.get("upstream_site_id")
+    payload["price_change_notes"] = (
+        listRecentRatioChanges(int(upstreamSiteId)) if upstreamSiteId else []
+    )
+    return payload
 
 
 def officialPricesPayload() -> Dict[str, Any]:

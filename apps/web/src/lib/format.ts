@@ -274,18 +274,19 @@ export function billingMatchLabel(status?: string | null): string {
   return labels[String(status || "").toLowerCase()] || status || "-";
 }
 
-/** 红因 / 灰因文案（reason_codes） */
+/** 红因 / 灰因文案（reason_codes）— v7 主链：暗改倍率 / 亏本 / 缺显示倍率 */
 export function billingReasonLabel(code?: string | null): string {
   const labels: Record<string, string> = {
-    upstream_ratio_drift: "上游疑似暗改倍率",
+    upstream_ratio_drift: "暗改倍率（实际收得比显示的多）",
+    negative_margin: "亏本（收 < 花）",
+    ratio_field_missing: "缺显示倍率（上游价卡/倍率拿不到）",
+    // 旧口径历史行仍可能携带，保留映射供展示
     main_billing_inconsistent: "主站计费与倍率不符",
     group_ratio_gap: "加价倍率关系不符",
-    negative_margin: "亏本请求",
     no_official_price: "缺少官方价格",
     no_upstream_log: "未匹配到上游日志",
     no_binding: "渠道未绑定上游",
     no_token: "绑定缺少上游登录态",
-    ratio_field_missing: "上游倍率字段缺失",
   };
   return labels[String(code || "").toLowerCase()] || code || "-";
 }

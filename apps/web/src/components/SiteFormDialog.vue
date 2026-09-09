@@ -32,6 +32,7 @@ const empty: SiteFormPayload = {
   enabled: true,
   // NewAPI 默认开启：每次浏览器同步成功后自动刷新兜底系统访问令牌
   system_token_fallback_enabled: true,
+  quota_per_unit: null,
 };
 
 const props = defineProps<{ open: boolean; site: Site | null }>();
@@ -81,6 +82,7 @@ watch(
         enabled: !!props.site.enabled,
         system_token_fallback_enabled:
           !!props.site.system_token_fallback_enabled,
+        quota_per_unit: props.site.quota_per_unit ?? null,
       };
     } else {
       form.value = { ...empty };
@@ -457,6 +459,21 @@ async function testAuth() {
           :min="1"
           :model-value="form.interval_minutes"
           @update:model-value="set('interval_minutes', Math.max(1, Number($event || 3)))"
+        />
+      </Field>
+      <Field
+        v-if="!isSub2api"
+        label="Quota 兑美元基准"
+        help="计费核对把上游额度折算成美元的基准；留空跟随全局设置"
+      >
+        <Input
+          type="number"
+          :min="1000"
+          :max="100000000"
+          :step="1"
+          placeholder="默认 500000"
+          :model-value="form.quota_per_unit === null ? '' : String(form.quota_per_unit)"
+          @update:model-value="set('quota_per_unit', $event === '' ? null : Number($event))"
         />
       </Field>
 

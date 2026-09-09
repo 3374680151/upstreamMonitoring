@@ -10,7 +10,11 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from backend.core.normalize import _channel_key_is_masked, normalize_base_url
+from backend.core.normalize import (
+    _channel_key_is_masked,
+    normalize_base_url,
+    parse_quota_per_unit_override,
+)
 from backend.core.time import utc_now_iso
 from backend.db.connection import db_execute, db_query_all, db_query_one
 
@@ -95,6 +99,20 @@ def admin_site_retention_days(site: Dict[str, Any]) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(MAX_RETENTION_DAYS, retention_days))
+
+
+def admin_site_quota_per_unit(site: Optional[Dict[str, Any]]) -> Optional[int]:
+    """主站级 quota→美元基准覆盖（计费核对 P2）；未配置返回 None 用全局默认。"""
+    if not site:
+        return None
+    value = site.get("quota_per_unit")
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if 1000 <= parsed <= 100_000_000 else None
 
 
 def admin_site_sync_config_payload(site: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,6 +248,7 @@ def list_admin_sites_payload() -> List[Dict[str, Any]]:
             "key_sync_backoff_until": r.get("key_sync_backoff_until"),
             "key_sync_failure_count": int(r.get("key_sync_failure_count") or 0),
             **admin_site_sync_config_payload(r),
+            "quota_per_unit": admin_site_quota_per_unit(r),
             "created_at": r.get("created_at"),
             "updated_at": r.get("updated_at"),
         }
@@ -265,6 +284,11 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
     except (TypeError, ValueError):
         return False, None, "快照保留天数无效"
     retention_days = max(0, min(MAX_RETENTION_DAYS, retention_days))
+    quota_per_unit, quota_error = parse_quota_per_unit_override(
+        body.get("quota_per_unit")
+    )
+    if quota_error:
+        return False, None, quota_error
     if not name or not base_url:
         return False, None, "请填写管理站点名称和 Base URL"
     if platform == "newapi" and (not access_token or not access_user_id):
@@ -295,10 +319,10 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             sub2api_refresh_token, sub2api_access_expires_at,
             browser_login_last_error, browser_login_last_check_at,
             key_sync_enabled, key_sync_interval_minutes, key_sync_next_at,
-            sync_all_channels, reconcile_mode, retention_days,
+            sync_all_channels, reconcile_mode, retention_days, quota_per_unit,
             created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             name,
@@ -318,6 +342,7 @@ def create_admin_site(body: Dict[str, Any]) -> Tuple[bool, Optional[int], Option
             sync_all_channels,
             reconcile_mode,
             retention_days,
+            quota_per_unit,
             now,
             now,
         ),
@@ -395,6 +420,14 @@ def update_admin_site(admin_site_id: int, body: Dict[str, Any]) -> Tuple[bool, O
             return False, "快照保留天数无效"
         fields.append("retention_days = ?")
         params.append(max(0, min(MAX_RETENTION_DAYS, retention_days)))
+    if "quota_per_unit" in body:
+        quota_override, quota_error = parse_quota_per_unit_override(
+            body.get("quota_per_unit")
+        )
+        if quota_error:
+            return False, quota_error
+        fields.append("quota_per_unit = ?")
+        params.append(quota_override)
 
     if platform == "sub2api":
         next_username = (

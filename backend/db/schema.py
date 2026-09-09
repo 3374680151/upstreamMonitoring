@@ -322,7 +322,12 @@ DDL_STATEMENTS = [
         official_output_usd_per_m DOUBLE,
         upstream_expected_usd DOUBLE,
         upstream_actual_usd DOUBLE,
+        # v7 设计稿：上游自家价卡算出的列价成本（分组倍率乘之前的钱）
+        upstream_list_cost_usd DOUBLE,
+        # v7 设计稿：真实分组倍率 = 上游实扣 ÷ 列价成本（暗改判定基准）
+        upstream_derived_group_ratio DOUBLE,
         upstream_log_id BIGINT,
+        upstream_log_created_at VARCHAR(40),
         upstream_model_ratio DOUBLE,
         upstream_group_ratio DOUBLE,
         upstream_completion_ratio DOUBLE,
@@ -397,6 +402,8 @@ SITES_COLUMN_ADDITIONS = {
     "browser_access_expires_at": "BIGINT",
     "system_access_token": "TEXT",
     "system_token_fallback_enabled": "TINYINT NOT NULL DEFAULT 0",
+    # 计费核对 P2：quota→美元基准按站点覆盖（NULL = 用全局 billing_audit_quota_per_unit）
+    "quota_per_unit": "INT NULL",
 }
 NOTIFICATION_COLUMN_ADDITIONS = {
     "email_enabled": "TINYINT NOT NULL DEFAULT 0",
@@ -439,6 +446,16 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
     "sync_all_channels": "TINYINT NOT NULL DEFAULT 1",
     "reconcile_mode": "VARCHAR(32) NOT NULL DEFAULT 'disable'",
     "retention_days": "INT NOT NULL DEFAULT 7",
+    # 计费核对 P2：quota→美元基准按主站覆盖（NULL = 用全局 billing_audit_quota_per_unit）
+    "quota_per_unit": "INT NULL",
+}
+
+# 计费核对：上游日志 id 在上游重建库后会重新计数（gopay 2026-09 实测），
+# 跨轮去重需要日志自身的时间戳参与判重；旧行该列为 NULL，用主站 request_at 兜底。
+BILLING_CHECK_COLUMN_ADDITIONS = {
+    "upstream_log_created_at": "VARCHAR(40)",
+    "upstream_list_cost_usd": "DOUBLE",
+    "upstream_derived_group_ratio": "DOUBLE",
 }
 
 
@@ -723,6 +740,13 @@ def init_db() -> None:
                 for column_name, column_type in ADMIN_SITE_COLUMN_ADDITIONS.items():
                     if column_name not in admin_site_columns:
                         cur.execute(f"ALTER TABLE admin_sites ADD COLUMN {column_name} {column_type}")
+
+                billing_columns = _existing_columns(cur, "billing_request_checks")
+                for column_name, column_type in BILLING_CHECK_COLUMN_ADDITIONS.items():
+                    if column_name not in billing_columns:
+                        cur.execute(
+                            f"ALTER TABLE billing_request_checks ADD COLUMN {column_name} {column_type}"
+                        )
 
                 run_sub2api_browser_first_migration_once(cur)
                 run_newapi_system_token_fallback_migration_once(cur)

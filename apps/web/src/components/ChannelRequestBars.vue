@@ -1,15 +1,16 @@
 <script setup lang="ts">
 /**
  * 渠道最近请求首字延迟条（主站监控页 NewAPI 渠道表）。
- * 形态：10 个固定槽位的细竖条（左=最新），只读 props 不拉数据；
+ * 形态：变长状态条带（左=最新，最多 10 根），只画真实请求、不补灰条；
  * 颜色语义沿用旧色点版：level fast=绿 / normal=橙 / slow=红，
- * stale 旧请求降透明度，窗口内无请求整组灰条。
- * 右侧「可用」= 最近 30 分钟内首字达标（绿色档）请求占比，由前端按
- * age_seconds 过滤计算，不进后端契约；数值阈值由后端随响应下发。
+ * stale 旧请求降透明度；窗口内无请求显示「无请求」灰字。
+ * 右侧「可用」= 最近 30 分钟内首字达标（绿色档）请求占比，文字按控制台
+ * 统一成功率档位着色（>80 绿 / 60~80 橙 / <60 红），不只靠颜色传信息；
+ * 数值阈值由后端随响应下发，前端不写死。
  */
 import { computed } from "vue";
 import { fmtTime } from "@/lib/format";
-import { formatTtft, ttftTone } from "@/lib/perf";
+import { formatTtft, successTone, ttftTone } from "@/lib/perf";
 import type {
   ChannelRecentRequestEntry,
   ChannelRecentRequestPoint,
@@ -34,8 +35,7 @@ const TONE_SOLID: Record<string, string> = {
 };
 
 const bars = computed(() => {
-  const points = (props.entry?.requests || []).slice(0, SLOT_COUNT);
-  const cells = points.map((point) => {
+  return (props.entry?.requests || []).slice(0, SLOT_COUNT).map((point) => {
     const tone = ttftTone(point.level);
     return {
       key: `p-${point.log_id ?? point.created_at ?? ""}`,
@@ -45,14 +45,6 @@ const bars = computed(() => {
       title: pointTitle(point),
     };
   });
-  while (cells.length < SLOT_COUNT) {
-    cells.push({
-      key: `empty-${cells.length}`,
-      class: "bg-sunken-active",
-      title: emptyTitle(),
-    });
-  }
-  return cells;
 });
 
 type Availability = { ratio: number; hits: number; total: number };
@@ -75,13 +67,22 @@ const availabilityText = computed(() =>
   availability.value ? `可用 ${availability.value.ratio.toFixed(1)}%` : "",
 );
 
+const availabilityClass = computed(() => {
+  if (!availability.value) return "text-ink-soft";
+  const tone = successTone(availability.value.ratio);
+  if (tone === "success") return "text-success-fg";
+  if (tone === "warning") return "text-warning-fg";
+  if (tone === "danger") return "text-danger-fg";
+  return "text-ink-soft";
+});
+
 const availabilityTitle = computed(() => {
   if (!availability.value) return "";
   const fast = Number(props.thresholds?.fast_seconds);
   const rule = Number.isFinite(fast)
     ? `首字 < ${fast}s（绿档）计为可用`
     : "首字达标（绿色档）计为可用";
-  return `最近 30 分钟可用 ${availability.value.ratio.toFixed(1)}%（${availability.value.hits}/${availability.value.total}）：${rule}`;
+  return `最近 30 分钟可用 ${availability.value.ratio.toFixed(1)}%（${availability.value.hits}/${availability.value.total}）：${rule}；文字颜色与成功率档位一致：>80% 绿 / 60~80% 橙 / <60% 红`;
 });
 
 const containerTitle = computed(() => {
@@ -91,7 +92,7 @@ const containerTitle = computed(() => {
     Number.isFinite(fast) && Number.isFinite(slow)
       ? `<${fast}s 绿 · ${fast}~${slow}s 橙 · ≥${slow}s 红`
       : "绿=快 / 橙=中 / 红=慢";
-  return `最近请求首字延迟（左=最新）：${legend}；半透明=旧请求（非实时），灰=无请求；阈值可在 .env 调整`;
+  return `最近请求首字延迟（左=最新）：${legend}；半透明=旧请求（非实时）；阈值可在 .env 调整`;
 });
 
 const ariaLabel = computed(() => {
@@ -129,9 +130,6 @@ function pointTitle(point: ChannelRecentRequestPoint): string {
 }
 
 function emptyTitle(): string {
-  if (props.entry?.state === "error") {
-    return props.entry.error || "读取请求日志失败";
-  }
   if (props.loading && !props.entry) return "正在读取最近请求...";
   if (!props.entry) return "暂无数据";
   if (props.entry.state === "idle") return windowLabel();
@@ -166,22 +164,29 @@ function durationLabel(seconds: number): string {
     role="img"
     :aria-label="ariaLabel"
   >
-    <span class="inline-flex h-4 items-center gap-[2px]" :title="containerTitle">
+    <span
+      v-if="!bars.length"
+      class="text-[11px] text-ink-faint"
+      :class="loading && !entry ? 'animate-pulse' : ''"
+      :title="emptyTitle()"
+    >{{ loading && !entry ? "读取中…" : "无请求" }}</span>
+    <span
+      v-else
+      class="inline-flex h-4 items-center gap-[2px]"
+      :title="containerTitle"
+    >
       <span
         v-for="bar in bars"
         :key="bar.key"
-        :class="[
-          'h-4 w-[3px] rounded-full',
-          bar.class,
-          loading && !entry?.requests?.length ? 'animate-pulse' : '',
-        ]"
+        :class="['h-4 w-[3px] rounded-full', bar.class]"
         :title="bar.title"
         aria-hidden="true"
       />
     </span>
     <span
       v-if="availabilityText"
-      class="whitespace-nowrap text-[11px] tabular-nums text-ink-soft"
+      class="whitespace-nowrap text-[11px] font-medium tabular-nums"
+      :class="availabilityClass"
       :title="availabilityTitle"
     >{{ availabilityText }}</span>
   </span>

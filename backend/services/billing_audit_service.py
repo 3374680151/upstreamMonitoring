@@ -153,6 +153,9 @@ class _UpstreamContext:
         self.pricing: Optional[Dict[str, Any]] = None
         self.pricingLoaded = False
         self.usedLogIds: set = set()
+        # 上一页首条日志的锚（id+created_at）：部分 NewAPI 版本把 p=0/1 都钳到
+        # 第 1 页，连续两页内容相同就跳过这次重复，不污染已拉窗口。
+        self.lastPageFirstKey: Optional[Tuple[Any, Any]] = None
 
 
 def _upstreamPlatform(ctx: _UpstreamContext) -> str:
@@ -249,6 +252,12 @@ def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSecon
         if not logs:
             ctx.exhausted = True
             return
+        # 钳位去重：p=0/1 同页（新版 NewAPI 把 p<1 钳到第 1 页，实测主站与
+        # zc-api rc.25 上游皆如此）。重复页跳过入窗，不重复占翻页预算外的覆盖。
+        firstKey = (logs[0].get("id"), logs[0].get("created_at"))
+        if firstKey == ctx.lastPageFirstKey:
+            continue
+        ctx.lastPageFirstKey = firstKey
         for log in logs:
             ctx.logs.append(log)
             created = log.get("created_iso")

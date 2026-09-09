@@ -270,7 +270,8 @@ BILLING_CHECK_COLUMNS = (
     "main_usd, main_model_ratio, main_group_ratio, main_completion_ratio, "
     "official_usd, official_input_usd_per_m, official_cached_input_usd_per_m, "
     "official_cache_write_usd_per_m, official_output_usd_per_m, "
-    "upstream_expected_usd, upstream_actual_usd, upstream_log_id, "
+    "upstream_expected_usd, upstream_actual_usd, upstream_list_cost_usd, "
+    "upstream_derived_group_ratio, upstream_log_id, "
     "upstream_model_ratio, upstream_group_ratio, upstream_completion_ratio, "
     "published_model_ratio, published_group_ratio, published_completion_ratio, "
     "match_status, status, reason_codes_json, main_other_json, "
@@ -418,6 +419,7 @@ def updateBillingCheckResult(rowId: int, patch: Dict[str, Any]) -> None:
         "official_usd", "official_input_usd_per_m", "official_cached_input_usd_per_m",
         "official_cache_write_usd_per_m", "official_output_usd_per_m",
         "upstream_expected_usd", "upstream_actual_usd", "upstream_log_id",
+        "upstream_list_cost_usd", "upstream_derived_group_ratio",
         "upstream_log_created_at",
         "upstream_model_ratio", "upstream_group_ratio", "upstream_completion_ratio",
         "published_model_ratio", "published_group_ratio", "published_completion_ratio",

@@ -45,6 +45,65 @@ def list_site_changes(site_id: int, limit: int = 100) -> List[Dict[str, Any]]:
     )
 
 
+def insertChangeRecord(
+    site_id: int,
+    change_type: str,
+    group_name: Optional[str],
+    old_value: Any,
+    new_value: Any,
+    change_percent: Optional[float],
+    message: str,
+    created_at: str,
+) -> None:
+    """插入一条变化记录（计费核对的价卡监控等非检测流程来源也走这里）。"""
+    db_execute(
+        """
+        INSERT INTO changes
+        (site_id, change_type, group_name, old_value, new_value, change_percent, message, created_at, acknowledged)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """,
+        (
+            int(site_id),
+            change_type,
+            group_name,
+            json.dumps(old_value, ensure_ascii=False) if old_value is not None else None,
+            json.dumps(new_value, ensure_ascii=False) if new_value is not None else None,
+            change_percent,
+            message,
+            created_at,
+        ),
+    )
+
+
+def listRecentRatioChanges(site_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+    """上游站点最近的倍率/价卡变化（计费核对详情弹窗「价卡快照变化」用）。
+
+    只取变更展示相关列，old/new JSON 解析失败按原串返回，不抛错。
+    """
+    rows = db_query_all(
+        """
+        SELECT change_type, group_name, old_value, new_value, change_percent, message, created_at
+        FROM changes
+        WHERE site_id = ? AND change_type IN ('model_ratio_changed', 'ratio_changed')
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (int(site_id), int(limit)),
+    )
+    parsed: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        for key in ("old_value", "new_value"):
+            raw = item.get(key)
+            if isinstance(raw, str) and raw:
+                try:
+                    item[key] = json.loads(raw)
+                except ValueError:
+                    pass
+        parsed.append(item)
+    return parsed
+
+
 def get_last_success_snapshot(site_id: int) -> Optional[Dict[str, Any]]:
     return db_query_one(
         """

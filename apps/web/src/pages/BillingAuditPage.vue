@@ -148,6 +148,15 @@ const filteredItems = computed(() => {
   );
 });
 
+/** 上游站点 id → 平台（newapi / sub2api），供明细表渲染平台胶囊 */
+const platformBySiteId = computed(() => {
+  const map: Record<number, string> = {};
+  for (const site of sites.value) {
+    map[site.id] = String(site.platform || "");
+  }
+  return map;
+});
+
 async function fetchAll(): Promise<void> {
   loading.value = true;
   try {
@@ -413,7 +422,12 @@ onMounted(async () => {
             <button type="button" class="text-ink-muted hover:text-ink-strong" :aria-label="`清除${chip.label}`" @click="chip.clear">×</button>
           </span>
         </div>
-        <BillingChecksTable :items="filteredItems" :loading="loading" @open="openDetail" />
+        <BillingChecksTable
+          :items="filteredItems"
+          :loading="loading"
+          :platform-by-site-id="platformBySiteId"
+          @open="openDetail"
+        />
         <div v-if="total > pageSize" class="flex items-center justify-end gap-2 text-[12.5px] text-ink-muted">
           <span>第 {{ page }} 页 / 共 {{ Math.ceil(total / pageSize) }} 页</span>
           <Button variant="secondary" :disabled="page <= 1" @click="changePage(-1)">上一页</Button>

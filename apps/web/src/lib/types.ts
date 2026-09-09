@@ -611,12 +611,16 @@ export type BillingRequestCheck = {
   official_output_usd_per_m: number | null;
   upstream_expected_usd: number | null;
   upstream_actual_usd: number | null;
+  /** v7：按上游显示价卡算出的列价成本（分组倍率乘之前的钱） */
+  upstream_list_cost_usd: number | null;
+  /** v7：真实分组倍率 = 上游实扣 ÷ 列价成本 */
+  upstream_derived_group_ratio: number | null;
   upstream_log_id: number | null;
   /** 上游日志 other 里自记的倍率——暗改倍率的直接证据 */
   upstream_model_ratio: number | null;
   upstream_group_ratio: number | null;
   upstream_completion_ratio: number | null;
-  /** 核对时点我方监控到的上游公示倍率快照 */
+  /** 上游显示分组倍率（日志自记优先，缺失退回公示快照）——暗改判定的基准 */
   published_model_ratio: number | null;
   published_group_ratio: number | null;
   published_completion_ratio: number | null;
@@ -627,6 +631,19 @@ export type BillingRequestCheck = {
   /** 详情接口才返回：两侧日志 other 字段原始 JSON */
   main_other_json?: Record<string, unknown> | null;
   upstream_other_json?: Record<string, unknown> | null;
+  /** 详情接口才返回：该上游最近的价卡/分组倍率变化记录（验证二） */
+  price_change_notes?: PriceChangeNote[];
+};
+
+/** 上游价卡/分组倍率变化记录（changes 表 model_ratio_changed / ratio_changed） */
+export type PriceChangeNote = {
+  change_type: string;
+  group_name: string | null;
+  old_value: unknown;
+  new_value: unknown;
+  change_percent: number | null;
+  message: string;
+  created_at: string;
 };
 
 /** 计费核对总览 KPI（GET /api/billing-audit/overview） */

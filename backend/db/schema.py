@@ -322,6 +322,10 @@ DDL_STATEMENTS = [
         official_output_usd_per_m DOUBLE,
         upstream_expected_usd DOUBLE,
         upstream_actual_usd DOUBLE,
+        # v7 设计稿：上游自家价卡算出的列价成本（分组倍率乘之前的钱）
+        upstream_list_cost_usd DOUBLE,
+        # v7 设计稿：真实分组倍率 = 上游实扣 ÷ 列价成本（暗改判定基准）
+        upstream_derived_group_ratio DOUBLE,
         upstream_log_id BIGINT,
         upstream_log_created_at VARCHAR(40),
         upstream_model_ratio DOUBLE,
@@ -450,6 +454,8 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
 # 跨轮去重需要日志自身的时间戳参与判重；旧行该列为 NULL，用主站 request_at 兜底。
 BILLING_CHECK_COLUMN_ADDITIONS = {
     "upstream_log_created_at": "VARCHAR(40)",
+    "upstream_list_cost_usd": "DOUBLE",
+    "upstream_derived_group_ratio": "DOUBLE",
 }
 
 

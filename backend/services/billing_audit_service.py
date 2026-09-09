@@ -1,17 +1,22 @@
 """Billing-audit orchestration: pull, match, and judge request charges.
 
-对应设计稿 ``docs/billing-audit/billing-audit-方案.md``。每轮：按主站增量
-拉 ``/api/log/?type=2``（游标存 app_settings）→ 落 ``billing_request_checks``
-→ 逐行经 ``channel_upstream_bindings`` 找上游站点 → 拉上游
-``/api/log/self`` 按 模型+tokens+时间窗 匹配 → 官方价 / 上游公示倍率 /
-上游实扣 / 主站实收 四方判定 → 红绿灰。全程只读远端，不写任何上游数据。
+对应设计稿 ``docs/billing-audit/倍率真实性验证-设计.md``（v7）。每轮：按
+主站增量拉 ``/api/log/?type=2``（游标存 app_settings）→ 落
+``billing_request_checks`` → 逐行经 ``channel_upstream_bindings`` 找上游
+站点 → 拉上游日志按 模型+tokens+时间窗 匹配 → 判定。全程只读远端，
+不写任何上游数据。
 
-判定口径（与设计稿 3.3 一致）：
-* 灰（unknown）优先于红——上游倍率证据缺失（ratio_field_missing）、无官方价
-  （no_official_price）、绑不到上游（no_binding/no_token）、匹配不到上游日志
-  （no_upstream_log）时整行归灰，绝不误报红；已判出的红因仍写进 reason_codes。
-* 主站侧次要判定（main_billing_inconsistent / group_ratio_gap）缺字段时只
-  跳过该判定，不影响整行颜色。
+判定口径（v7，以「上游自己显示的」为基准）：
+* 列价成本 = 按上游显示价卡把四类 tokens 折成美元（NewAPI：tokens加权 ×
+  显示模型倍率 ÷ quota_per_unit；sub2api：日志 total_cost 自带）；
+* 验证一（分组倍率暗改）：真实分组倍率 = 实扣 ÷ 列价成本，> 显示分组倍率
+  + 绝对容带 → 红「暗改倍率」；≤ 显示 → 绿（便宜是多挣）；
+* 亏本兜底：收了 < 花了 → 红；
+* 灰（unknown）优先于红：显示价卡/倍率拿不到（ratio_field_missing）、
+  绑不到上游（no_binding/no_token/no_log_api）、匹配不到上游日志
+  （no_upstream_log）时整行归灰，绝不误报红。
+* 官方价（LiteLLM / official_model_prices）只作参考金额落库展示，
+  不再参与判定。
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from backend.repositories.admin_sites import (
     admin_site_quota_per_unit,
     list_admin_site_rows,
 )
+from backend.repositories.changes import insertChangeRecord, listRecentRatioChanges
 from backend.repositories.sites import (
     find_monitor_site_for_channel,
     get_site_or_404,
@@ -48,8 +54,8 @@ from backend.repositories.sites import (
 )
 from backend.services.billing_audit_rules import (
     EPS,
-    officialCost,
-    relDiff,
+    newapiListCostUsd,
+    judgeRatioDrift,
     safeNumber,
 )
 from backend.services.billing_audit_sub2api import (
@@ -77,7 +83,7 @@ MAX_LIST_PAGE_SIZE = 100
 # ---------------------------------------------------------------------------
 
 def _parsePricing(payload: Any) -> Dict[str, Any]:
-    """从 /api/pricing 返回体提取 模型倍率 / 补全倍率 / 分组倍率 / 按次价。"""
+    """从 /api/pricing 返回体提取 模型倍率 / 补全倍率 / 缓存折扣 / 分组倍率 / 按次价。"""
     body = payload
     if isinstance(body, dict) and isinstance(body.get("data"), dict):
         body = body.get("data")
@@ -94,7 +100,7 @@ def _parsePricing(payload: Any) -> Dict[str, Any]:
             if not name:
                 continue
             entry: Dict[str, float] = {}
-            for src in ("model_ratio", "completion_ratio", "model_price", "quota_type"):
+            for src in ("model_ratio", "completion_ratio", "cache_ratio", "model_price", "quota_type"):
                 value = item.get(src)
                 if isinstance(value, (int, float)):
                     entry[src] = float(value)
@@ -111,31 +117,100 @@ def _parsePricing(payload: Any) -> Dict[str, Any]:
     return {"models": models, "group_ratios": groupRatios}
 
 
-def _expectedUpstreamUsd(
-    row: Dict[str, Any],
-    modelPub: Optional[Dict[str, float]],
-    groupRatio: Optional[float],
-    quotaPerUnit: float,
-) -> Optional[float]:
-    """按上游公示倍率快照反推这条请求「应该」扣多少美元；缺倍率返回 None。
+# ---------------------------------------------------------------------------
+# 验证二：上游价卡变化监控（v7 设计稿）
+# ---------------------------------------------------------------------------
 
-    缓存命中按 cache_ratio（未知取 1）计入，缓存写入按普通输入计——两个
-    口径只影响灰度兜底分支的金额对比，倍率证据优先时不用到它。
+# 价卡快照存 app_settings（TEXT 上限 64KB）；超限站点放弃监控，宁可漏盯
+# 也不让快照写入失败拖垮核对轮。
+PRICE_CARD_SNAPSHOT_MAX_BYTES = 50_000
+PRICE_CARD_RATIO_FIELDS = ("model_ratio", "completion_ratio", "cache_ratio", "model_price")
+
+
+def _priceCardFingerprint(pricing: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
+    """把 /api/pricing 解析结果压成 {模型: {倍率字段: 值}} 的紧凑指纹。"""
+    card: Dict[str, Dict[str, float]] = {}
+    for name, entry in (pricing.get("models") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        picked = {
+            field: float(entry[field])
+            for field in PRICE_CARD_RATIO_FIELDS
+            if isinstance(entry.get(field), (int, float))
+        }
+        if picked:
+            card[str(name)] = picked
+    return card
+
+
+def _priceCardChanges(
+    oldCard: Dict[str, Dict[str, float]], newCard: Dict[str, Dict[str, float]]
+) -> List[Dict[str, Any]]:
+    """对比两份价卡指纹，只挑「同模型、倍率字段值变化」的差异（v7 验证二）。"""
+    changes: List[Dict[str, Any]] = []
+    for name in sorted(set(oldCard) & set(newCard)):
+        oldEntry, newEntry = oldCard[name], newCard[name]
+        diffs: List[str] = []
+        for field in PRICE_CARD_RATIO_FIELDS:
+            oldValue = oldEntry.get(field)
+            newValue = newEntry.get(field)
+            if oldValue is None and newValue is None:
+                continue
+            if oldValue != newValue:
+                diffs.append(f"{field} {oldValue} → {newValue}")
+        if diffs:
+            changes.append({
+                "change_type": "model_ratio_changed",
+                "group_name": name,
+                "old_value": oldEntry,
+                "new_value": newEntry,
+                "change_percent": None,
+                "message": f"价卡变化 {name}：{'；'.join(diffs)}",
+            })
+    return changes
+
+
+def _watchUpstreamPriceCard(ctx: "_UpstreamContext", pricing: Dict[str, Any]) -> None:
+    """本轮价卡 vs 上一轮快照：变了写 changes 表（暗改价格线索），存新快照。
+
+    快照按上游站点存 app_settings（``price_card_{site_id}``）；首轮只落快照
+    不报变化。分组的 ratio_changed 由监控模块 diff 覆盖，这里只盯模型价卡。
     """
-    if not modelPub or "model_ratio" not in modelPub or groupRatio is None:
-        return None
-    if float(modelPub.get("quota_type") or 0) == 1:
-        callPrice = modelPub.get("model_price")
-        return round(float(callPrice) * groupRatio / quotaPerUnit, 10) if callPrice else None
-    completionRatio = float(modelPub.get("completion_ratio") or 1.0)
-    cacheRatio = float(row.get("_cache_ratio_hint") or 1.0)
-    weighted = (
-        float(row.get("prompt_tokens") or 0)
-        + float(row.get("cache_creation_tokens") or 0)
-        + float(row.get("cache_read_tokens") or 0) * cacheRatio
-        + float(row.get("completion_tokens") or 0) * completionRatio
-    )
-    return round(weighted * float(modelPub["model_ratio"]) * groupRatio / quotaPerUnit, 10)
+    site = ctx.site or {}
+    siteId = int(site.get("id") or 0)
+    if siteId <= 0:
+        return
+    metaKey = f"price_card_{siteId}"
+    newCard = _priceCardFingerprint(pricing)
+    if not newCard:
+        return
+    snapshotJson = json.dumps(newCard, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    if len(snapshotJson.encode("utf-8")) > PRICE_CARD_SNAPSHOT_MAX_BYTES:
+        return
+    oldRaw = billingRepo.getBillingMetaString(metaKey)
+    if oldRaw:
+        try:
+            oldCard = json.loads(oldRaw)
+        except ValueError:
+            oldCard = None
+        if isinstance(oldCard, dict):
+            for change in _priceCardChanges(oldCard, newCard):
+                insertChangeRecord(
+                    siteId,
+                    change["change_type"],
+                    change["group_name"],
+                    change["old_value"],
+                    change["new_value"],
+                    change["change_percent"],
+                    change["message"],
+                    utc_now_iso(),
+                )
+                print(
+                    f"[计费核对] 上游价卡变化 site={siteId} model={change['group_name']} "
+                    f"detail={change['message']}",
+                    flush=True,
+                )
+    billingRepo.setBillingMeta(metaKey, snapshotJson)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +470,6 @@ def _auditRow(
     channelLinks: Dict[str, Dict[str, Any]],
     ctxByBase: Dict[str, _UpstreamContext],
     settings: Dict[str, Any],
-    priceCache: Dict[str, Optional[Dict[str, Any]]],
     usedBySiteLog: Optional[Dict[int, Dict[int, List[str]]]] = None,
 ) -> Dict[str, Any]:
     tol = float(settings["tolerance_percent"]) / 100.0
@@ -486,9 +560,8 @@ def _auditRow(
     patch["upstream_other_json"] = _compactJson(upLog.get("other"))
 
     if upstreamPlatform == "sub2api":
-        # sub2api 上游（P2）：实扣即美元（actual_cost），无 quota 换算；
-        # 暗改判定 = 日志自记 rate_multiplier vs 监控快照公示倍率
-        # （金额兜底），详见 billing_audit_sub2api。
+        # sub2api 上游（v7）：列价成本 = 日志 total_cost（上游自家价卡），
+        # 真实分组倍率 = 实扣 ÷ 列价成本，与显示倍率判暗改（judgeRatioDrift）。
         upstreamUsd = float(upLog.get("usd") or 0.0)
         row["_cache_ratio_hint"] = None
         upPatch, upRed, upGray = judgeSub2apiUpstream(
@@ -510,105 +583,60 @@ def _auditRow(
         row["_cache_ratio_hint"] = upLog.get("cache_ratio")
 
         pricing = _ensurePricing(ctx)
+        # 验证二（价卡变化监控）：有公示价卡时与上一轮快照对比，变化写
+        # changes 表；失败不影响本行判定。
+        if pricing and (pricing.get("models") or {}):
+            try:
+                _watchUpstreamPriceCard(ctx, pricing)
+            except Exception as watch_exc:  # noqa: BLE001 - 监控旁路，不拦判定
+                print(
+                    f"[计费核对] 价卡监控异常 base={base} err={watch_exc}",
+                    flush=True,
+                )
         modelName = str(row.get("model_name") or "")
         modelPub = ((pricing or {}).get("models") or {}).get(modelName.casefold())
         groupName, groupRatio = _resolveGroupRatio(upLog, link, pricing)
         patch["published_model_ratio"] = (modelPub or {}).get("model_ratio")
         patch["published_completion_ratio"] = (modelPub or {}).get("completion_ratio")
-        patch["published_group_ratio"] = groupRatio
+        # 显示分组倍率（v7 数据源表）：公示快照优先；拿不到才退回日志自记
+        # （设计稿边界情况）。日志记的是上游实际扣的数，当基准会漏掉暗改。
+        logGroupRatio = safeNumber(upLog.get("group_ratio"))
+        patch["published_group_ratio"] = (
+            groupRatio if groupRatio is not None else logGroupRatio
+        )
 
-        # 判定 1：上游暗改倍率。上游日志自记倍率与公示快照逐项对比（优先证据），
-        # 自记倍率缺失时退回金额对比（期望成本按公示倍率反推）。
-        expectedUsd = _expectedUpstreamUsd(row, modelPub, groupRatio, upstreamQuotaPerUnit)
-        if expectedUsd is not None:
-            patch["upstream_expected_usd"] = expectedUsd
-        driftRunnable = False
-        if (modelPub or {}).get("model_ratio") is not None and upLog.get("model_ratio") is not None:
-            driftRunnable = True
-            pairs = [
-                (upLog.get("model_ratio"), (modelPub or {}).get("model_ratio")),
-                (upLog.get("completion_ratio"), (modelPub or {}).get("completion_ratio")),
-                (upLog.get("group_ratio"), groupRatio),
-            ]
-            for actual, expected in pairs:
-                if actual is None or expected is None:
-                    continue
-                if relDiff(float(actual), float(expected)) > tol:
-                    red.append("upstream_ratio_drift")
-                    break
-        elif expectedUsd is not None:
-            driftRunnable = True
-            if relDiff(upstreamUsd, expectedUsd) > tol:
-                red.append("upstream_ratio_drift")
-        if not driftRunnable and gray is None:
+        # 列价成本（v7）：按上游显示价卡 × 实际 token 构成，缓存读从输入扣除
+        # 按缓存折扣计，避免双算。价卡缺该模型 → 灰「缺显示倍率」。
+        listCost = newapiListCostUsd(
+            {
+                "prompt_tokens": row.get("prompt_tokens"),
+                "completion_tokens": row.get("completion_tokens"),
+                "cache_read_tokens": row.get("cache_read_tokens"),
+                "cache_creation_tokens": row.get("cache_creation_tokens"),
+            },
+            modelPub,
+            row.get("_cache_ratio_hint"),
+            upstreamQuotaPerUnit,
+        )
+        if listCost is not None:
+            patch["upstream_list_cost_usd"] = listCost
+            derivedGroupRatio = upstreamUsd / listCost if listCost > EPS else None
+            if derivedGroupRatio is not None:
+                patch["upstream_derived_group_ratio"] = round(derivedGroupRatio, 10)
+            driftRed, driftRunnable = judgeRatioDrift(
+                upstreamUsd, listCost, patch["published_group_ratio"], tol,
+                # quota 整数化舍入 ±0.5，微小请求会把真实倍率推高 1%+，
+                # 判定用「实扣 vs 应扣」金额口径，余量按半个 quota 折美元。
+                roundingAllowanceUsd=0.5 / upstreamQuotaPerUnit,
+            )
+            if driftRed:
+                red.append(driftRed)
+            if not driftRunnable and gray is None:
+                gray = "ratio_field_missing"
+        elif gray is None:
             gray = "ratio_field_missing"
 
-    # 官方价格 → 官方成本；价格缺失或单价不可用（如 per_call 缺按次价）按
-    # 设计稿整行归灰，绝不拿残缺单价硬算。
-    modelName = str(row.get("model_name") or "")
-    if modelName not in priceCache:
-        priceCache[modelName] = billingRepo.getOfficialModelPrice(modelName)
-    priceRow = priceCache[modelName]
-    if priceRow:
-        patch["official_input_usd_per_m"] = priceRow.get("input_usd_per_m")
-        patch["official_cached_input_usd_per_m"] = priceRow.get("cached_input_usd_per_m")
-        patch["official_cache_write_usd_per_m"] = priceRow.get("cache_write_usd_per_m")
-        patch["official_output_usd_per_m"] = priceRow.get("output_usd_per_m")
-        officialUsd = officialCost(priceRow, row)
-        patch["official_usd"] = officialUsd
-        if officialUsd is None:
-            gray = gray or "no_official_price"
-    else:
-        gray = gray or "no_official_price"
-
-    # 判定 2：主站计费自洽（主站日志 other 自记倍率重算 vs 实扣 quota）。
-    # 只覆盖经典计费：model_ratio>0 走按量公式，model_price>0 走按次公式；
-    # tiered_expr 等分层计费无法复算，静默跳过（主站侧次要判定，不整行归灰）。
-    mMain, gMain, cMain = (
-        row.get("main_model_ratio"),
-        row.get("main_group_ratio"),
-        row.get("main_completion_ratio"),
-    )
-    mainOther: Dict[str, Any] = {}
-    try:
-        parsedOther = json.loads(row.get("main_other_json") or "{}")
-        if isinstance(parsedOther, dict):
-            mainOther = parsedOther
-    except ValueError:
-        mainOther = {}
-    mPrice = safeNumber(mainOther.get("model_price"))
-    mainCacheRatio = safeNumber(mainOther.get("cache_ratio"))
-    if mainQuota > 0 and gMain is not None:
-        recalc: Optional[float] = None
-        if mPrice is not None and mPrice > 0:
-            recalc = mPrice * float(gMain) * quotaPerUnit
-        elif mMain is not None and mMain > 0 and cMain is not None:
-            cacheRead = float(row.get("cache_read_tokens") or 0)
-            cacheRatio = mainCacheRatio if isinstance(mainCacheRatio, (int, float)) else None
-            if cacheRead <= 0 or cacheRatio is not None:
-                recalc = (
-                    (
-                        float(row.get("prompt_tokens") or 0)
-                        + float(row.get("cache_creation_tokens") or 0)
-                        + cacheRead * float(cacheRatio if cacheRatio is not None else 1.0)
-                        + float(row.get("completion_tokens") or 0) * float(cMain)
-                    )
-                    * float(mMain)
-                    * float(gMain)
-                )
-        if recalc is not None and relDiff(mainQuota, recalc) > tol:
-            red.append("main_billing_inconsistent")
-
-    # 判定 3：主站/上游实际费用比 vs 分组倍率之比（上游侧取日志自记倍率，
-    # NewAPI 为 other.group_ratio，sub2api 为 rate_multiplier）。
-    gUp = upLog.get("group_ratio")
-    if gMain is not None and gUp is not None and mainUsd > 0 and upstreamUsd > 0:
-        expectedMarkup = float(gMain) / float(gUp)
-        actualMarkup = mainUsd / upstreamUsd
-        if relDiff(actualMarkup, expectedMarkup) > tol:
-            red.append("group_ratio_gap")
-
-    # 判定 4：亏本请求。
+    # 亏本兜底：收了 < 花了 → 红（v7 设计稿唯一保留的主站侧判定）。
     if math.isfinite(upstreamUsd) and mainUsd < upstreamUsd - EPS:
         red.append("negative_margin")
 
@@ -754,7 +782,6 @@ def _runForAdminSite(
     seenIds = {int(row["id"]) for row in pending}
     pending = pending + [row for row in rejudge if int(row["id"]) not in seenIds]
     ctxByBase: Dict[str, _UpstreamContext] = {}
-    priceCache: Dict[str, Optional[Dict[str, Any]]] = {}
     # 跨轮占用池（按上游站点分组的 {log_id: [参考时间]}）每主站加载一次：
     # 上游重建库后日志 id 会重新计数（gopay 2026-09 实测），判重必须带时间。
     usedBySiteLog = _buildUsedUpstreamLogMap(
@@ -764,7 +791,7 @@ def _runForAdminSite(
         if STOP_EVENT.is_set():
             break
         result = _auditRow(
-            row, channelLinks, ctxByBase, effectiveSettings, priceCache, usedBySiteLog
+            row, channelLinks, ctxByBase, effectiveSettings, usedBySiteLog
         )
         summary["checked"] += 1
         if result.get("status") == "mismatch":
@@ -849,7 +876,8 @@ def serializeBillingCheck(row: Dict[str, Any], includeRaw: bool = False) -> Dict
         "main_group_ratio", "main_completion_ratio", "official_usd",
         "official_input_usd_per_m", "official_cached_input_usd_per_m",
         "official_cache_write_usd_per_m", "official_output_usd_per_m",
-        "upstream_expected_usd", "upstream_actual_usd", "upstream_log_id",
+        "upstream_expected_usd", "upstream_actual_usd", "upstream_list_cost_usd",
+        "upstream_derived_group_ratio", "upstream_log_id",
         "upstream_model_ratio", "upstream_group_ratio", "upstream_completion_ratio",
         "published_model_ratio", "published_group_ratio", "published_completion_ratio",
         "match_status", "status", "checked_at",
@@ -913,7 +941,13 @@ def billingCheckDetailPayload(checkId: int) -> Optional[Dict[str, Any]]:
     row = billingRepo.getBillingCheckById(int(checkId))
     if not row:
         return None
-    return serializeBillingCheck(row, includeRaw=True)
+    payload = serializeBillingCheck(row, includeRaw=True)
+    # v7 详情弹窗「上游价卡快照变化」：该上游最近几次倍率/价卡变化记录。
+    upstreamSiteId = row.get("upstream_site_id")
+    payload["price_change_notes"] = (
+        listRecentRatioChanges(int(upstreamSiteId)) if upstreamSiteId else []
+    )
+    return payload
 
 
 def officialPricesPayload() -> Dict[str, Any]:

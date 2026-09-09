@@ -159,6 +159,60 @@ def _upstreamPlatform(ctx: _UpstreamContext) -> str:
     return str((ctx.site or {}).get("platform") or "newapi").strip().lower()
 
 
+def _buildUsedUpstreamLogMap(
+    entries: List[Dict[str, Any]],
+) -> Dict[int, Dict[int, List[str]]]:
+    """历史占用条目 → ``{upstream_site_id: {upstream_log_id: [参考时间 ISO]}}``。
+
+    时间参考优先取日志自身的 upstream_log_created_at；历史行没有该列时退回
+    主站 request_at（匹配窗内两者相差秒级，足够区分「同一条」与「同 id 新日志」）。
+    """
+    usedBySiteLog: Dict[int, Dict[int, List[str]]] = {}
+    for entry in entries:
+        siteId = int(entry.get("upstream_site_id") or 0)
+        logId = int(entry.get("upstream_log_id") or 0)
+        if siteId <= 0 or logId <= 0:
+            continue
+        reference = str(
+            entry.get("upstream_log_created_at") or entry.get("request_at") or ""
+        )
+        usedBySiteLog.setdefault(siteId, {}).setdefault(logId, []).append(reference)
+    return usedBySiteLog
+
+
+def _upstreamLogAlreadyUsed(
+    usedBySiteLog: Dict[int, Dict[int, List[str]]],
+    upstreamSiteId: Optional[int],
+    logId: Any,
+    logCreatedIso: Any,
+    windowSeconds: int,
+) -> bool:
+    """该上游日志是否已被历史行消费：id 命中且参考时间落在日志时间 ±窗口内。
+
+    只比 id 会误杀重建库后重新计数的新日志（时间差以天计）；不比时间则同
+    id 新日志无法翻案。时间解析失败的参考条目按命中处理（保守，宁可漏配
+    不重复配）。
+    """
+    siteId = int(upstreamSiteId or 0)
+    try:
+        numericId = int(logId or 0)
+    except (TypeError, ValueError):
+        return False
+    references = usedBySiteLog.get(siteId, {}).get(numericId)
+    if not references:
+        return False
+    if logCreatedIso is None:
+        return True
+    for reference in references:
+        referenceAt = parse_iso_dt(reference) if reference else None
+        if referenceAt is None:
+            return True
+        delta = abs((logCreatedIso - referenceAt).total_seconds())
+        if delta <= windowSeconds:
+            return True
+    return False
+
+
 def _ensureUpstreamLogs(ctx: _UpstreamContext, neededFrom: datetime, windowSeconds: int) -> None:
     """保证已拉日志窗口覆盖 neededFrom - window（覆盖不到就尽力拉到页数上限）。
 
@@ -333,6 +387,7 @@ def _auditRow(
     ctxByBase: Dict[str, _UpstreamContext],
     settings: Dict[str, Any],
     priceCache: Dict[str, Optional[Dict[str, Any]]],
+    usedBySiteLog: Optional[Dict[int, Dict[int, List[str]]]] = None,
 ) -> Dict[str, Any]:
     tol = float(settings["tolerance_percent"]) / 100.0
     quotaPerUnit = float(settings["quota_per_unit"] or 500000)
@@ -353,9 +408,6 @@ def _auditRow(
     ctx = ctxByBase.get(base)
     if ctx is None:
         ctx = _UpstreamContext(base, link.get("site_row"))
-        # 跨轮去重：历史行已占用的上游日志 id 一并排除，保证一条上游日志
-        # 只配一条主站记录（设计稿第 7 节）。
-        ctx.usedLogIds.update(billingRepo.listUsedUpstreamLogIds(int(row["admin_site_id"])))
         ctxByBase[base] = ctx
     if ctx.site is None or not site_auth_ready(ctx.site):
         _finalize(row, patch, "no_token", "unknown", ["no_token"])
@@ -379,9 +431,17 @@ def _auditRow(
         return {"id": int(row["id"]), "status": "pending", "reason_codes": []}
     logs = ctx.logs or []
     best: Optional[Tuple[float, Dict[str, Any]]] = None
+    upstreamSiteId = int(ctx.site.get("id") or 0) or None
     for log in logs:
         logId = log.get("id")
         if logId is None or logId in ctx.usedLogIds:
+            continue
+        # 本轮内同一条上游日志只配一条主站记录；跨轮判重带站点+时间
+        # （上游重建库后 id 重新计数，裸 id 会误杀新日志）。
+        if _upstreamLogAlreadyUsed(
+            usedBySiteLog or {}, upstreamSiteId, logId,
+            log.get("created_iso"), windowSeconds,
+        ):
             continue
         if str(log.get("model_name") or "") != str(row.get("model_name") or ""):
             continue
@@ -409,6 +469,11 @@ def _auditRow(
     upLog = best[1]
     ctx.usedLogIds.add(upLog.get("id"))
     patch["upstream_log_id"] = upLog.get("id")
+    # 记下上游日志自身时间，供后续轮次跨轮判重（见 BILLING_CHECK_COLUMN_ADDITIONS）。
+    if upLog.get("created_iso") is not None:
+        patch["upstream_log_created_at"] = (
+            upLog["created_iso"].astimezone(APP_TIMEZONE).isoformat(timespec="seconds")
+        )
     patch["upstream_other_json"] = _compactJson(upLog.get("other"))
 
     if upstreamPlatform == "sub2api":
@@ -668,19 +733,30 @@ def _runForAdminSite(
 
     pending = billingRepo.listPendingBillingChecks(adminSiteId, PENDING_LIMIT_PER_RUN)
     # 灰行重判（P2）：no_binding / no_token / no_log_api 的成因被修复后
-    # （建绑定、补登录态、sub2api 适配上线），按 checked_at 限速翻面重审。
+    # （建绑定、补登录态、sub2api 适配上线），按 checked_at 限速翻面重审；
+    # unmatched（no_upstream_log）也给 24h 窗口——上游日志拉取瞬时失败、
+    # 或上游重建库 id 重计数的历史误判，都靠重判翻案。
     rejudgeCutoff = (app_now() - timedelta(hours=1)).isoformat(timespec="seconds")
+    unmatchedCutoff = (app_now() - timedelta(hours=24)).isoformat(timespec="seconds")
     rejudge = billingRepo.listRejudgeBillingChecks(
-        adminSiteId, rejudgeCutoff, PENDING_LIMIT_PER_RUN
+        adminSiteId, rejudgeCutoff, PENDING_LIMIT_PER_RUN,
+        unmatchedOlderThan=unmatchedCutoff,
     )
     seenIds = {int(row["id"]) for row in pending}
     pending = pending + [row for row in rejudge if int(row["id"]) not in seenIds]
     ctxByBase: Dict[str, _UpstreamContext] = {}
     priceCache: Dict[str, Optional[Dict[str, Any]]] = {}
+    # 跨轮占用池（按上游站点分组的 {log_id: [参考时间]}）每主站加载一次：
+    # 上游重建库后日志 id 会重新计数（gopay 2026-09 实测），判重必须带时间。
+    usedBySiteLog = _buildUsedUpstreamLogMap(
+        billingRepo.listUsedUpstreamLogEntries(adminSiteId)
+    )
     for row in pending:
         if STOP_EVENT.is_set():
             break
-        result = _auditRow(row, channelLinks, ctxByBase, effectiveSettings, priceCache)
+        result = _auditRow(
+            row, channelLinks, ctxByBase, effectiveSettings, priceCache, usedBySiteLog
+        )
         summary["checked"] += 1
         if result.get("status") == "mismatch":
             summary["mismatched"] += 1

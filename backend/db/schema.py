@@ -323,6 +323,7 @@ DDL_STATEMENTS = [
         upstream_expected_usd DOUBLE,
         upstream_actual_usd DOUBLE,
         upstream_log_id BIGINT,
+        upstream_log_created_at VARCHAR(40),
         upstream_model_ratio DOUBLE,
         upstream_group_ratio DOUBLE,
         upstream_completion_ratio DOUBLE,
@@ -443,6 +444,12 @@ ADMIN_SITE_COLUMN_ADDITIONS = {
     "retention_days": "INT NOT NULL DEFAULT 7",
     # 计费核对 P2：quota→美元基准按主站覆盖（NULL = 用全局 billing_audit_quota_per_unit）
     "quota_per_unit": "INT NULL",
+}
+
+# 计费核对：上游日志 id 在上游重建库后会重新计数（gopay 2026-09 实测），
+# 跨轮去重需要日志自身的时间戳参与判重；旧行该列为 NULL，用主站 request_at 兜底。
+BILLING_CHECK_COLUMN_ADDITIONS = {
+    "upstream_log_created_at": "VARCHAR(40)",
 }
 
 
@@ -727,6 +734,13 @@ def init_db() -> None:
                 for column_name, column_type in ADMIN_SITE_COLUMN_ADDITIONS.items():
                     if column_name not in admin_site_columns:
                         cur.execute(f"ALTER TABLE admin_sites ADD COLUMN {column_name} {column_type}")
+
+                billing_columns = _existing_columns(cur, "billing_request_checks")
+                for column_name, column_type in BILLING_CHECK_COLUMN_ADDITIONS.items():
+                    if column_name not in billing_columns:
+                        cur.execute(
+                            f"ALTER TABLE billing_request_checks ADD COLUMN {column_name} {column_type}"
+                        )
 
                 run_sub2api_browser_first_migration_once(cur)
                 run_newapi_system_token_fallback_migration_once(cur)

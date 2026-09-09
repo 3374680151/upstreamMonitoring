@@ -334,25 +334,36 @@ def listPendingBillingChecks(adminSiteId: int, limit: int) -> List[Dict[str, Any
 
 
 def listRejudgeBillingChecks(
-    adminSiteId: int, olderThan: str, limit: int
+    adminSiteId: int,
+    olderThan: str,
+    limit: int,
+    unmatchedOlderThan: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """挑出可翻面的灰行做重判（P2）。
 
-    只重判「终态前灰」且成因可被后续配置修复的行：no_binding / no_token /
-    no_log_api——用户建好绑定、补上登录态或（P2）sub2api 适配上线后，
-    下一轮即可重新核对。matched 灰（no_official_price）不在其列：重判要
-    重跑匹配，上游日志超出翻页窗口时会把已有匹配退化成 unmatched。
+    两类纳入：① no_binding / no_token / no_log_api——用户建好绑定、补上
+    登录态或 sub2api 适配上线后，下一轮即可重新核对；② unmatched（含
+    no_upstream_log）——上游日志拉取瞬时失败、或上游重建库导致日志 id
+    重新计数误判，修复后应翻案；给 24h 硬限界（unmatchedOlderThan）防止
+    永远翻不动的陈年旧行无限空转。matched 灰（no_official_price）不在其列：
+    重判要重跑匹配，上游日志超出翻页窗口时会把已有匹配退化成 unmatched。
     """
+    if unmatchedOlderThan is None:
+        unmatchedOlderThan = olderThan
     return db_query_all(
         f"""
         SELECT {BILLING_CHECK_COLUMNS} FROM billing_request_checks
         WHERE admin_site_id = ? AND status = 'unknown'
-          AND checked_at IS NOT NULL AND checked_at <= ?
-          AND match_status IN ('no_binding', 'no_token', 'no_log_api')
+          AND checked_at IS NOT NULL
+          AND (
+            (match_status IN ('no_binding', 'no_token', 'no_log_api')
+             AND checked_at <= ?)
+            OR (match_status = 'unmatched' AND checked_at <= ?)
+          )
         ORDER BY checked_at ASC, id ASC
         LIMIT ?
         """,
-        (int(adminSiteId), olderThan, int(limit)),
+        (int(adminSiteId), olderThan, unmatchedOlderThan, int(limit)),
     )
 
 
@@ -372,16 +383,23 @@ def countBillingChecksByStatus(adminSiteId: int, status: str) -> int:
     return int((row or {}).get("total") or 0)
 
 
-def listUsedUpstreamLogIds(adminSiteId: int) -> set:
-    """已被历史核对占用的上游日志 id（一条上游日志只允许配一条主站记录）。"""
-    rows = db_query_all(
+def listUsedUpstreamLogEntries(adminSiteId: int) -> List[Dict[str, Any]]:
+    """已被历史核对占用的上游日志条目（一条上游日志只配一条主站记录）。
+
+    返回 (upstream_site_id, upstream_log_id, upstream_log_created_at,
+    request_at)：NewAPI 上游重建库后日志 id 会从 1 重新计数（gopay
+    2026-09 实测），裸 id 不再唯一——占用判定必须带上游站点作用域 + 时间
+    （新行记 upstream_log_created_at；历史行没有该列，退回用主站
+    request_at 近似比较）。时间窗匹配才是最终裁判，这里只是省请求的粗筛。
+    """
+    return db_query_all(
         """
-        SELECT upstream_log_id FROM billing_request_checks
+        SELECT upstream_site_id, upstream_log_id, upstream_log_created_at, request_at
+        FROM billing_request_checks
         WHERE admin_site_id = ? AND upstream_log_id IS NOT NULL
         """,
         (int(adminSiteId),),
     )
-    return {int(r["upstream_log_id"]) for r in rows}
 
 
 def getBillingMetaString(name: str) -> Optional[str]:
@@ -401,6 +419,7 @@ def updateBillingCheckResult(rowId: int, patch: Dict[str, Any]) -> None:
         "official_usd", "official_input_usd_per_m", "official_cached_input_usd_per_m",
         "official_cache_write_usd_per_m", "official_output_usd_per_m",
         "upstream_expected_usd", "upstream_actual_usd", "upstream_log_id",
+        "upstream_log_created_at",
         "upstream_model_ratio", "upstream_group_ratio", "upstream_completion_ratio",
         "published_model_ratio", "published_group_ratio", "published_completion_ratio",
         "match_status", "status", "reason_codes_json",

@@ -5,7 +5,7 @@ import AdminSiteFormDialog from "@/components/AdminSiteFormDialog.vue";
 import AdminTwoFaDialog from "@/components/AdminTwoFaDialog.vue";
 import Badge from "@/components/Badge.vue";
 import ChannelPriorityDialog from "@/components/ChannelPriorityDialog.vue";
-import ChannelRequestDots from "@/components/ChannelRequestDots.vue";
+import ChannelRequestBars from "@/components/ChannelRequestBars.vue";
 import PageHeader from "@/components/PageHeader.vue";
 import Panel from "@/components/Panel.vue";
 import Sub2ApiChannelDialog from "@/components/Sub2ApiChannelDialog.vue";
@@ -743,7 +743,7 @@ async function load(
     rowNote.value = {};
     actionError.value = "";
     if (targetPlatform === "newapi") {
-      // 打点最近请求首字延迟：不阻塞主列表渲染，失败时该列保持灰点/—
+      // 打点最近请求首字延迟：不阻塞主列表渲染，失败时该列保持灰条/—
       void loadRecentRequests(
         targetSiteId,
         (channelResponse.data || []).map((channel) => channel.id),
@@ -1411,7 +1411,7 @@ watch(
                   <th class="pb-2">状态</th>
                   <th
                     class="pb-2"
-                    title="每渠道最近请求首字延迟色点（左=最新）：绿=快 / 橙=中 / 红=慢，空心圆环=旧请求（非实时），灰点=无请求；阈值可在 .env 调整"
+                    title="每渠道最近请求首字延迟条（左=最新，只画真实请求）：绿=快 / 橙=中 / 红=慢，半透明=旧请求（非实时）；「可用」=最近 30 分钟内首字达标（绿档）请求占比，文字颜色 >80% 绿 / 60~80% 橙 / <60% 红；阈值可在 .env 调整"
                   >
                     最近请求首字
                   </th>
@@ -1517,7 +1517,7 @@ watch(
                     </Badge>
                   </td>
                   <td class="max-w-0 py-3 pr-3">
-                    <ChannelRequestDots
+                    <ChannelRequestBars
                       :entry="recentRequestEntries[String(row.channel.id)]"
                       :thresholds="recentRequestThresholds"
                       :loading="recentRequestsLoading"

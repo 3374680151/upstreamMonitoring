@@ -23,7 +23,7 @@ export function useChannelRecentRequests() {
   ): Promise<boolean> {
     if (!adminSiteId || channelIds.length === 0) return false;
     if (loadedSiteId !== adminSiteId) {
-      // 切主站先清空：不同主站的渠道 id 会重叠，不清理会把上一主站的色点
+      // 切主站先清空：不同主站的渠道 id 会重叠，不清理会把上一主站的延迟条
       // 串到新主站表格（新数据受限速门影响可能数秒后才回来）。
       loadedSiteId = adminSiteId;
       entries.value = {};

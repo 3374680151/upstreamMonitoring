@@ -743,13 +743,13 @@ def _runForAdminSite(
     pending = billingRepo.listPendingBillingChecks(adminSiteId, PENDING_LIMIT_PER_RUN)
     # 灰行重判（P2）：no_binding / no_token / no_log_api 的成因被修复后
     # （建绑定、补登录态、sub2api 适配上线），按 checked_at 限速翻面重审；
-    # unmatched（no_upstream_log）也给 24h 窗口——上游日志拉取瞬时失败、
-    # 或上游重建库 id 重计数的历史误判，都靠重判翻案。
+    # unmatched（no_upstream_log）同样 1h 冷却——上游日志拉取瞬时失败、
+    # 或上游重建库/行号漂移的历史误判都靠重判翻案，只审近 7 天的行。
     rejudgeCutoff = (app_now() - timedelta(hours=1)).isoformat(timespec="seconds")
-    unmatchedCutoff = (app_now() - timedelta(hours=24)).isoformat(timespec="seconds")
+    unmatchedFloor = (app_now() - timedelta(days=7)).isoformat(timespec="seconds")
     rejudge = billingRepo.listRejudgeBillingChecks(
         adminSiteId, rejudgeCutoff, PENDING_LIMIT_PER_RUN,
-        unmatchedOlderThan=unmatchedCutoff,
+        unmatchedRequestAtFloor=unmatchedFloor,
     )
     seenIds = {int(row["id"]) for row in pending}
     pending = pending + [row for row in rejudge if int(row["id"]) not in seenIds]

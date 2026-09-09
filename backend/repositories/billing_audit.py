@@ -337,33 +337,32 @@ def listRejudgeBillingChecks(
     adminSiteId: int,
     olderThan: str,
     limit: int,
-    unmatchedOlderThan: Optional[str] = None,
+    unmatchedRequestAtFloor: str = "",
 ) -> List[Dict[str, Any]]:
     """挑出可翻面的灰行做重判（P2）。
 
-    两类纳入：① no_binding / no_token / no_log_api——用户建好绑定、补上
-    登录态或 sub2api 适配上线后，下一轮即可重新核对；② unmatched（含
-    no_upstream_log）——上游日志拉取瞬时失败、或上游重建库导致日志 id
-    重新计数误判，修复后应翻案；给 24h 硬限界（unmatchedOlderThan）防止
-    永远翻不动的陈年旧行无限空转。matched 灰（no_official_price）不在其列：
-    重判要重跑匹配，上游日志超出翻页窗口时会把已有匹配退化成 unmatched。
+    ① no_binding / no_token / no_log_api——用户建好绑定、补上登录态或
+    sub2api 适配上线后，按 1h 冷却重审；② unmatched（no_upstream_log）——
+    上游日志拉取瞬时失败、或上游重建库/行号漂移导致的历史误判，同样 1h
+    冷却，但只重审 request_at 在 ``unmatchedRequestAtFloor`` 之后的行：
+    上游日志保留期通常不超过几天，更老的行永远翻不动，重判只是空转。
+    matched 灰（no_official_price）不在其列：重判要重跑匹配，上游日志超出
+    翻页窗口时会把已有匹配退化成 unmatched。
     """
-    if unmatchedOlderThan is None:
-        unmatchedOlderThan = olderThan
     return db_query_all(
         f"""
         SELECT {BILLING_CHECK_COLUMNS} FROM billing_request_checks
         WHERE admin_site_id = ? AND status = 'unknown'
-          AND checked_at IS NOT NULL
+          AND checked_at IS NOT NULL AND checked_at <= ?
           AND (
-            (match_status IN ('no_binding', 'no_token', 'no_log_api')
-             AND checked_at <= ?)
-            OR (match_status = 'unmatched' AND checked_at <= ?)
+            match_status IN ('no_binding', 'no_token', 'no_log_api')
+            OR (match_status = 'unmatched'
+                AND request_at >= ?)
           )
         ORDER BY checked_at ASC, id ASC
         LIMIT ?
         """,
-        (int(adminSiteId), olderThan, unmatchedOlderThan, int(limit)),
+        (int(adminSiteId), olderThan, unmatchedRequestAtFloor, int(limit)),
     )
 
 
